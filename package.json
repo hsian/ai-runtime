@@ -1,0 +1,13 @@
+{
+  "name": "ai-runtime",
+  "private": true,
+  "workspaces": [
+    "extension",
+    "server"
+  ],
+  "scripts": {
+    "dev:server": "npm run dev -w server",
+    "dev:extension": "npm run dev -w extension",
+    "build": "npm run build -w extension && npm run build -w server"
+  }
+}

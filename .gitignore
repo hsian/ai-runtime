@@ -1,0 +1,7 @@
+server/data/uploads/
+dist/
+workspace/
+.env
+*.log
+.DS_Store
+node_modules/

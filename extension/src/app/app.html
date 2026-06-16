@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>AI Runtime</title>
+  </head>
+  <body class="chat-body">
+    <div class="chat-app">
+      <header class="chat-header">
+        <div class="header-left">
+          <h1 class="page-title" id="pageTitle">加载中...</h1>
+          <p class="subtitle page-url" id="pageUrl">加载中...</p>
+          <p class="subtitle" id="connectionStatus">就绪</p>
+        </div>
+        <div class="header-actions">
+          <button id="refreshPageBtn" class="icon-btn" type="button" title="刷新">⟳</button>
+          <button id="settingsBtn" class="icon-btn" type="button" title="设置">⚙</button>
+        </div>
+      </header>
+
+      <main class="chat-main" id="chatMain">
+        <div class="chat-messages" id="chatMessages"></div>
+      </main>
+
+      <footer class="chat-footer">
+        <label class="checkbox compact">
+          <input type="checkbox" id="usePlanMode" checked />
+          先 Plan 分析，确认后再执行
+        </label>
+        <div class="composer" id="composer">
+          <div class="composer-input">
+            <div class="attachment-strip" id="attachmentStrip" hidden></div>
+            <textarea
+              id="prompt"
+              rows="3"
+              placeholder="描述要修改的内容；可粘贴或拖拽截图（最多 3 张）"
+            ></textarea>
+          </div>
+          <button id="submitBtn" class="primary send-btn" type="button">发送</button>
+        </div>
+      </footer>
+    </div>
+    <script type="module" src="./app.ts"></script>
+  </body>
+</html>

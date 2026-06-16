@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>AI Runtime 设置</title>
+  </head>
+  <body>
+    <div class="container">
+      <a class="back-link" id="backLink" href="app.html">← 返回</a>
+
+      <header>
+        <h1>设置</h1>
+        <p class="subtitle">不常修改的配置项</p>
+      </header>
+
+      <section class="form">
+        <label for="serverUrl">服务端地址</label>
+        <input
+          type="url"
+          id="serverUrl"
+          placeholder="http://192.168.x.x:6080"
+        />
+        <p class="settings-note">
+          内网 AI Runtime 服务地址。Chrome 不建议使用 6000 端口，推荐 6080、8080。
+        </p>
+      </section>
+
+      <section class="actions">
+        <button id="saveBtn" class="primary" type="button">保存</button>
+      </section>
+
+      <section class="result hidden" id="saveResult">
+        <pre id="saveResultText"></pre>
+      </section>
+    </div>
+    <script type="module" src="./settings.ts"></script>
+  </body>
+</html>

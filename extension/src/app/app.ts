@@ -1,0 +1,798 @@
+import "../shared/styles.css";
+import { loadConfig } from "../shared/config.js";
+import {
+  fetchCurrentTabPreview,
+  fetchPageContext,
+  formatErrorMessage,
+  openJobEventStream,
+  cancelJob,
+  executeJob,
+  queryJobStatus,
+  submitPlan,
+  submitJob,
+} from "../shared/api.js";
+import type { JobEvent, JobStatus, JobStatusType, SubmitRequest } from "../shared/types.js";
+import {
+  MAX_ATTACHMENTS,
+  HARD_MAX_BYTES,
+  compressImageForUpload,
+  formatBytes,
+} from "../shared/imageCompress.js";
+
+interface PendingAttachment {
+  id: string;
+  blob: Blob;
+  previewUrl: string;
+  label: string;
+}
+
+const AGENT_STREAM_KEY = "agent-stream";
+const QUEUE_CARD_KEY = "queue-card";
+const CONFIRM_CARD_KEY = "confirm-card";
+
+let activeStream: EventSource | null = null;
+let activeJobId: string | null = null;
+let currentJobStatus: JobStatusType | null = null;
+const seenEventIds = new Set<string>();
+let lastEventAt = Date.now();
+let lastLocalUserBubble:
+  | { localId: string; text: string; pageUrl?: string; createdAtMs: number; imageUrls?: string[] }
+  | null = null;
+const pendingAttachments: PendingAttachment[] = [];
+
+function isCancellableStatus(status: JobStatusType | null): boolean {
+  return status === "planning" || status === "pending" || status === "running";
+}
+
+function updateSubmitButton(): void {
+  const btn = el<HTMLButtonElement>("submitBtn");
+  const cancellable = isCancellableStatus(currentJobStatus);
+  btn.textContent = cancellable ? "取消" : "发送";
+  btn.classList.toggle("danger", cancellable);
+}
+
+async function cancelActiveJob(): Promise<void> {
+  const jobId = activeJobId;
+  if (!jobId) return;
+  const config = await loadConfig();
+  if (!config.serverUrl) return;
+
+  const ok = window.confirm("确认取消当前任务？\n\n- 将立即中断分析/修改\n- 本地代码会还原到修改前");
+  if (!ok) return;
+
+  const btn = el<HTMLButtonElement>("submitBtn");
+  btn.disabled = true;
+
+  try {
+    setConnectionStatus("正在取消任务...");
+    await cancelJob(config.serverUrl, jobId);
+    // 取消事件会通过 SSE 再发一次；这里先乐观更新，避免用户感觉没反应
+    currentJobStatus = "cancelled";
+    updateSubmitButton();
+    setConnectionStatus("任务已取消");
+  } catch (err) {
+    setConnectionStatus(formatErrorMessage(config.serverUrl, err));
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+function shouldAutoSkipPlan(prompt: string): boolean {
+  const text = prompt.trim();
+  // 典型“简单可执行”指令：标题加/追加固定短串（如 123）
+  return /(标题|title).*(加|追加|后面加|末尾加|加个)\s*([0-9a-zA-Z_-]{1,12})/i.test(text);
+}
+
+function el<T extends HTMLElement>(id: string): T {
+  return document.getElementById(id) as T;
+}
+
+function scrollChatToBottom(): void {
+  const main = el<HTMLElement>("chatMain");
+  requestAnimationFrame(() => {
+    main.scrollTop = main.scrollHeight;
+  });
+}
+
+function setConnectionStatus(text: string): void {
+  el<HTMLElement>("connectionStatus").textContent = text;
+}
+
+function applyHeaderStatusFromJob(job: JobStatus): void {
+  const labels: Record<JobStatusType, string> = {
+    planning: "Plan 分析中",
+    awaiting_confirm: "等待确认执行",
+    awaiting_input: "需要补充信息",
+    pending: job.jobsAhead ? `排队中，前面 ${job.jobsAhead} 个任务` : "排队中",
+    running: "执行中",
+    completed: "任务已完成",
+    failed: "任务失败",
+    cancelled: "任务已取消",
+  };
+  setConnectionStatus(labels[job.status] ?? "就绪");
+}
+
+function isCancelledEvent(event: JobEvent): boolean {
+  if (event.type === "cancelled") return true;
+  const text = `${event.message ?? ""}${event.text ?? ""}`;
+  return event.type === "error" && text.includes("取消");
+}
+
+function confirmCardStatusLabel(status: JobStatusType): string {
+  switch (status) {
+    case "awaiting_confirm":
+      return "";
+    case "awaiting_input":
+      return "需要补充信息（请重新提交更明确的需求）";
+    case "cancelled":
+      return "已取消";
+    case "completed":
+      return "已执行并完成";
+    case "failed":
+      return "执行失败";
+    case "pending":
+      return "已确认，排队中";
+    case "running":
+      return "已确认，执行中";
+    case "planning":
+      return "Plan 分析中";
+    default:
+      return "不可操作";
+  }
+}
+
+function isNotFoundError(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err);
+  return msg.includes("任务不存在") || msg.includes("404");
+}
+
+function renderPagePreview(url: string, title?: string): void {
+  const pageTitleEl = el<HTMLElement>("pageTitle");
+  const pageUrlEl = el<HTMLElement>("pageUrl");
+  if (!url) {
+    pageTitleEl.textContent = "AI Runtime";
+    pageUrlEl.textContent = "未找到浏览器页面，请先打开测试环境页面";
+    return;
+  }
+  pageTitleEl.textContent = title?.trim() ? title : "AI Runtime";
+  pageUrlEl.textContent = url;
+}
+
+async function refreshPagePreview(): Promise<void> {
+  const pageTitleEl = el<HTMLElement>("pageTitle");
+  const pageUrlEl = el<HTMLElement>("pageUrl");
+  pageTitleEl.textContent = "刷新中...";
+  pageUrlEl.textContent = "";
+  try {
+    const preview = await fetchCurrentTabPreview();
+    if (!preview) {
+      renderPagePreview("");
+      return;
+    }
+    renderPagePreview(preview.url, preview.title);
+  } catch {
+    renderPagePreview("");
+  }
+}
+
+function formatTime(iso: string): string {
+  try {
+    return new Date(iso).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  } catch {
+    return "";
+  }
+}
+
+function ensureMessageElement(key: string, className: string): HTMLElement {
+  const container = el<HTMLElement>("chatMessages");
+  let node = container.querySelector<HTMLElement>(`[data-key="${key}"]`);
+  if (!node) {
+    node = document.createElement("div");
+    node.className = className;
+    node.dataset.key = key;
+    container.appendChild(node);
+  }
+  return node;
+}
+
+function appendUserBubble(event: JobEvent, imageUrls?: string[]): void {
+  const imagesHtml =
+    imageUrls && imageUrls.length > 0
+      ? `<div class="msg-images">${imageUrls.map((url) => `<img src="${url}" alt="截图" />`).join("")}</div>`
+      : event.attachmentCount
+        ? `<div class="msg-sub">📎 ${event.attachmentCount} 张截图</div>`
+        : "";
+
+  const node = document.createElement("div");
+  node.className = "msg msg-user";
+  node.dataset.key = event.id;
+  node.innerHTML = `
+    <div class="msg-meta">${formatTime(event.timestamp)}</div>
+    <div class="msg-bubble">${escapeHtml(event.text ?? "")}</div>
+    ${imagesHtml}
+    ${event.pageUrl ? `<div class="msg-sub">${escapeHtml(event.pageUrl)}</div>` : ""}
+  `;
+  el<HTMLElement>("chatMessages").appendChild(node);
+}
+
+function tryReconcileServerUserEvent(event: JobEvent): boolean {
+  if (!lastLocalUserBubble) return false;
+  const withinMs = Date.now() - lastLocalUserBubble.createdAtMs;
+  if (withinMs > 8000) return false;
+
+  const sameText = (event.text ?? "") === lastLocalUserBubble.text;
+  const sameUrl = (event.pageUrl ?? "") === (lastLocalUserBubble.pageUrl ?? "");
+  if (!sameText || !sameUrl) return false;
+
+  const container = el<HTMLElement>("chatMessages");
+  const localNode = container.querySelector<HTMLElement>(`[data-key="${lastLocalUserBubble.localId}"]`);
+  if (!localNode) return false;
+
+  // 用服务端 event.id 替换本地临时 id，避免出现两条相同气泡
+  localNode.dataset.key = event.id;
+  seenEventIds.add(event.id);
+  lastLocalUserBubble = null;
+  return true;
+}
+
+function updateQueueCard(event: JobEvent): void {
+  const node = ensureMessageElement(`${QUEUE_CARD_KEY}-${event.jobId}`, "msg msg-queue");
+  const running = event.running;
+  const waiting = event.waiting ?? [];
+
+  const runningHtml = running
+    ? `<li class="queue-running"><span>执行中</span> ${escapeHtml(running.prompt)}</li>`
+    : "";
+
+  const waitingHtml = waiting
+    .map((item) => `<li><span>#${item.jobsAhead}</span> ${escapeHtml(item.prompt)}</li>`)
+    .join("");
+
+  node.innerHTML = `
+    <div class="msg-meta">${formatTime(event.timestamp)} · 任务队列</div>
+    <div class="queue-card">
+      <div class="queue-title">${escapeHtml(event.text ?? "")}</div>
+      <ul class="queue-list">${runningHtml}${waitingHtml}</ul>
+    </div>
+  `;
+}
+
+function appendStageBubble(event: JobEvent): void {
+  const node = document.createElement("div");
+  node.className = "msg msg-stage";
+  node.dataset.key = event.id;
+  node.innerHTML = `
+    <div class="msg-meta">${formatTime(event.timestamp)}</div>
+    <div class="stage-text">${escapeHtml(event.text ?? "")}</div>
+  `;
+  el<HTMLElement>("chatMessages").appendChild(node);
+}
+
+function upsertConfirmCard(jobId: string, status: JobStatusType = currentJobStatus ?? "awaiting_confirm"): void {
+  const node = ensureMessageElement(`${CONFIRM_CARD_KEY}-${jobId}`, "msg msg-queue");
+  const readonly = status !== "awaiting_confirm";
+  const statusLabel = confirmCardStatusLabel(status);
+
+  if (readonly) {
+    node.innerHTML = `
+      <div class="msg-meta">Plan 确认</div>
+      <div class="queue-card">
+        <div class="queue-title">Plan 完成：是否执行修改？</div>
+        <div class="confirm-status">${escapeHtml(statusLabel)}</div>
+      </div>
+    `;
+    return;
+  }
+
+  node.innerHTML = `
+    <div class="msg-meta">等待确认</div>
+    <div class="queue-card">
+      <div class="queue-title">Plan 完成：是否执行修改？</div>
+      <div class="confirm-actions">
+        <button class="primary" data-action="execute">执行修改</button>
+        <button class="secondary" data-action="cancel">取消</button>
+      </div>
+      <div class="hint" style="margin-top:8px;">提示：执行后才会创建分支并合并到 test</div>
+    </div>
+  `;
+
+  const execBtn = node.querySelector<HTMLButtonElement>('button[data-action="execute"]');
+  const cancelBtn = node.querySelector<HTMLButtonElement>('button[data-action="cancel"]');
+  if (execBtn) {
+    execBtn.onclick = async () => {
+      const config = await loadConfig();
+      if (!config.serverUrl) return;
+      try {
+        execBtn.disabled = true;
+        cancelBtn!.disabled = true;
+        setConnectionStatus("已确认执行，正在加入队列...");
+        await executeJob(config.serverUrl, jobId);
+        currentJobStatus = "pending";
+        upsertConfirmCard(jobId, "pending");
+      } catch (err) {
+        if (isNotFoundError(err)) {
+          currentJobStatus = "cancelled";
+          upsertConfirmCard(jobId, "cancelled");
+          setConnectionStatus("历史任务已过期（服务端可能已重启），请重新提交");
+        } else {
+          setConnectionStatus(formatErrorMessage(config.serverUrl, err));
+        }
+        execBtn.disabled = false;
+        cancelBtn!.disabled = false;
+      }
+    };
+  }
+  if (cancelBtn) {
+    cancelBtn.onclick = async () => {
+      const config = await loadConfig();
+      if (!config.serverUrl) return;
+      try {
+        cancelBtn.disabled = true;
+        execBtn!.disabled = true;
+        await cancelJob(config.serverUrl, jobId);
+        currentJobStatus = "cancelled";
+        upsertConfirmCard(jobId, "cancelled");
+        setConnectionStatus("任务已取消");
+      } catch (err) {
+        if (isNotFoundError(err)) {
+          currentJobStatus = "cancelled";
+          upsertConfirmCard(jobId, "cancelled");
+          setConnectionStatus("历史任务已过期（服务端可能已重启），无需操作");
+        } else {
+          setConnectionStatus(formatErrorMessage(config.serverUrl, err));
+        }
+        cancelBtn.disabled = false;
+        execBtn!.disabled = false;
+      }
+    };
+  }
+}
+
+function appendAgentDelta(delta: string): void {
+  const key = `${AGENT_STREAM_KEY}-${activeJobId ?? "unknown"}`;
+  const node = ensureMessageElement(key, "msg msg-agent");
+  let bubble = node.querySelector<HTMLElement>(".msg-bubble");
+  let meta = node.querySelector<HTMLElement>(".msg-meta");
+
+  if (!bubble) {
+    node.innerHTML = `<div class="msg-meta">Claude</div><div class="msg-bubble"></div>`;
+    bubble = node.querySelector<HTMLElement>(".msg-bubble")!;
+    meta = node.querySelector<HTMLElement>(".msg-meta")!;
+  }
+
+  meta!.textContent = "Claude · 输出中…";
+  bubble!.textContent += delta;
+}
+
+function appendToolLine(event: JobEvent): void {
+  const node = document.createElement("div");
+  node.className = "msg msg-tool";
+  node.dataset.key = event.id;
+  node.innerHTML = `<div class="tool-line">${escapeHtml(event.text ?? event.toolName ?? "")}</div>`;
+  el<HTMLElement>("chatMessages").appendChild(node);
+}
+
+function finalizeAgentStream(): void {
+  if (!activeJobId) return;
+  const key = `${AGENT_STREAM_KEY}-${activeJobId}`;
+  const node = el<HTMLElement>("chatMessages").querySelector<HTMLElement>(`[data-key="${key}"]`);
+  const meta = node?.querySelector<HTMLElement>(".msg-meta");
+  if (meta) meta.textContent = "Claude";
+}
+
+function appendDoneBubble(event: JobEvent): void {
+  finalizeAgentStream();
+  const node = document.createElement("div");
+  node.className = "msg msg-done";
+  node.dataset.key = event.id;
+  const text = escapeHtml(event.text ?? event.message ?? "任务完成");
+  const branchInfo = event.branch
+    ? `<div class="msg-sub">分支: ${escapeHtml(event.branch)}</div>`
+    : "";
+  node.innerHTML = `
+    <div class="msg-meta">${formatTime(event.timestamp)} · 完成</div>
+    <div class="msg-bubble">${text}</div>
+    ${branchInfo}
+  `;
+  el<HTMLElement>("chatMessages").appendChild(node);
+}
+
+function appendCancelledBubble(event: JobEvent): void {
+  const node = document.createElement("div");
+  node.className = "msg msg-cancelled";
+  node.dataset.key = event.id;
+  node.innerHTML = `
+    <div class="msg-meta">${formatTime(event.timestamp)} · 已取消</div>
+    <div class="msg-bubble">${escapeHtml(event.message ?? event.text ?? "任务已取消")}</div>
+  `;
+  el<HTMLElement>("chatMessages").appendChild(node);
+}
+
+function appendErrorBubble(event: JobEvent): void {
+  finalizeAgentStream();
+  const node = document.createElement("div");
+  node.className = "msg msg-error";
+  node.dataset.key = event.id;
+  node.innerHTML = `
+    <div class="msg-meta">${formatTime(event.timestamp)} · 失败</div>
+    <div class="msg-bubble">${escapeHtml(event.message ?? event.text ?? "任务失败")}</div>
+  `;
+  el<HTMLElement>("chatMessages").appendChild(node);
+}
+
+function escapeHtml(text: string): string {
+  return text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+function renderAttachmentStrip(): void {
+  const strip = el<HTMLElement>("attachmentStrip");
+  if (pendingAttachments.length === 0) {
+    strip.hidden = true;
+    strip.innerHTML = "";
+    return;
+  }
+
+  strip.hidden = false;
+  strip.innerHTML = pendingAttachments
+    .map(
+      (item) => `
+        <div class="attachment-item" data-attachment-id="${item.id}">
+          <img src="${item.previewUrl}" alt="${escapeHtml(item.label)}" />
+          <span class="attachment-size">${escapeHtml(item.label)}</span>
+          <button type="button" data-remove-attachment="${item.id}" title="移除">×</button>
+        </div>
+      `
+    )
+    .join("");
+
+  strip.querySelectorAll<HTMLButtonElement>("[data-remove-attachment]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const id = button.dataset.removeAttachment;
+      if (id) removeAttachment(id);
+    });
+  });
+}
+
+function removeAttachment(id: string): void {
+  const index = pendingAttachments.findIndex((item) => item.id === id);
+  if (index < 0) return;
+  URL.revokeObjectURL(pendingAttachments[index].previewUrl);
+  pendingAttachments.splice(index, 1);
+  renderAttachmentStrip();
+}
+
+function detachPendingAttachments(): { blobs: Blob[]; previewUrls: string[] } {
+  const blobs = pendingAttachments.map((item) => item.blob);
+  const previewUrls = pendingAttachments.map((item) => item.previewUrl);
+  pendingAttachments.length = 0;
+  renderAttachmentStrip();
+  return { blobs, previewUrls };
+}
+
+async function addAttachmentFromFile(file: File): Promise<void> {
+  if (!file.type.startsWith("image/")) {
+    setConnectionStatus("仅支持图片文件");
+    return;
+  }
+  if (pendingAttachments.length >= MAX_ATTACHMENTS) {
+    setConnectionStatus(`最多添加 ${MAX_ATTACHMENTS} 张截图`);
+    return;
+  }
+
+  setConnectionStatus("正在压缩截图…");
+  try {
+    const blob = await compressImageForUpload(file);
+    if (blob.size > HARD_MAX_BYTES) {
+      setConnectionStatus(`截图过大（${formatBytes(blob.size)}），请裁剪后重试`);
+      return;
+    }
+
+    const previewUrl = URL.createObjectURL(blob);
+    pendingAttachments.push({
+      id: `att-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      blob,
+      previewUrl,
+      label: formatBytes(blob.size),
+    });
+    renderAttachmentStrip();
+    setConnectionStatus("就绪");
+  } catch (err) {
+    setConnectionStatus(err instanceof Error ? err.message : "截图处理失败");
+  }
+}
+
+function setupAttachmentHandlers(): void {
+  const prompt = el<HTMLTextAreaElement>("prompt");
+  const composer = el<HTMLElement>("composer");
+
+  prompt.addEventListener("paste", (event) => {
+    const items = event.clipboardData?.items;
+    if (!items) return;
+
+    let handledImage = false;
+    for (const item of items) {
+      if (!item.type.startsWith("image/")) continue;
+      const file = item.getAsFile();
+      if (!file) continue;
+      handledImage = true;
+      void addAttachmentFromFile(file);
+    }
+
+    if (handledImage) {
+      event.preventDefault();
+    }
+  });
+
+  composer.addEventListener("dragover", (event) => {
+    event.preventDefault();
+  });
+
+  composer.addEventListener("drop", (event) => {
+    event.preventDefault();
+    const files = Array.from(event.dataTransfer?.files ?? []).filter((file) =>
+      file.type.startsWith("image/")
+    );
+    for (const file of files) {
+      void addAttachmentFromFile(file);
+    }
+  });
+}
+
+function handleJobEvent(event: JobEvent): void {
+  if (seenEventIds.has(event.id)) return;
+  seenEventIds.add(event.id);
+  lastEventAt = Date.now();
+
+  switch (event.type) {
+    case "user":
+      if (!tryReconcileServerUserEvent(event)) {
+        appendUserBubble(event);
+      }
+      break;
+    case "queue":
+      updateQueueCard(event);
+      break;
+    case "stage":
+      appendStageBubble(event);
+      if (event.phase === "plan_done") {
+        currentJobStatus = "awaiting_confirm";
+        upsertConfirmCard(event.jobId, "awaiting_confirm");
+        setConnectionStatus("等待确认执行");
+        updateSubmitButton();
+      } else if (event.phase === "plan_need_more") {
+        currentJobStatus = "awaiting_input";
+        upsertConfirmCard(event.jobId, "awaiting_input");
+        setConnectionStatus("需要补充信息");
+        updateSubmitButton();
+      } else if (event.phase === "execute_confirmed") {
+        currentJobStatus = "pending";
+        upsertConfirmCard(event.jobId, "pending");
+        setConnectionStatus("已确认执行，排队中");
+        updateSubmitButton();
+      } else if (event.phase && ["pull", "branch", "agent", "commit", "merge"].includes(event.phase)) {
+        currentJobStatus = "running";
+        setConnectionStatus("执行中");
+        updateSubmitButton();
+      } else if (event.phase === "plan") {
+        currentJobStatus = "planning";
+        setConnectionStatus("Plan 分析中");
+        updateSubmitButton();
+      }
+      break;
+    case "agent_text":
+      if (event.delta) appendAgentDelta(event.delta);
+      break;
+    case "agent_tool":
+      appendToolLine(event);
+      break;
+    case "done":
+      currentJobStatus = "completed";
+      appendDoneBubble(event);
+      upsertConfirmCard(event.jobId, "completed");
+      setConnectionStatus("任务已完成");
+      activeStream?.close();
+      activeStream = null;
+      updateSubmitButton();
+      break;
+    case "cancelled":
+      currentJobStatus = "cancelled";
+      appendCancelledBubble(event);
+      upsertConfirmCard(event.jobId, "cancelled");
+      setConnectionStatus("任务已取消");
+      activeStream?.close();
+      activeStream = null;
+      updateSubmitButton();
+      break;
+    case "error":
+      if (isCancelledEvent(event)) {
+        currentJobStatus = "cancelled";
+        appendCancelledBubble(event);
+        upsertConfirmCard(event.jobId, "cancelled");
+        setConnectionStatus("任务已取消");
+      } else {
+        currentJobStatus = "failed";
+        appendErrorBubble(event);
+        setConnectionStatus("任务失败");
+      }
+      activeStream?.close();
+      activeStream = null;
+      updateSubmitButton();
+      break;
+  }
+
+  scrollChatToBottom();
+}
+
+function connectJobStream(serverUrl: string, jobId: string, initialStatus?: JobStatusType): void {
+  activeStream?.close();
+  activeJobId = jobId;
+  if (initialStatus) currentJobStatus = initialStatus;
+  setConnectionStatus("加载任务记录…");
+  lastEventAt = Date.now();
+
+  activeStream = openJobEventStream(serverUrl, jobId, handleJobEvent, {
+    onOpen: () => {
+      if (currentJobStatus) {
+        applyHeaderStatusFromJob({ jobId, status: currentJobStatus, createdAt: "", updatedAt: "" });
+      } else {
+        setConnectionStatus("已连接");
+      }
+      updateSubmitButton();
+    },
+    onError: () => {
+      const quietMs = Date.now() - lastEventAt;
+      if (quietMs > 4000 && activeStream && !isTerminalStatus(currentJobStatus)) {
+        setConnectionStatus("连接不稳定，正在重试…");
+      }
+    },
+    onClose: () => {
+      if (activeStream && currentJobStatus) {
+        applyHeaderStatusFromJob({ jobId, status: currentJobStatus, createdAt: "", updatedAt: "" });
+      }
+    },
+  });
+}
+
+function isTerminalStatus(status: JobStatusType | null): boolean {
+  return status === "completed" || status === "failed" || status === "cancelled";
+}
+
+async function handleSubmit(): Promise<void> {
+  // 任务进行中：发送按钮变为“取消”
+  if (isCancellableStatus(currentJobStatus)) {
+    await cancelActiveJob();
+    return;
+  }
+
+  const prompt = el<HTMLTextAreaElement>("prompt").value.trim();
+  const includeContext = true;
+  const usePlanMode = el<HTMLInputElement>("usePlanMode")?.checked ?? false;
+  const submitBtn = el<HTMLButtonElement>("submitBtn");
+  const config = await loadConfig();
+
+  if (!prompt) {
+    setConnectionStatus("请输入修改需求");
+    return;
+  }
+  if (!config.serverUrl) {
+    setConnectionStatus("请先在设置中配置服务端地址");
+    return;
+  }
+
+  submitBtn.disabled = true;
+  seenEventIds.clear();
+
+  try {
+    currentJobStatus = null;
+    updateSubmitButton();
+
+    const pageContext = await fetchPageContext(includeContext);
+    if (pageContext) {
+      renderPagePreview(pageContext.url, pageContext.title);
+    }
+
+    const { blobs: imageBlobs, previewUrls } = detachPendingAttachments();
+    const body: SubmitRequest = {
+      prompt,
+      pageContext,
+      images: imageBlobs.length > 0 ? imageBlobs : undefined,
+    };
+    const effectivePlan = usePlanMode && !shouldAutoSkipPlan(prompt);
+    if (usePlanMode && !effectivePlan) {
+      setConnectionStatus("已识别为简单改动：跳过 Plan，直接执行…");
+    }
+
+    // 立即显示用户消息，避免等待接口期间“没反应”
+    const localId = `local-${Date.now()}`;
+    appendUserBubble(
+      {
+        id: localId,
+        jobId: "pending",
+        timestamp: new Date().toISOString(),
+        type: "user",
+        text: prompt,
+        pageUrl: pageContext?.url,
+        attachmentCount: previewUrls.length > 0 ? previewUrls.length : undefined,
+      },
+      previewUrls
+    );
+    lastLocalUserBubble = {
+      localId,
+      text: prompt,
+      pageUrl: pageContext?.url,
+      createdAtMs: Date.now(),
+      imageUrls: previewUrls,
+    };
+    scrollChatToBottom();
+
+    let data: Awaited<ReturnType<typeof submitJob>>;
+    try {
+      data = effectivePlan
+        ? await submitPlan(config.serverUrl, body)
+        : await submitJob(config.serverUrl, body);
+    } catch (submitErr) {
+      for (const [index, blob] of imageBlobs.entries()) {
+        pendingAttachments.push({
+          id: `att-restore-${Date.now()}-${index}`,
+          blob,
+          previewUrl: previewUrls[index],
+          label: formatBytes(blob.size),
+        });
+      }
+      renderAttachmentStrip();
+      throw submitErr;
+    }
+
+    el<HTMLTextAreaElement>("prompt").value = "";
+    await chrome.storage.local.set({ lastJobId: data.jobId });
+
+    connectJobStream(config.serverUrl, data.jobId, data.status as JobStatusType);
+    setConnectionStatus(effectivePlan ? "Plan 分析中…" : data.jobsAhead ? `排队中，前面 ${data.jobsAhead} 个任务` : "任务已提交");
+  } catch (err) {
+    setConnectionStatus(formatErrorMessage(config.serverUrl, err));
+  } finally {
+    submitBtn.disabled = false;
+    updateSubmitButton();
+  }
+}
+
+async function init(): Promise<void> {
+  const stored = await chrome.storage.local.get(["lastJobId"]);
+  const config = await loadConfig();
+
+  await refreshPagePreview();
+
+  el<HTMLElement>("settingsBtn").addEventListener("click", () => {
+    window.location.href = chrome.runtime.getURL("settings.html");
+  });
+  el<HTMLElement>("refreshPageBtn").addEventListener("click", refreshPagePreview);
+  el<HTMLButtonElement>("submitBtn").addEventListener("click", handleSubmit);
+  setupAttachmentHandlers();
+
+  el<HTMLTextAreaElement>("prompt").addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      void handleSubmit();
+    }
+  });
+
+  window.addEventListener("focus", refreshPagePreview);
+  updateSubmitButton();
+
+  if (stored.lastJobId && config.serverUrl) {
+    try {
+      const job = await queryJobStatus(config.serverUrl, stored.lastJobId as string);
+      currentJobStatus = job.status;
+      connectJobStream(config.serverUrl, job.jobId, job.status);
+    } catch {
+      await chrome.storage.local.remove(["lastJobId"]);
+      setConnectionStatus("就绪");
+    }
+  }
+}
+
+init();

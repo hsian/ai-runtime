@@ -1,0 +1,15 @@
+{
+  "name": "@ai-runtime/extension",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite build --watch",
+    "build": "vite build && node scripts/fix-dist.mjs && node -e \"require('fs').copyFileSync('manifest.json','dist/manifest.json')\""
+  },
+  "devDependencies": {
+    "@types/chrome": "^0.0.268",
+    "typescript": "^5.4.5",
+    "vite": "^5.2.11"
+  }
+}
