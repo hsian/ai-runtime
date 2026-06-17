@@ -128,13 +128,26 @@ export function looksLikeClarification(summary: string): boolean {
 }
 
 export const REQUIREMENT_ANALYZE_SYSTEM_PROMPT =
-  "你是产品经理与技术之间的桥梁。根据 TAPD 需求文档原文，整理成一份给前端代码修改 AI 使用的中文任务描述（prompt）。只输出最终 prompt 正文，不要加前言、解释或 markdown 代码块围栏。严禁编造文档未提及的功能。忽略外链、附件链接和无法访问的资源。信息不足时在 prompt 末尾用「待确认：」列出需要产品经理补充的点。";
+  "你是产品经理与技术之间的桥梁。根据 TAPD 需求文档原文及附带的需求配图，整理成一份给前端代码修改 AI 使用的中文任务描述（prompt）。只输出最终 prompt 正文，不要加前言、解释或 markdown 代码块围栏。严禁编造文档未提及的功能。若提供了配图文件路径，必须用 Read 工具查看图片内容并纳入分析。忽略外链与无法访问的附件链接。信息不足时在 prompt 末尾用「待确认：」列出需要产品经理补充的点。";
+
+function buildRequirementAttachmentSection(attachments: JobAttachment[]): string {
+  if (!attachments.length) return "";
+
+  const lines = attachments.map((file, index) => `- 配图 ${index + 1}: ${file.path}`).join("\n");
+  return `
+【需求配图】
+需求正文含 ${attachments.length} 张配图，已保存为本地文件。请用 Read 工具逐张查看，结合图片理解 UI/流程/验收标准：
+${lines}`;
+}
 
 export function buildRequirementAnalyzePrompt(
   title: string,
   tapdUrl: string,
-  rawContent: string
+  rawContent: string,
+  attachments: JobAttachment[] = []
 ): string {
+  const attachmentPart = buildRequirementAttachmentSection(attachments);
+
   return `【TAPD 需求分析 - 只整理 prompt，禁止改代码、禁止搜索仓库】
 
 【需求标题】
@@ -142,16 +155,17 @@ ${title}
 
 【TAPD 链接（仅备注，勿访问）】
 ${tapdUrl}
-
+${attachmentPart}
 【需求原文】
 ${rawContent}
 
 【输出要求】
 1. 输出一份可直接用于「根据测试页面修改前端代码」的中文 prompt
 2. 提取：要改什么页面/模块、具体 UI/文案/交互、验收标准
-3. 不要编造原文没有的内容
-4. 忽略外链与附件
-5. 只输出 prompt 正文，不要标题前缀如「以下是 prompt」`;
+3. 若有配图，必须结合配图内容分析，不要忽略
+4. 不要编造原文没有的内容
+5. 忽略外链与附件下载链接
+6. 只输出 prompt 正文，不要标题前缀如「以下是 prompt」`;
 }
 
 export function summarizeToolInput(input: unknown): string | undefined {

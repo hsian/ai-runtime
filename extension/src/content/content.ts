@@ -1,4 +1,5 @@
 import { extractTapdRequirementInPage } from "../shared/tapdPageExtract.js";
+import { fetchTapdContentImages } from "../shared/tapdImageExtract.js";
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message.type === "GET_PAGE_CONTEXT") {
@@ -27,7 +28,24 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   }
 
   if (message.type === "GET_TAPD_REQUIREMENT") {
-    sendResponse(extractTapdRequirementInPage());
+    void (async () => {
+      const root = document.querySelector(".content-wrap");
+      const imageBlobs = root ? await fetchTapdContentImages(root) : [];
+      const result = extractTapdRequirementInPage();
+      if (!result.ok || !result.data) {
+        sendResponse(result);
+        return;
+      }
+
+      sendResponse({
+        ok: true,
+        data: {
+          ...result.data,
+          imageCount: imageBlobs.length,
+        },
+        imageBlobs,
+      });
+    })();
     return true;
   }
 });

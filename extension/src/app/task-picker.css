@@ -2,6 +2,21 @@
   position: relative;
 }
 
+.icon-btn-dots {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: #444;
+}
+
+.icon-btn-dots svg {
+  fill: currentColor;
+}
+
+.icon-btn-dots:hover {
+  color: #111;
+}
+
 .task-picker-dropdown {
   position: absolute;
   top: calc(100% + 6px);

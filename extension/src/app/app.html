@@ -17,7 +17,13 @@
           <button id="refreshPageBtn" class="icon-btn" type="button" title="刷新">⟳</button>
           <button id="settingsBtn" class="icon-btn" type="button" title="设置">⚙</button>
           <div class="task-picker-wrap" id="taskPickerWrap">
-            <button id="requirementBtn" class="icon-btn" type="button" title="需求模式">需</button>
+            <button id="requirementBtn" class="icon-btn icon-btn-dots" type="button" title="需求模式">
+              <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
+                <circle cx="8" cy="3.5" r="1.5" />
+                <circle cx="8" cy="8" r="1.5" />
+                <circle cx="8" cy="12.5" r="1.5" />
+              </svg>
+            </button>
             <div id="taskPickerDropdown" class="task-picker-dropdown" hidden></div>
           </div>
         </div>
@@ -27,21 +33,24 @@
         <div class="chat-messages" id="chatMessages"></div>
       </main>
 
-      <footer class="chat-footer">
-        <label class="checkbox compact">
-          <input type="checkbox" id="usePlanMode" checked />
-          先 Plan 分析，确认后再执行
-        </label>
-        <div class="composer" id="composer">
-          <div class="composer-input">
-            <div class="attachment-strip" id="attachmentStrip" hidden></div>
-            <textarea
-              id="prompt"
-              rows="3"
-              placeholder="描述要修改的内容；可粘贴或拖拽截图（最多 3 张）"
-            ></textarea>
+      <footer class="chat-footer" id="chatFooter">
+        <div class="footer-resizer" id="footerResizer" title="拖动调整输入区高度"></div>
+        <div class="chat-footer-body">
+          <label class="checkbox compact">
+            <input type="checkbox" id="usePlanMode" checked />
+            先 Plan 分析，确认后再执行
+          </label>
+          <div class="composer" id="composer">
+            <div class="composer-input">
+              <div class="attachment-strip" id="attachmentStrip" hidden></div>
+              <textarea
+                id="prompt"
+                rows="1"
+                placeholder="描述要修改的内容；可粘贴或拖拽截图（最多 3 张）"
+              ></textarea>
+            </div>
+            <button id="submitBtn" class="primary send-btn" type="button">发送</button>
           </div>
-          <button id="submitBtn" class="primary send-btn" type="button">发送</button>
         </div>
       </footer>
     </div>

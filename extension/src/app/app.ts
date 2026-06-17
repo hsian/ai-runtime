@@ -19,6 +19,7 @@ import {
   formatBytes,
 } from "../shared/imageCompress.js";
 import { initCodingTaskPicker } from "./codingTaskPicker.js";
+import { setupComposerResize } from "./composerResize.js";
 
 interface PendingAttachment {
   id: string;
@@ -93,6 +94,49 @@ function scrollChatToBottom(): void {
   requestAnimationFrame(() => {
     main.scrollTop = main.scrollHeight;
   });
+}
+
+function clearChatScreen(): void {
+  el<HTMLElement>("chatMessages").innerHTML = "";
+  seenEventIds.clear();
+  lastLocalUserBubble = null;
+}
+
+function setupChatContextMenu(): void {
+  const menu = document.createElement("div");
+  menu.id = "chatContextMenu";
+  menu.className = "chat-context-menu";
+  menu.hidden = true;
+  menu.innerHTML = `<button type="button" class="chat-context-item" data-action="clear">清屏</button>`;
+  document.body.appendChild(menu);
+
+  const hideMenu = (): void => {
+    menu.hidden = true;
+  };
+
+  el<HTMLElement>("chatMain").addEventListener("contextmenu", (event) => {
+    event.preventDefault();
+    const padding = 8;
+    const maxX = window.innerWidth - menu.offsetWidth - padding;
+    const maxY = window.innerHeight - menu.offsetHeight - padding;
+    menu.style.left = `${Math.min(event.clientX, maxX)}px`;
+    menu.style.top = `${Math.min(event.clientY, maxY)}px`;
+    menu.hidden = false;
+  });
+
+  menu.addEventListener("click", (event) => {
+    const target = event.target as HTMLElement;
+    if (target.dataset.action === "clear") {
+      clearChatScreen();
+      hideMenu();
+    }
+  });
+
+  document.addEventListener("click", hideMenu);
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") hideMenu();
+  });
+  window.addEventListener("blur", hideMenu);
 }
 
 function setConnectionStatus(text: string): void {
@@ -782,6 +826,8 @@ async function init(): Promise<void> {
   el<HTMLElement>("refreshPageBtn").addEventListener("click", refreshPagePreview);
   el<HTMLButtonElement>("submitBtn").addEventListener("click", handleSubmit);
   setupAttachmentHandlers();
+  setupComposerResize();
+  setupChatContextMenu();
 
   el<HTMLTextAreaElement>("prompt").addEventListener("keydown", (e) => {
     if (e.key === "Enter" && !e.shiftKey) {

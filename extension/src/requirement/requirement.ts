@@ -9,6 +9,7 @@ import {
 import type { TapdRequirement } from "../shared/types.js";
 
 let currentRequirement: TapdRequirement | null = null;
+let currentImageBlobs: Blob[] = [];
 
 function el<T extends HTMLElement>(id: string): T {
   const node = document.getElementById(id);
@@ -29,10 +30,14 @@ function renderRequirement(requirement: TapdRequirement): void {
 async function loadTapdRequirement(): Promise<void> {
   setStatus("正在读取 TAPD…");
   try {
-    const requirement = await fetchTapdRequirement();
+    const { requirement, imageBlobs } = await fetchTapdRequirement();
     currentRequirement = requirement;
+    currentImageBlobs = imageBlobs;
     renderRequirement(requirement);
-    setStatus("已读取 TAPD 需求");
+    el<HTMLTextAreaElement>("reqDraftPrompt").value = "";
+    const imageNote =
+      imageBlobs.length > 0 ? `，已提取 ${imageBlobs.length} 张配图（分析时会发给 AI）` : "";
+    setStatus(`已读取 TAPD 需求${imageNote}`);
   } catch (err) {
     setStatus(err instanceof Error ? err.message : "读取失败");
   }
@@ -52,13 +57,18 @@ async function handleAnalyze(): Promise<void> {
 
   const analyzeBtn = el<HTMLButtonElement>("reqAnalyzeBtn");
   analyzeBtn.disabled = true;
-  setStatus("AI 正在分析需求…");
+  setStatus(
+    currentImageBlobs.length > 0
+      ? `AI 正在分析需求（含 ${currentImageBlobs.length} 张配图）…`
+      : "AI 正在分析需求…"
+  );
 
   try {
     const result = await analyzeRequirement(config.serverUrl, {
       title: currentRequirement.title,
       tapdUrl: currentRequirement.url,
       rawContent: currentRequirement.contentText,
+      images: currentImageBlobs.length > 0 ? currentImageBlobs : undefined,
     });
     el<HTMLTextAreaElement>("reqDraftPrompt").value = result.draftPrompt;
     setStatus("分析完成，请核实或修改后加入任务");

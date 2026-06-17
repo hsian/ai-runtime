@@ -280,7 +280,7 @@ export async function runClaudeAgent(
   }
 
   if (isRequirement) {
-    args.push("--allowedTools", "WebSearch");
+    args.push("--allowedTools", "Read,WebSearch");
   }
 
   if (config.CLAUDE_MODEL) {

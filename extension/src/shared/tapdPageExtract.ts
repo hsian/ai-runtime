@@ -75,6 +75,16 @@ export function extractTapdRequirementInPage(): TapdExtractResult {
       .trim();
   }
 
+  function extractTapdTitle(): string {
+    const labelEls = document.querySelectorAll(".tapd-inline-label-selectable");
+    const labelEl = labelEls.length >= 4 ? labelEls[3] : labelEls[labelEls.length - 1];
+    if (labelEl) {
+      const text = labelEl.textContent?.replace(/\s+/g, " ").trim();
+      if (text) return text;
+    }
+    return document.title;
+  }
+
   const root = document.querySelector(".content-wrap");
   if (!root) {
     return {
@@ -95,7 +105,7 @@ export function extractTapdRequirementInPage(): TapdExtractResult {
     ok: true,
     data: {
       url: location.href,
-      title: document.title,
+      title: extractTapdTitle(),
       contentText,
       extractedAt: new Date().toISOString(),
     },

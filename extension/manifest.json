@@ -3,7 +3,7 @@
   "name": "AI Runtime - 测试环境代码助手",
   "version": "0.3.0",
   "description": "在测试页面提交修改需求，由服务端 AI 修改代码并推送到 Git",
-  "permissions": ["activeTab", "storage", "scripting", "tabs"],
+  "permissions": ["activeTab", "storage", "scripting", "tabs", "system.display"],
   "host_permissions": ["<all_urls>"],
   "action": {
     "default_title": "AI Runtime"

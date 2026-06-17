@@ -78,6 +78,12 @@ export interface TapdRequirement {
   title: string;
   contentText: string;
   extractedAt: string;
+  imageCount?: number;
+}
+
+export interface TapdRequirementFetchResult {
+  requirement: TapdRequirement;
+  imageBlobs: Blob[];
 }
 
 export interface RequirementTask {
@@ -94,6 +100,7 @@ export interface AnalyzeRequirementRequest {
   title: string;
   tapdUrl: string;
   rawContent: string;
+  images?: Blob[];
 }
 
 export interface AnalyzeRequirementResponse {
