@@ -7,6 +7,55 @@ import type {
 } from "./types.js";
 import { normalizeServerUrl } from "./config.js";
 
+interface SerializedImage {
+  dataUrl: string;
+  type?: string;
+  name?: string;
+}
+
+function isBlob(value: unknown): value is Blob {
+  return typeof Blob !== "undefined" && value instanceof Blob;
+}
+
+function isSerializedImage(value: unknown): value is SerializedImage {
+  return Boolean(
+    value &&
+      typeof value === "object" &&
+      typeof (value as { dataUrl?: unknown }).dataUrl === "string"
+  );
+}
+
+function dataUrlToBlob(dataUrl: string, typeHint?: string): Blob | null {
+  const match = /^data:([^;,]+)?(;base64)?,(.*)$/s.exec(dataUrl);
+  if (!match) return null;
+
+  const mime = typeHint || match[1] || "application/octet-stream";
+  const payload = match[3] ?? "";
+  const binary = match[2] ? atob(payload) : decodeURIComponent(payload);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i += 1) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  return new Blob([bytes], { type: mime });
+}
+
+function normalizeImagePayloads(raw: unknown): Blob[] {
+  if (!Array.isArray(raw)) return [];
+
+  const blobs: Blob[] = [];
+  for (const item of raw) {
+    if (isBlob(item)) {
+      blobs.push(item);
+      continue;
+    }
+    if (isSerializedImage(item)) {
+      const blob = dataUrlToBlob(item.dataUrl, item.type);
+      if (blob) blobs.push(blob);
+    }
+  }
+  return blobs;
+}
+
 export async function fetchTapdRequirement(): Promise<TapdRequirementFetchResult> {
   const response = await chrome.runtime.sendMessage({ type: "GET_TAPD_REQUIREMENT" });
   if (!response?.ok || !response.data) {
@@ -15,7 +64,7 @@ export async function fetchTapdRequirement(): Promise<TapdRequirementFetchResult
 
   return {
     requirement: response.data,
-    imageBlobs: Array.isArray(response.imageBlobs) ? response.imageBlobs : [],
+    imageBlobs: normalizeImagePayloads(response.imageBlobs),
   };
 }
 
@@ -74,6 +123,20 @@ export async function fetchAnalyzeSession(
     throw new Error(data.error ?? `查询失败: ${res.status}`);
   }
   return data;
+}
+
+export async function fetchAnalyzeEvents(
+  serverUrl: string,
+  sessionId: string
+): Promise<AnalyzeEvent[]> {
+  const res = await fetch(
+    `${normalizeServerUrl(serverUrl)}/api/requirements/analyze/${encodeURIComponent(sessionId)}/events`
+  );
+  const data = (await res.json()) as { events?: AnalyzeEvent[]; error?: string };
+  if (!res.ok) {
+    throw new Error(data.error ?? `查询失败: ${res.status}`);
+  }
+  return Array.isArray(data.events) ? data.events : [];
 }
 
 export function openAnalyzeEventStream(

@@ -17,6 +17,10 @@
       </header>
 
       <main class="req-main">
+        <p class="req-flow-hint">
+          本页只做文字整理（与代码无关）→ 编码模式 Plan 读仓库出方案 → 确认后执行改代码
+        </p>
+
         <section class="req-card">
           <div class="req-card-head">
             <h2>① 读取 TAPD 需求</h2>
@@ -24,29 +28,34 @@
           <p class="req-title" id="reqPageTitle">请在浏览器打开 TAPD 需求详情页</p>
           <p class="req-url" id="reqPageUrl"></p>
           <details class="req-raw" open>
-            <summary>原始需求预览</summary>
-            <pre id="reqRawPreview"></pre>
+            <summary>原始需求（可编辑，整理前可删减废话）</summary>
+            <textarea
+              id="reqRawPreview"
+              class="req-raw-input"
+              rows="10"
+              placeholder="读取 TAPD 后在此编辑需求正文…"
+            ></textarea>
           </details>
         </section>
 
         <section class="req-card">
           <div class="req-card-head">
-            <h2>② AI 整理 Prompt</h2>
-            <button id="reqAnalyzeBtn" class="req-link-btn" type="button">开始分析</button>
+            <h2>② AI 整理任务描述</h2>
+            <button id="reqAnalyzeBtn" class="req-link-btn" type="button">开始整理</button>
           </div>
           <div id="reqAnalyzeProgress" class="req-analyze-progress hidden">
             <div class="req-progress-head">
-              <span id="reqProgressLabel">分析中…</span>
+              <span id="reqProgressLabel">整理中…</span>
               <span id="reqProgressElapsed">0s</span>
             </div>
             <div id="reqProgressLog" class="req-progress-log"></div>
           </div>
-          <p class="req-hint">分析结果可编辑，确认后加入任务列表</p>
+          <p class="req-hint">整理结果可编辑，确认后加入任务列表（供编码模式使用）</p>
           <textarea
             id="reqDraftPrompt"
             class="req-prompt"
             rows="12"
-            placeholder="点击「开始分析」由 AI 整理需求；也可手动编写"
+            placeholder="点击「开始整理」由 AI 润色需求文字；也可手动编写"
           ></textarea>
         </section>
       </main>

@@ -1,6 +1,6 @@
 import { randomUUID } from "crypto";
 import { Router } from "express";
-import { AgentAbortedError } from "../services/agent/claudeAgentService.js";
+import { RequirementPolishAbortedError } from "../services/requirementTextPolisher.js";
 import { analyzeRequirement } from "../services/requirementAnalyzer.js";
 import {
   appendAnalyzeEvent,
@@ -55,7 +55,7 @@ async function runAnalyzeSession(
     appendAnalyzeEvent(sessionId, {
       type: "stage",
       phase: "prepare",
-      text: "正在准备分析…",
+      text: "正在准备整理…",
     });
 
     if (attachments.length > 0) {
@@ -73,50 +73,57 @@ async function runAnalyzeSession(
     appendAnalyzeEvent(sessionId, {
       type: "stage",
       phase: "agent",
-      text: `Claude 正在分析需求（${charLabel}）…`,
+      text: `AI 正在整理需求文字（${charLabel}）…`,
     });
-    updateAnalyzeSession(sessionId, { message: `Claude 正在分析（${charLabel}）…` });
+    updateAnalyzeSession(sessionId, { message: `正在整理需求文字（${charLabel}）…` });
 
-    const draftPrompt = await analyzeRequirement(title, tapdUrl, trimmedContent, attachments, {
-      sessionId,
-      onEvent: (event) => {
-        if (getAnalyzeSession(sessionId)?.status === "cancelled") return;
+    const keepalive = setInterval(() => {
+      const session = getAnalyzeSession(sessionId);
+      if (!session || session.status !== "running") return;
+      const elapsedSec = Math.floor((Date.now() - Date.parse(session.createdAt)) / 1000);
+      const label =
+        elapsedSec >= 60
+          ? `仍在整理文字（已运行 ${Math.floor(elapsedSec / 60)}m ${elapsedSec % 60}s）…`
+          : `仍在整理文字（已运行 ${elapsedSec}s）…`;
+      updateAnalyzeSession(sessionId, { message: label });
+    }, 15_000);
 
-        if (event.type === "agent_text" && event.delta) {
-          appendAnalyzeEvent(sessionId, { type: "agent_text", delta: event.delta });
-        }
+    try {
+      let streamedText = false;
+      const draftPrompt = await analyzeRequirement(title, tapdUrl, trimmedContent, attachments, {
+        sessionId,
+        onEvent: (event) => {
+          if (getAnalyzeSession(sessionId)?.status === "cancelled") return;
 
-        if (event.type === "agent_tool" && event.toolName) {
-          const detail = event.toolDetail ? `: ${event.toolDetail}` : "";
-          appendAnalyzeEvent(sessionId, {
-            type: "agent_tool",
-            toolAction: event.toolAction ?? "start",
-            toolName: event.toolName,
-            toolDetail: event.toolDetail,
-            text:
-              event.toolAction === "done"
-                ? `✓ ${event.toolName}`
-                : `▶ ${event.toolName}${detail}`,
-          });
-        }
-      },
-    });
+          if (event.type === "agent_text" && event.delta) {
+            streamedText = true;
+            appendAnalyzeEvent(sessionId, { type: "agent_text", delta: event.delta });
+          }
+        },
+      });
 
-    if (getAnalyzeSession(sessionId)?.status === "cancelled") return;
+      if (getAnalyzeSession(sessionId)?.status === "cancelled") return;
 
-    updateAnalyzeSession(sessionId, {
-      status: "completed",
-      draftPrompt,
-      message: "分析完成",
-    });
-    appendAnalyzeEvent(sessionId, {
-      type: "done",
-      text: "分析完成",
-      draftPrompt,
-      message: "分析完成",
-    });
+      if (!streamedText && draftPrompt.trim()) {
+        appendAnalyzeEvent(sessionId, { type: "agent_text", delta: draftPrompt });
+      }
+
+      updateAnalyzeSession(sessionId, {
+        status: "completed",
+        draftPrompt,
+        message: "整理完成",
+      });
+      appendAnalyzeEvent(sessionId, {
+        type: "done",
+        text: "整理完成",
+        draftPrompt,
+        message: "整理完成",
+      });
+    } finally {
+      clearInterval(keepalive);
+    }
   } catch (err) {
-    if (err instanceof AgentAbortedError || getAnalyzeSession(sessionId)?.status === "cancelled") {
+    if (err instanceof RequirementPolishAbortedError || getAnalyzeSession(sessionId)?.status === "cancelled") {
       return;
     }
 
@@ -217,6 +224,16 @@ requirementsRouter.post("/analyze/:sessionId/cancel", (req, res) => {
 
   cancelAnalyzeSession(sessionId);
   res.json({ ok: true, status: "cancelled" });
+});
+
+requirementsRouter.get("/analyze/:sessionId/events", (req, res) => {
+  const session = getAnalyzeSession(req.params.sessionId);
+  if (!session) {
+    res.status(404).json({ error: "分析任务不存在" });
+    return;
+  }
+
+  res.json({ events: getAnalyzeEvents(session.sessionId) });
 });
 
 requirementsRouter.get("/analyze/:sessionId", (req, res) => {

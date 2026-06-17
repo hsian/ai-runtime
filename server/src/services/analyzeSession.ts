@@ -1,5 +1,5 @@
 import { randomUUID } from "crypto";
-import { killAgentForJob } from "./agent/claudeAgentService.js";
+import { abortRequirementPolish } from "./requirementTextPolisher.js";
 
 export type AnalyzeSessionStatus = "running" | "completed" | "failed" | "cancelled";
 
@@ -88,6 +88,11 @@ export function appendAnalyzeEvent(sessionId: string, input: AnalyzeEventInput):
   }
   events.set(sessionId, list);
 
+  const session = sessions.get(sessionId);
+  if (session) {
+    touchSession(session);
+  }
+
   const subs = subscribers.get(sessionId);
   if (subs) {
     for (const cb of subs) {
@@ -133,15 +138,15 @@ export function cancelAnalyzeSession(sessionId: string): AnalyzeSession | undefi
     return session;
   }
 
-  killAgentForJob(sessionId);
+  abortRequirementPolish(sessionId);
   session.status = "cancelled";
-  session.message = "分析已取消";
+  session.message = "整理已取消";
   touchSession(session);
 
   appendAnalyzeEvent(sessionId, {
     type: "cancelled",
-    text: "分析已取消",
-    message: "分析已取消",
+    text: "整理已取消",
+    message: "整理已取消",
   });
 
   return session;

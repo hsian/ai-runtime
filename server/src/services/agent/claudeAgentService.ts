@@ -5,7 +5,6 @@ import {
   buildClaudePlanPrompt,
   buildClaudeTaskPrompt,
   PLAN_SYSTEM_PROMPT,
-  REQUIREMENT_ANALYZE_SYSTEM_PROMPT,
   summarizeToolInput,
   SYSTEM_PROMPT,
   type AgentEventHandler,
@@ -126,7 +125,8 @@ function runClaudeCommand(
   cwd: string,
   stdinText: string,
   jobId?: string,
-  onEvent?: AgentEventHandler
+  onEvent?: AgentEventHandler,
+  timeoutMs = config.CLAUDE_TIMEOUT_MS
 ): Promise<string> {
   return new Promise((resolve, reject) => {
     let aborted = false;
@@ -179,8 +179,8 @@ function runClaudeCommand(
     const timer = setTimeout(() => {
       aborted = true;
       killChildProcess(child);
-      reject(new Error(`Claude Code 执行超时（${config.CLAUDE_TIMEOUT_MS}ms）`));
-    }, config.CLAUDE_TIMEOUT_MS);
+      reject(new Error(`Claude Code 执行超时（${timeoutMs}ms）`));
+    }, timeoutMs);
 
     child.on("error", (err) => {
       clearTimeout(timer);
@@ -236,24 +236,18 @@ export async function runClaudeAgent(
   options?: {
     permissionMode?: string;
     systemPrompt?: string;
-    mode?: "plan" | "execute" | "requirement";
+    mode?: "plan" | "execute";
     jobId?: string;
     attachments?: JobAttachment[];
   }
 ): Promise<AgentResult> {
-  const isRequirement = options?.mode === "requirement";
-  const isPlan =
-    isRequirement || options?.mode === "plan" || options?.permissionMode === "plan";
-  const permissionMode =
-    options?.permissionMode ?? (isRequirement ? "plan" : config.CLAUDE_PERMISSION_MODE);
+  const isPlan = options?.mode === "plan" || options?.permissionMode === "plan";
+  const permissionMode = options?.permissionMode ?? config.CLAUDE_PERMISSION_MODE;
   const systemPrompt =
-    options?.systemPrompt ??
-    (isRequirement ? REQUIREMENT_ANALYZE_SYSTEM_PROMPT : isPlan ? PLAN_SYSTEM_PROMPT : SYSTEM_PROMPT);
-  const userPrompt = isRequirement
-    ? prompt
-    : isPlan
-      ? buildClaudePlanPrompt(prompt, pageContext, options?.attachments)
-      : buildClaudeTaskPrompt(prompt, pageContext, options?.attachments);
+    options?.systemPrompt ?? (isPlan ? PLAN_SYSTEM_PROMPT : SYSTEM_PROMPT);
+  const userPrompt = isPlan
+    ? buildClaudePlanPrompt(prompt, pageContext, options?.attachments)
+    : buildClaudeTaskPrompt(prompt, pageContext, options?.attachments);
 
   const args = [
     "-p",
@@ -270,17 +264,13 @@ export async function runClaudeAgent(
     "--include-partial-messages",
   ];
 
-  // Plan / 需求分析模式严禁跳过权限
+  // Plan 模式严禁跳过权限；执行模式可按配置跳过
   if (config.CLAUDE_SKIP_PERMISSIONS && !isPlan) {
     args.splice(1, 0, "--dangerously-skip-permissions");
   }
 
-  if (isPlan && !isRequirement) {
+  if (isPlan) {
     args.push("--allowedTools", "Read,Grep,Glob,WebFetch,WebSearch");
-  }
-
-  if (isRequirement) {
-    args.push("--allowedTools", "Read,WebSearch");
   }
 
   if (config.CLAUDE_MODEL) {
@@ -288,11 +278,18 @@ export async function runClaudeAgent(
   }
 
   console.log(
-    `[AI Runtime] 调用 Claude Code CLI (${IS_WINDOWS ? "Windows" : process.platform})，模式: ${isRequirement ? "requirement" : isPlan ? "plan" : "execute"}，工作目录: ${repoPath}`
+    `[AI Runtime] Claude Code CLI，模式: ${isPlan ? "plan（读仓库出方案）" : "execute（改代码）"}，目录: ${repoPath}`
   );
   console.log(`[AI Runtime] 任务: ${prompt}`);
 
-  const output = await runClaudeCommand(args, repoPath, userPrompt, options?.jobId, onEvent);
+  const output = await runClaudeCommand(
+    args,
+    repoPath,
+    userPrompt,
+    options?.jobId,
+    onEvent,
+    config.CLAUDE_TIMEOUT_MS
+  );
 
   return {
     summary: output || (isPlan ? "Plan 分析完成" : "Claude Code 已完成代码修改"),

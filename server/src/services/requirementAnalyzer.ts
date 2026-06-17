@@ -1,12 +1,8 @@
-import { resolve } from "path";
-import { runClaudeAgent } from "./agent/claudeAgentService.js";
-import {
-  buildRequirementAnalyzePrompt,
-  REQUIREMENT_ANALYZE_SYSTEM_PROMPT,
-  type AgentEventHandler,
-} from "./agent/types.js";
+import type { AgentEventHandler } from "./agent/types.js";
 import type { JobAttachment } from "../types.js";
+import { polishRequirementText } from "./requirementTextPolisher.js";
 
+/** 需求整理入口（Claude Code 纯文字，与编码 Plan/执行 独立调用） */
 export async function analyzeRequirement(
   title: string,
   tapdUrl: string,
@@ -17,15 +13,5 @@ export async function analyzeRequirement(
     onEvent?: AgentEventHandler;
   }
 ): Promise<string> {
-  const userPrompt = buildRequirementAnalyzePrompt(title, tapdUrl, rawContent, attachments);
-
-  const result = await runClaudeAgent(resolve(process.cwd()), userPrompt, undefined, options?.onEvent, {
-    mode: "requirement",
-    systemPrompt: REQUIREMENT_ANALYZE_SYSTEM_PROMPT,
-    permissionMode: "plan",
-    jobId: options?.sessionId,
-    attachments: attachments.length > 0 ? attachments : undefined,
-  });
-
-  return result.summary.trim();
+  return polishRequirementText(title, tapdUrl, rawContent, attachments, options);
 }

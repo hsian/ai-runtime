@@ -1,8 +1,16 @@
 import express from "express";
 import cors from "cors";
 import { config } from "./config.js";
-import { jobsRouter } from "./routes/jobs.js";
+import { jobsRouter, resumeInterruptedPlans } from "./routes/jobs.js";
 import { requirementsRouter } from "./routes/requirements.js";
+import { initJobEvents, getJobEventsMap } from "./services/jobEvents.js";
+import { initJobStore, getJobsMap } from "./services/jobStore.js";
+import { wireJobPersistence } from "./services/jobPersistence.js";
+
+initJobEvents();
+wireJobPersistence(getJobsMap(), getJobEventsMap());
+initJobStore();
+resumeInterruptedPlans();
 
 const app = express();
 

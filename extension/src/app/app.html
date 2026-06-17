@@ -38,7 +38,7 @@
         <div class="chat-footer-body">
           <label class="checkbox compact">
             <input type="checkbox" id="usePlanMode" checked />
-            先 Plan 分析，确认后再执行
+            先 Plan（读仓库出方案），确认后再执行改代码
           </label>
           <div class="composer" id="composer">
             <div class="composer-input">
@@ -53,6 +53,23 @@
           </div>
         </div>
       </footer>
+    </div>
+
+    <div id="pageConfirmModal" class="page-confirm-modal" hidden>
+      <div class="page-confirm-backdrop" id="pageConfirmBackdrop"></div>
+      <div class="page-confirm-dialog" role="dialog" aria-labelledby="pageConfirmHeading">
+        <h2 id="pageConfirmHeading" class="page-confirm-heading">确认当前页面</h2>
+        <p class="page-confirm-lead">发送前请确认浏览器中打开的是要修改的页面：</p>
+        <div class="page-confirm-page">
+          <div id="pageConfirmTitle" class="page-confirm-title"></div>
+          <div id="pageConfirmUrl" class="page-confirm-url"></div>
+        </div>
+        <p id="pageConfirmHint" class="page-confirm-hint"></p>
+        <div class="page-confirm-actions">
+          <button id="pageConfirmCancel" class="secondary" type="button">取消</button>
+          <button id="pageConfirmOk" class="primary" type="button">确认并发送</button>
+        </div>
+      </div>
     </div>
     <script type="module" src="./app.ts"></script>
   </body>

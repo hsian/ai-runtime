@@ -3,15 +3,18 @@ import { loadConfig } from "../shared/config.js";
 import {
   fetchCurrentTabPreview,
   fetchPageContext,
+  fetchJobEvents,
   formatErrorMessage,
+  isNotFoundError,
   openJobEventStream,
   cancelJob,
   executeJob,
   queryJobStatus,
+  queryJobStatusWithRetry,
   submitPlan,
   submitJob,
 } from "../shared/api.js";
-import type { JobEvent, JobStatus, JobStatusType, SubmitRequest } from "../shared/types.js";
+import type { JobEvent, JobStatus, JobStatusType, PageContext, SubmitRequest } from "../shared/types.js";
 import {
   MAX_ATTACHMENTS,
   HARD_MAX_BYTES,
@@ -29,6 +32,7 @@ interface PendingAttachment {
 }
 
 const AGENT_STREAM_KEY = "agent-stream";
+const PLAN_RESULT_KEY = "plan-result";
 const QUEUE_CARD_KEY = "queue-card";
 const CONFIRM_CARD_KEY = "confirm-card";
 
@@ -37,10 +41,77 @@ let activeJobId: string | null = null;
 let currentJobStatus: JobStatusType | null = null;
 const seenEventIds = new Set<string>();
 let lastEventAt = Date.now();
+let recoverAttemptAt = 0;
 let lastLocalUserBubble:
   | { localId: string; text: string; pageUrl?: string; createdAtMs: number; imageUrls?: string[] }
   | null = null;
 const pendingAttachments: PendingAttachment[] = [];
+let planOutputBuffer = "";
+let planOutputJobId: string | null = null;
+
+function resetPlanOutputBuffer(jobId: string | null = null): void {
+  planOutputBuffer = "";
+  planOutputJobId = jobId;
+}
+
+function bufferPlanAgentDelta(jobId: string, delta: string): void {
+  if (planOutputJobId !== jobId) {
+    planOutputBuffer = "";
+    planOutputJobId = jobId;
+  }
+  planOutputBuffer += delta;
+}
+
+function hasPlanResultBubble(jobId: string): boolean {
+  return Boolean(
+    el<HTMLElement>("chatMessages").querySelector(`[data-key="${PLAN_RESULT_KEY}-${jobId}"]`)
+  );
+}
+
+function shouldBufferPlanOutput(jobId: string): boolean {
+  if (currentJobStatus === "planning") return true;
+  if (
+    (currentJobStatus === "awaiting_confirm" || currentJobStatus === "awaiting_input") &&
+    !hasPlanResultBubble(jobId)
+  ) {
+    return true;
+  }
+  return false;
+}
+
+function flushPlanResultBubble(jobId: string, fallbackText?: string): void {
+  const text = (planOutputBuffer || fallbackText || "").trim();
+  resetPlanOutputBuffer(null);
+
+  const container = el<HTMLElement>("chatMessages");
+  container.querySelector(`[data-key="${AGENT_STREAM_KEY}-${jobId}"]`)?.remove();
+
+  const existing = container.querySelector<HTMLElement>(`[data-key="${PLAN_RESULT_KEY}-${jobId}"]`);
+  if (existing) {
+    const bubble = existing.querySelector<HTMLElement>(".msg-bubble");
+    if (bubble && text) bubble.textContent = text;
+    container.appendChild(existing);
+    return;
+  }
+
+  if (!text) return;
+
+  const node = document.createElement("div");
+  node.className = "msg msg-agent msg-plan-result";
+  node.dataset.key = `${PLAN_RESULT_KEY}-${jobId}`;
+  node.innerHTML = `
+    <div class="msg-meta">Plan 方案</div>
+    <div class="msg-bubble"></div>
+  `;
+  node.querySelector<HTMLElement>(".msg-bubble")!.textContent = text;
+  container.appendChild(node);
+}
+
+function moveMessageToBottom(key: string): void {
+  const container = el<HTMLElement>("chatMessages");
+  const node = container.querySelector<HTMLElement>(`[data-key="${key}"]`);
+  if (node) container.appendChild(node);
+}
 
 function isCancellableStatus(status: JobStatusType | null): boolean {
   return status === "planning" || status === "pending" || status === "running";
@@ -73,7 +144,11 @@ async function cancelActiveJob(): Promise<void> {
     updateSubmitButton();
     setConnectionStatus("任务已取消");
   } catch (err) {
-    setConnectionStatus(formatErrorMessage(config.serverUrl, err));
+    if (isNotFoundError(err)) {
+      resetActiveJob("服务端任务已不存在（可能已重启或超时），请重新提交");
+    } else {
+      setConnectionStatus(formatErrorMessage(config.serverUrl, err));
+    }
   } finally {
     btn.disabled = false;
   }
@@ -186,9 +261,92 @@ function confirmCardStatusLabel(status: JobStatusType): string {
   }
 }
 
-function isNotFoundError(err: unknown): boolean {
-  const msg = err instanceof Error ? err.message : String(err);
-  return msg.includes("任务不存在") || msg.includes("404");
+function resetActiveJob(message: string): void {
+  activeStream?.close();
+  activeStream = null;
+  activeJobId = null;
+  currentJobStatus = null;
+  void chrome.storage.local.remove(["lastJobId"]);
+  updateSubmitButton();
+  setConnectionStatus(message);
+}
+
+function renderPlanResultFromSummary(jobId: string, summary: string): void {
+  if (!summary.trim()) return;
+  planOutputBuffer = summary;
+  planOutputJobId = jobId;
+  flushPlanResultBubble(jobId, summary);
+}
+
+async function syncMissedJobEvents(serverUrl: string, jobId: string): Promise<void> {
+  const events = await fetchJobEvents(serverUrl, jobId);
+  for (const event of events) {
+    handleJobEvent(event);
+  }
+}
+
+function applyServerJobState(job: JobStatus): void {
+  currentJobStatus = job.status;
+
+  if (job.status === "awaiting_confirm" || job.status === "awaiting_input") {
+    if (job.planSummary) {
+      renderPlanResultFromSummary(job.jobId, job.planSummary);
+    }
+    upsertConfirmCard(job.jobId, job.status);
+    setConnectionStatus(job.status === "awaiting_input" ? "需要补充信息" : "等待确认执行");
+    updateSubmitButton();
+    return;
+  }
+
+  if (job.status === "planning") {
+    setConnectionStatus("Plan 分析中…");
+    updateSubmitButton();
+    return;
+  }
+
+  if (job.status === "pending" || job.status === "running") {
+    setConnectionStatus(job.status === "running" ? "执行中" : "排队中");
+    updateSubmitButton();
+  }
+}
+
+async function recoverJobConnection(serverUrl: string, jobId: string): Promise<void> {
+  if (activeJobId !== jobId || isTerminalStatus(currentJobStatus)) return;
+
+  try {
+    const job = await queryJobStatusWithRetry(serverUrl, jobId);
+    await syncMissedJobEvents(serverUrl, jobId);
+    applyServerJobState(job);
+
+    if (isTerminalStatus(job.status)) {
+      if (job.status === "failed") {
+        setConnectionStatus(job.error ?? job.message ?? "Plan 执行失败");
+        activeStream?.close();
+        activeStream = null;
+        updateSubmitButton();
+      } else {
+        resetActiveJob(
+          job.status === "completed"
+            ? "任务已完成（连接曾中断，已从服务端同步）"
+            : job.status === "cancelled"
+              ? "任务已取消"
+              : job.error ?? job.message ?? "任务已结束"
+        );
+      }
+      return;
+    }
+
+    if (job.status === "awaiting_confirm" || job.status === "awaiting_input") {
+      return;
+    }
+
+    connectJobStream(serverUrl, jobId, job.status);
+    setConnectionStatus("连接已恢复，继续接收进度…");
+  } catch (err) {
+    if (isNotFoundError(err)) {
+      resetActiveJob("服务端任务已不存在（可能已重启或超时），请重新提交");
+    }
+  }
 }
 
 function renderPagePreview(url: string, title?: string): void {
@@ -261,23 +419,41 @@ function appendUserBubble(event: JobEvent, imageUrls?: string[]): void {
 }
 
 function tryReconcileServerUserEvent(event: JobEvent): boolean {
-  if (!lastLocalUserBubble) return false;
-  const withinMs = Date.now() - lastLocalUserBubble.createdAtMs;
-  if (withinMs > 8000) return false;
-
-  const sameText = (event.text ?? "") === lastLocalUserBubble.text;
-  const sameUrl = (event.pageUrl ?? "") === (lastLocalUserBubble.pageUrl ?? "");
-  if (!sameText || !sameUrl) return false;
+  const text = (event.text ?? "").trim();
+  if (!text) return false;
 
   const container = el<HTMLElement>("chatMessages");
-  const localNode = container.querySelector<HTMLElement>(`[data-key="${lastLocalUserBubble.localId}"]`);
-  if (!localNode) return false;
 
-  // 用服务端 event.id 替换本地临时 id，避免出现两条相同气泡
-  localNode.dataset.key = event.id;
-  seenEventIds.add(event.id);
-  lastLocalUserBubble = null;
-  return true;
+  if (lastLocalUserBubble && lastLocalUserBubble.text.trim() === text) {
+    const localNode = container.querySelector<HTMLElement>(
+      `[data-key="${lastLocalUserBubble.localId}"]`
+    );
+    if (localNode) {
+      localNode.dataset.key = event.id;
+      lastLocalUserBubble = null;
+      return true;
+    }
+  }
+
+  return mergePendingLocalUserBubble(event);
+}
+
+/** 将服务端 user 事件合并到尚未替换 id 的本地气泡（避免上传截图较慢时重复显示） */
+function mergePendingLocalUserBubble(event: JobEvent): boolean {
+  const text = (event.text ?? "").trim();
+  if (!text) return false;
+
+  const container = el<HTMLElement>("chatMessages");
+  for (const node of container.querySelectorAll<HTMLElement>('.msg-user[data-key^="local-"]')) {
+    const bubble = node.querySelector(".msg-bubble");
+    if (bubble?.textContent?.trim() !== text) continue;
+    if (lastLocalUserBubble?.localId === node.dataset.key) {
+      lastLocalUserBubble = null;
+    }
+    node.dataset.key = event.id;
+    return true;
+  }
+  return false;
 }
 
 function updateQueueCard(event: JobEvent): void {
@@ -326,6 +502,7 @@ function upsertConfirmCard(jobId: string, status: JobStatusType = currentJobStat
         <div class="confirm-status">${escapeHtml(statusLabel)}</div>
       </div>
     `;
+    moveMessageToBottom(`${CONFIRM_CARD_KEY}-${jobId}`);
     return;
   }
 
@@ -340,6 +517,7 @@ function upsertConfirmCard(jobId: string, status: JobStatusType = currentJobStat
       <div class="hint" style="margin-top:8px;">提示：执行后才会创建分支并合并到 test</div>
     </div>
   `;
+  moveMessageToBottom(`${CONFIRM_CARD_KEY}-${jobId}`);
 
   const execBtn = node.querySelector<HTMLButtonElement>('button[data-action="execute"]');
   const cancelBtn = node.querySelector<HTMLButtonElement>('button[data-action="cancel"]');
@@ -393,8 +571,14 @@ function upsertConfirmCard(jobId: string, status: JobStatusType = currentJobStat
   }
 }
 
-function appendAgentDelta(delta: string): void {
-  const key = `${AGENT_STREAM_KEY}-${activeJobId ?? "unknown"}`;
+function appendAgentDelta(delta: string, jobId?: string): void {
+  const effectiveJobId = jobId ?? activeJobId ?? "unknown";
+  if (shouldBufferPlanOutput(effectiveJobId)) {
+    bufferPlanAgentDelta(effectiveJobId, delta);
+    return;
+  }
+
+  const key = `${AGENT_STREAM_KEY}-${effectiveJobId}`;
   const node = ensureMessageElement(key, "msg msg-agent");
   let bubble = node.querySelector<HTMLElement>(".msg-bubble");
   let meta = node.querySelector<HTMLElement>(".msg-meta");
@@ -604,11 +788,13 @@ function handleJobEvent(event: JobEvent): void {
     case "stage":
       appendStageBubble(event);
       if (event.phase === "plan_done") {
+        flushPlanResultBubble(event.jobId);
         currentJobStatus = "awaiting_confirm";
         upsertConfirmCard(event.jobId, "awaiting_confirm");
         setConnectionStatus("等待确认执行");
         updateSubmitButton();
       } else if (event.phase === "plan_need_more") {
+        flushPlanResultBubble(event.jobId);
         currentJobStatus = "awaiting_input";
         upsertConfirmCard(event.jobId, "awaiting_input");
         setConnectionStatus("需要补充信息");
@@ -623,13 +809,14 @@ function handleJobEvent(event: JobEvent): void {
         setConnectionStatus("执行中");
         updateSubmitButton();
       } else if (event.phase === "plan") {
+        resetPlanOutputBuffer(event.jobId);
         currentJobStatus = "planning";
         setConnectionStatus("Plan 分析中");
         updateSubmitButton();
       }
       break;
     case "agent_text":
-      if (event.delta) appendAgentDelta(event.delta);
+      if (event.delta) appendAgentDelta(event.delta, event.jobId);
       break;
     case "agent_tool":
       appendToolLine(event);
@@ -644,6 +831,7 @@ function handleJobEvent(event: JobEvent): void {
       updateSubmitButton();
       break;
     case "cancelled":
+      resetPlanOutputBuffer(null);
       currentJobStatus = "cancelled";
       appendCancelledBubble(event);
       upsertConfirmCard(event.jobId, "cancelled");
@@ -653,6 +841,7 @@ function handleJobEvent(event: JobEvent): void {
       updateSubmitButton();
       break;
     case "error":
+      resetPlanOutputBuffer(null);
       if (isCancelledEvent(event)) {
         currentJobStatus = "cancelled";
         appendCancelledBubble(event);
@@ -678,6 +867,7 @@ function connectJobStream(serverUrl: string, jobId: string, initialStatus?: JobS
   if (initialStatus) currentJobStatus = initialStatus;
   setConnectionStatus("加载任务记录…");
   lastEventAt = Date.now();
+  recoverAttemptAt = 0;
 
   activeStream = openJobEventStream(serverUrl, jobId, handleJobEvent, {
     onOpen: () => {
@@ -690,11 +880,32 @@ function connectJobStream(serverUrl: string, jobId: string, initialStatus?: JobS
     },
     onError: () => {
       const quietMs = Date.now() - lastEventAt;
+      const recoverAfterMs = currentJobStatus === "planning" ? 120_000 : 20_000;
       if (quietMs > 4000 && activeStream && !isTerminalStatus(currentJobStatus)) {
-        setConnectionStatus("连接不稳定，正在重试…");
+        setConnectionStatus("Plan 分析中，连接不稳定，正在自动重试…");
+      }
+      if (
+        quietMs > recoverAfterMs &&
+        activeJobId === jobId &&
+        !isTerminalStatus(currentJobStatus) &&
+        currentJobStatus !== "awaiting_confirm" &&
+        currentJobStatus !== "awaiting_input" &&
+        Date.now() - recoverAttemptAt > 15_000
+      ) {
+        recoverAttemptAt = Date.now();
+        void recoverJobConnection(serverUrl, jobId);
       }
     },
     onClose: () => {
+      if (
+        activeJobId === jobId &&
+        !isTerminalStatus(currentJobStatus) &&
+        currentJobStatus !== "awaiting_confirm" &&
+        currentJobStatus !== "awaiting_input"
+      ) {
+        void recoverJobConnection(serverUrl, jobId);
+        return;
+      }
       if (activeStream && currentJobStatus) {
         applyHeaderStatusFromJob({ jobId, status: currentJobStatus, createdAt: "", updatedAt: "" });
       }
@@ -704,6 +915,66 @@ function connectJobStream(serverUrl: string, jobId: string, initialStatus?: JobS
 
 function isTerminalStatus(status: JobStatusType | null): boolean {
   return status === "completed" || status === "failed" || status === "cancelled";
+}
+
+let pageConfirmResolver: ((confirmed: boolean) => void) | null = null;
+
+function closePageConfirmModal(confirmed: boolean): void {
+  const modal = document.getElementById("pageConfirmModal");
+  if (modal) modal.hidden = true;
+  const resolver = pageConfirmResolver;
+  pageConfirmResolver = null;
+  resolver?.(confirmed);
+}
+
+function showPageConfirmModal(pageContext: PageContext | undefined): Promise<boolean> {
+  return new Promise((resolve) => {
+    const modal = el<HTMLElement>("pageConfirmModal");
+    const titleEl = el<HTMLElement>("pageConfirmTitle");
+    const urlEl = el<HTMLElement>("pageConfirmUrl");
+    const hintEl = el<HTMLElement>("pageConfirmHint");
+    const okBtn = el<HTMLButtonElement>("pageConfirmOk");
+
+    pageConfirmResolver = resolve;
+
+    if (!pageContext?.url) {
+      titleEl.textContent = "未找到浏览器页面";
+      urlEl.textContent = "请先在浏览器打开要修改的测试页面";
+      hintEl.textContent = "无法获取页面上下文时不能发送任务。";
+      okBtn.disabled = true;
+    } else {
+      titleEl.textContent = pageContext.title?.trim() || "当前页面";
+      urlEl.textContent = pageContext.url;
+      hintEl.textContent = "Plan 会结合当前页面 URL 定位源码，请确认这就是你要改的那个页面。";
+      okBtn.disabled = false;
+    }
+
+    modal.hidden = false;
+    if (!okBtn.disabled) {
+      okBtn.focus();
+    } else {
+      el<HTMLButtonElement>("pageConfirmCancel").focus();
+    }
+  });
+}
+
+function setupPageConfirmModal(): void {
+  el<HTMLButtonElement>("pageConfirmOk").addEventListener("click", () => {
+    closePageConfirmModal(true);
+  });
+  el<HTMLButtonElement>("pageConfirmCancel").addEventListener("click", () => {
+    closePageConfirmModal(false);
+  });
+  el<HTMLElement>("pageConfirmBackdrop").addEventListener("click", () => {
+    closePageConfirmModal(false);
+  });
+  document.addEventListener("keydown", (event) => {
+    if (event.key !== "Escape") return;
+    const modal = document.getElementById("pageConfirmModal");
+    if (modal && !modal.hidden) {
+      closePageConfirmModal(false);
+    }
+  });
 }
 
 async function handleSubmit(): Promise<void> {
@@ -728,17 +999,24 @@ async function handleSubmit(): Promise<void> {
     return;
   }
 
+  const pageContext = await fetchPageContext(includeContext);
+  if (pageContext) {
+    renderPagePreview(pageContext.url, pageContext.title);
+  }
+
+  const confirmed = await showPageConfirmModal(pageContext);
+  if (!confirmed) {
+    setConnectionStatus("已取消发送");
+    return;
+  }
+
   submitBtn.disabled = true;
   seenEventIds.clear();
+  resetPlanOutputBuffer(null);
 
   try {
     currentJobStatus = null;
     updateSubmitButton();
-
-    const pageContext = await fetchPageContext(includeContext);
-    if (pageContext) {
-      renderPagePreview(pageContext.url, pageContext.title);
-    }
 
     const { blobs: imageBlobs, previewUrls } = detachPendingAttachments();
     const body: SubmitRequest = {
@@ -794,6 +1072,7 @@ async function handleSubmit(): Promise<void> {
 
     el<HTMLTextAreaElement>("prompt").value = "";
     await chrome.storage.local.set({ lastJobId: data.jobId });
+    resetPlanOutputBuffer(data.jobId);
 
     connectJobStream(config.serverUrl, data.jobId, data.status as JobStatusType);
     setConnectionStatus(effectivePlan ? "Plan 分析中…" : data.jobsAhead ? `排队中，前面 ${data.jobsAhead} 个任务` : "任务已提交");
@@ -828,6 +1107,7 @@ async function init(): Promise<void> {
   setupAttachmentHandlers();
   setupComposerResize();
   setupChatContextMenu();
+  setupPageConfirmModal();
 
   el<HTMLTextAreaElement>("prompt").addEventListener("keydown", (e) => {
     if (e.key === "Enter" && !e.shiftKey) {
@@ -842,8 +1122,15 @@ async function init(): Promise<void> {
   if (stored.lastJobId && config.serverUrl) {
     try {
       const job = await queryJobStatus(config.serverUrl, stored.lastJobId as string);
-      currentJobStatus = job.status;
-      connectJobStream(config.serverUrl, job.jobId, job.status);
+      await syncMissedJobEvents(config.serverUrl, job.jobId);
+      applyServerJobState(job);
+      if (
+        job.status === "planning" ||
+        job.status === "pending" ||
+        job.status === "running"
+      ) {
+        connectJobStream(config.serverUrl, job.jobId, job.status);
+      }
     } catch {
       await chrome.storage.local.remove(["lastJobId"]);
       setConnectionStatus("就绪");

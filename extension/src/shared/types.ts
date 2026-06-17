@@ -38,6 +38,7 @@ export interface JobStatus {
   branch?: string;
   commitSha?: string;
   error?: string;
+  planSummary?: string;
   createdAt: string;
   updatedAt: string;
 }

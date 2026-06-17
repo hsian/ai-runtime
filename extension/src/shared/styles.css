@@ -444,24 +444,30 @@ body.composer-resizing {
   border: 1px solid #d9d9d9;
   border-radius: 8px;
   padding: 8px 10px;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
 }
 
-.composer textarea {
+.composer-input:focus-within {
+  border-color: #4f46e5;
+  box-shadow: 0 0 0 2px rgba(79, 70, 229, 0.15);
+}
+
+.composer textarea,
+.composer textarea:focus {
   flex: 1;
   min-height: 72px;
   width: 100%;
   margin: 0;
   padding: 0;
   border: none;
+  border-radius: 0;
   background: transparent;
   resize: none;
   line-height: 1.5;
   font: inherit;
   overflow-y: auto;
-}
-
-.composer textarea:focus {
   outline: none;
+  box-shadow: none;
 }
 
 .send-btn {
@@ -580,6 +586,17 @@ body.composer-resizing {
   word-break: break-word;
   font-size: 12px;
   line-height: 1.5;
+}
+
+.msg-plan-result .msg-bubble {
+  max-width: 100%;
+  background: #f0f9ff;
+  border-color: #bae6fd;
+}
+
+.msg-plan-result .msg-meta {
+  color: #0369a1;
+  font-weight: 600;
 }
 
 .msg-stage {
@@ -705,4 +722,87 @@ body.composer-resizing {
 
 .msg-user .msg-meta {
   text-align: right;
+}
+
+.page-confirm-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+}
+
+.page-confirm-modal[hidden] {
+  display: none;
+}
+
+.page-confirm-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.45);
+}
+
+.page-confirm-dialog {
+  position: relative;
+  width: min(100%, 420px);
+  background: #fff;
+  border-radius: 10px;
+  padding: 16px;
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.18);
+}
+
+.page-confirm-heading {
+  font-size: 15px;
+  font-weight: 600;
+  margin-bottom: 8px;
+}
+
+.page-confirm-lead {
+  font-size: 12px;
+  color: #4b5563;
+  line-height: 1.5;
+  margin-bottom: 10px;
+}
+
+.page-confirm-page {
+  background: #f9fafb;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  padding: 10px 12px;
+  margin-bottom: 10px;
+}
+
+.page-confirm-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: #111827;
+  margin-bottom: 4px;
+  word-break: break-word;
+}
+
+.page-confirm-url {
+  font-size: 11px;
+  color: #6b7280;
+  word-break: break-all;
+  line-height: 1.45;
+}
+
+.page-confirm-hint {
+  font-size: 11px;
+  color: #9ca3af;
+  line-height: 1.45;
+  margin-bottom: 14px;
+}
+
+.page-confirm-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.page-confirm-actions button {
+  flex: 1;
+  padding: 9px 12px;
+  font-size: 13px;
 }

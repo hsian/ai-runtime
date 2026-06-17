@@ -107,6 +107,44 @@ export async function queryJobStatus(serverUrl: string, jobId: string): Promise<
   return data;
 }
 
+export async function fetchJobEvents(
+  serverUrl: string,
+  jobId: string
+): Promise<import("./types.js").JobEvent[]> {
+  const res = await fetch(
+    `${normalizeServerUrl(serverUrl)}/api/jobs/${encodeURIComponent(jobId)}/events`
+  );
+  const data = (await res.json()) as { events?: import("./types.js").JobEvent[]; error?: string };
+  if (!res.ok) {
+    throw new Error(data.error ?? `查询失败: ${res.status}`);
+  }
+  return Array.isArray(data.events) ? data.events : [];
+}
+
+async function sleep(ms: number): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+export async function queryJobStatusWithRetry(
+  serverUrl: string,
+  jobId: string,
+  attempts = 5
+): Promise<JobStatus> {
+  let lastError: unknown;
+  for (let i = 0; i < attempts; i += 1) {
+    try {
+      return await queryJobStatus(serverUrl, jobId);
+    } catch (err) {
+      lastError = err;
+      if (!isNotFoundError(err) || i === attempts - 1) {
+        throw err;
+      }
+      await sleep(600 * (i + 1));
+    }
+  }
+  throw lastError;
+}
+
 export function getNetworkErrorHint(serverUrl: string, err: unknown): string {
   const msg = err instanceof Error ? err.message : String(err);
   const hint = /6000|6667|6666/.test(serverUrl)
@@ -119,7 +157,7 @@ export function getNetworkErrorHint(serverUrl: string, err: unknown): string {
 export function formatErrorMessage(serverUrl: string, err: unknown): string {
   const msg = err instanceof Error ? err.message : String(err);
 
-  if (/当前状态不可|任务不存在|参数无效|不可执行|不可取消/.test(msg)) {
+  if (/当前状态不可|任务不存在|分析任务不存在|参数无效|不可执行|不可取消/.test(msg)) {
     return msg;
   }
 
@@ -128,6 +166,11 @@ export function formatErrorMessage(serverUrl: string, err: unknown): string {
   }
 
   return msg;
+}
+
+export function isNotFoundError(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err);
+  return /不存在|404|not found/i.test(msg);
 }
 
 export function openJobEventStream(

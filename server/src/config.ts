@@ -14,6 +14,7 @@ const envSchema = z.object({
   CLAUDE_CLI_PATH: z.string().default("claude"),
   CLAUDE_MODEL: z.string().optional(),
   CLAUDE_TIMEOUT_MS: z.coerce.number().default(600_000),
+  REQUIREMENT_ANALYZE_TIMEOUT_MS: z.coerce.number().default(180_000),
   CLAUDE_PERMISSION_MODE: z
     .enum(["acceptEdits", "bypassPermissions", "default", "dontAsk", "auto", "plan"])
     .default("acceptEdits"),
