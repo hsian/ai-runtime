@@ -601,10 +601,38 @@ body.composer-resizing {
   line-height: 1.5;
 }
 
-.msg-plan-result .msg-bubble {
+.msg-plan-result {
+  align-self: stretch;
   max-width: 100%;
+  width: 100%;
+}
+
+.msg-plan-result .msg-bubble,
+.msg-plan-result textarea.plan-edit {
+  max-width: 100%;
+  width: 100%;
+  box-sizing: border-box;
   background: #f0f9ff;
-  border-color: #bae6fd;
+  border: 1px solid #bae6fd;
+  border-radius: 2px 8px 8px 8px;
+  padding: 8px 10px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 12px;
+  line-height: 1.5;
+  font-family: inherit;
+}
+
+.msg-plan-result textarea.plan-edit {
+  resize: vertical;
+  min-height: 120px;
+  color: #0f172a;
+}
+
+.msg-plan-result textarea.plan-edit:focus {
+  outline: none;
+  border-color: #38bdf8;
+  box-shadow: 0 0 0 2px rgba(56, 189, 248, 0.2);
 }
 
 .msg-plan-result .msg-meta {

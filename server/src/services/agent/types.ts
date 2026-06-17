@@ -41,7 +41,8 @@ ${lines}
 export function buildClaudeTaskPrompt(
   prompt: string,
   pageContext?: PageContext,
-  attachments?: JobAttachment[]
+  attachments?: JobAttachment[],
+  confirmedPlan?: string
 ): string {
   const routePath = extractRoutePath(pageContext?.url);
 
@@ -57,10 +58,19 @@ ${pageContext.selectedSelector ? `- 用户选中元素: ${pageContext.selectedSe
 
   const attachmentPart = buildAttachmentSection(attachments);
 
+  const planPart = confirmedPlan?.trim()
+    ? `
+【已确认方案】
+${confirmedPlan.trim()}
+
+请严格按以上方案修改代码；若方案与用户原始描述冲突，以方案为准。
+`
+    : "";
+
   return `【代码修改任务 - Claude Code 执行阶段】
 
 Plan 已确认，请按方案在 Git 工作区内直接修改源代码。
-
+${planPart}
 ${contextPart}${attachmentPart}
 
 【开发任务】

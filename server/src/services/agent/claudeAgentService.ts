@@ -239,6 +239,7 @@ export async function runClaudeAgent(
     mode?: "plan" | "execute";
     jobId?: string;
     attachments?: JobAttachment[];
+    confirmedPlan?: string;
   }
 ): Promise<AgentResult> {
   const isPlan = options?.mode === "plan" || options?.permissionMode === "plan";
@@ -247,7 +248,7 @@ export async function runClaudeAgent(
     options?.systemPrompt ?? (isPlan ? PLAN_SYSTEM_PROMPT : SYSTEM_PROMPT);
   const userPrompt = isPlan
     ? buildClaudePlanPrompt(prompt, pageContext, options?.attachments)
-    : buildClaudeTaskPrompt(prompt, pageContext, options?.attachments);
+    : buildClaudeTaskPrompt(prompt, pageContext, options?.attachments, options?.confirmedPlan);
 
   const args = [
     "-p",

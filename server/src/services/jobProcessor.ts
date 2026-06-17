@@ -116,7 +116,12 @@ export async function processJob(jobId: string): Promise<void> {
       job.prompt,
       job.pageContext,
       (event) => emitAgentEvent(jobId, event),
-      { mode: "execute", jobId, attachments: stagedAttachments }
+      {
+        mode: "execute",
+        jobId,
+        attachments: stagedAttachments,
+        confirmedPlan: job.requiresConfirm ? job.planSummary : undefined,
+      }
     );
     if (await abortIfCancelled(jobId, "agent")) return;
 
@@ -151,6 +156,23 @@ export async function processJob(jobId: string): Promise<void> {
     if (await abortIfCancelled(jobId, "commit")) return;
     const commitMessage = buildCommitMessage(job.prompt, result.summary, jobId);
     const commitSha = await gitService.commitAndPush(branchName, commitMessage);
+
+    if (job.requiresConfirm) {
+      const defaultBranch = config.GIT_DEFAULT_BRANCH;
+      const pendingMessage = result.summary || "代码修改已完成";
+      updateJob(jobId, {
+        status: "awaiting_merge",
+        branch: branchName,
+        commitSha,
+        message: pendingMessage,
+      });
+      appendJobEvent(jobId, {
+        type: "stage",
+        phase: "execute_ready",
+        text: `代码修改已提交到 ${branchName}，请确认是否合并到 ${defaultBranch}`,
+      });
+      return;
+    }
 
     let finalBranch = branchName;
     let mergeSha = commitSha;

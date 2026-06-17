@@ -8,7 +8,9 @@ import {
   isNotFoundError,
   openJobEventStream,
   cancelJob,
+  discardMerge,
   executeJob,
+  mergeJob,
   queryJobStatus,
   queryJobStatusWithRetry,
   submitPlan,
@@ -36,6 +38,7 @@ const AGENT_STREAM_KEY = "agent-stream";
 const PLAN_RESULT_KEY = "plan-result";
 const QUEUE_CARD_KEY = "queue-card";
 const CONFIRM_CARD_KEY = "confirm-card";
+const MERGE_CARD_KEY = "merge-card";
 
 let activeStream: EventSource | null = null;
 let activeJobId: string | null = null;
@@ -80,32 +83,72 @@ function shouldBufferPlanOutput(jobId: string): boolean {
   return false;
 }
 
-function flushPlanResultBubble(jobId: string, fallbackText?: string): void {
+function getPlanResultText(jobId: string): string | undefined {
+  const node = el<HTMLElement>("chatMessages").querySelector<HTMLElement>(
+    `[data-key="${PLAN_RESULT_KEY}-${jobId}"]`
+  );
+  if (!node) return undefined;
+
+  const textarea = node.querySelector<HTMLTextAreaElement>("textarea.plan-edit");
+  if (textarea) return textarea.value.trim();
+
+  const bubble = node.querySelector<HTMLElement>(".msg-bubble");
+  return bubble?.textContent?.trim();
+}
+
+function renderPlanResultBubble(jobId: string, text: string, editable: boolean): void {
+  const trimmed = text.trim();
+  if (!trimmed) return;
+
+  const container = el<HTMLElement>("chatMessages");
+  const key = `${PLAN_RESULT_KEY}-${jobId}`;
+  let node = container.querySelector<HTMLElement>(`[data-key="${key}"]`);
+
+  if (!node) {
+    node = document.createElement("div");
+    node.className = "msg msg-agent msg-plan-result";
+    node.dataset.key = key;
+    node.innerHTML = `<div class="msg-meta"></div>`;
+    container.appendChild(node);
+  }
+
+  const meta = node.querySelector<HTMLElement>(".msg-meta")!;
+  meta.textContent = editable ? "Plan 方案（可编辑）" : "Plan 方案";
+
+  node.querySelector(".msg-bubble")?.remove();
+  node.querySelector("textarea.plan-edit")?.remove();
+
+  if (editable) {
+    const textarea = document.createElement("textarea");
+    textarea.className = "plan-edit msg-bubble";
+    textarea.value = trimmed;
+    textarea.rows = Math.min(20, Math.max(6, trimmed.split("\n").length + 1));
+    textarea.spellcheck = false;
+    node.appendChild(textarea);
+  } else {
+    const bubble = document.createElement("div");
+    bubble.className = "msg-bubble";
+    bubble.textContent = trimmed;
+    node.appendChild(bubble);
+  }
+
+  container.appendChild(node);
+}
+
+function lockPlanResultBubble(jobId: string): void {
+  const text = getPlanResultText(jobId);
+  if (text) renderPlanResultBubble(jobId, text, false);
+}
+
+function flushPlanResultBubble(jobId: string, fallbackText?: string, editable = false): void {
   const text = (planOutputBuffer || fallbackText || "").trim();
   resetPlanOutputBuffer(null);
 
   const container = el<HTMLElement>("chatMessages");
   container.querySelector(`[data-key="${AGENT_STREAM_KEY}-${jobId}"]`)?.remove();
 
-  const existing = container.querySelector<HTMLElement>(`[data-key="${PLAN_RESULT_KEY}-${jobId}"]`);
-  if (existing) {
-    const bubble = existing.querySelector<HTMLElement>(".msg-bubble");
-    if (bubble && text) bubble.textContent = text;
-    container.appendChild(existing);
-    return;
-  }
-
   if (!text) return;
-
-  const node = document.createElement("div");
-  node.className = "msg msg-agent msg-plan-result";
-  node.dataset.key = `${PLAN_RESULT_KEY}-${jobId}`;
-  node.innerHTML = `
-    <div class="msg-meta">Plan 方案</div>
-    <div class="msg-bubble"></div>
-  `;
-  node.querySelector<HTMLElement>(".msg-bubble")!.textContent = text;
-  container.appendChild(node);
+  renderPlanResultBubble(jobId, text, editable);
 }
 
 function moveMessageToBottom(key: string): void {
@@ -223,6 +266,7 @@ function applyHeaderStatusFromJob(job: JobStatus): void {
   const labels: Record<JobStatusType, string> = {
     planning: "Plan 分析中",
     awaiting_confirm: "等待确认执行",
+    awaiting_merge: "等待确认合并",
     awaiting_input: "需要补充信息",
     pending: job.jobsAhead ? `排队中，前面 ${job.jobsAhead} 个任务` : "排队中",
     running: "执行中",
@@ -272,11 +316,11 @@ function resetActiveJob(message: string): void {
   setConnectionStatus(message);
 }
 
-function renderPlanResultFromSummary(jobId: string, summary: string): void {
+function renderPlanResultFromSummary(jobId: string, summary: string, editable = false): void {
   if (!summary.trim()) return;
   planOutputBuffer = summary;
   planOutputJobId = jobId;
-  flushPlanResultBubble(jobId, summary);
+  flushPlanResultBubble(jobId, summary, editable);
 }
 
 async function syncMissedJobEvents(serverUrl: string, jobId: string): Promise<void> {
@@ -291,10 +335,17 @@ function applyServerJobState(job: JobStatus): void {
 
   if (job.status === "awaiting_confirm" || job.status === "awaiting_input") {
     if (job.planSummary) {
-      renderPlanResultFromSummary(job.jobId, job.planSummary);
+      renderPlanResultFromSummary(job.jobId, job.planSummary, job.status === "awaiting_confirm");
     }
     upsertConfirmCard(job.jobId, job.status);
     setConnectionStatus(job.status === "awaiting_input" ? "需要补充信息" : "等待确认执行");
+    updateSubmitButton();
+    return;
+  }
+
+  if (job.status === "awaiting_merge") {
+    upsertMergeConfirmCard(job.jobId, "awaiting_merge");
+    setConnectionStatus("等待确认合并");
     updateSubmitButton();
     return;
   }
@@ -337,7 +388,7 @@ async function recoverJobConnection(serverUrl: string, jobId: string): Promise<v
       return;
     }
 
-    if (job.status === "awaiting_confirm" || job.status === "awaiting_input") {
+    if (job.status === "awaiting_confirm" || job.status === "awaiting_input" || job.status === "awaiting_merge") {
       return;
     }
 
@@ -515,7 +566,8 @@ function upsertConfirmCard(jobId: string, status: JobStatusType = currentJobStat
         <button class="primary" data-action="execute">执行修改</button>
         <button class="secondary" data-action="cancel">取消</button>
       </div>
-      <div class="hint" style="margin-top:8px;">提示：执行后才会创建分支并合并到 test</div>
+      <div class="hint" style="margin-top:8px;">可直接编辑上方方案，确认后按编辑内容执行</div>
+      <div class="hint" style="margin-top:4px;">执行完成后还需确认才会合并到 test</div>
     </div>
   `;
   moveMessageToBottom(`${CONFIRM_CARD_KEY}-${jobId}`);
@@ -529,8 +581,16 @@ function upsertConfirmCard(jobId: string, status: JobStatusType = currentJobStat
       try {
         execBtn.disabled = true;
         cancelBtn!.disabled = true;
+        const planSummary = getPlanResultText(jobId);
+        if (!planSummary) {
+          setConnectionStatus("Plan 方案为空，请先填写方案内容");
+          execBtn.disabled = false;
+          cancelBtn!.disabled = false;
+          return;
+        }
         setConnectionStatus("已确认执行，正在加入队列...");
-        await executeJob(config.serverUrl, jobId);
+        await executeJob(config.serverUrl, jobId, planSummary);
+        lockPlanResultBubble(jobId);
         currentJobStatus = "pending";
         upsertConfirmCard(jobId, "pending");
       } catch (err) {
@@ -567,6 +627,105 @@ function upsertConfirmCard(jobId: string, status: JobStatusType = currentJobStat
         }
         cancelBtn.disabled = false;
         execBtn!.disabled = false;
+      }
+    };
+  }
+}
+
+function mergeCardStatusLabel(status: JobStatusType): string {
+  switch (status) {
+    case "awaiting_merge":
+      return "";
+    case "running":
+      return "正在合并到 test...";
+    case "completed":
+      return "已合并到 test";
+    case "cancelled":
+      return "已放弃合并";
+    case "failed":
+      return "合并失败";
+    default:
+      return "不可操作";
+  }
+}
+
+function upsertMergeConfirmCard(jobId: string, status: JobStatusType = currentJobStatus ?? "awaiting_merge"): void {
+  const node = ensureMessageElement(`${MERGE_CARD_KEY}-${jobId}`, "msg msg-queue");
+  const readonly = status !== "awaiting_merge";
+  const statusLabel = mergeCardStatusLabel(status);
+
+  if (readonly) {
+    node.innerHTML = `
+      <div class="msg-meta">合并确认</div>
+      <div class="queue-card">
+        <div class="queue-title">修改已完成：是否合并到 test？</div>
+        <div class="confirm-status">${escapeHtml(statusLabel)}</div>
+      </div>
+    `;
+    moveMessageToBottom(`${MERGE_CARD_KEY}-${jobId}`);
+    return;
+  }
+
+  node.innerHTML = `
+    <div class="msg-meta">等待确认合并</div>
+    <div class="queue-card">
+      <div class="queue-title">修改已完成：是否合并到 test 并提交？</div>
+      <div class="confirm-actions">
+        <button class="primary" data-action="merge">合并到 test</button>
+        <button class="secondary" data-action="discard">放弃</button>
+      </div>
+      <div class="hint" style="margin-top:8px;">放弃后将切回 test 分支，test 代码不做任何改动</div>
+    </div>
+  `;
+  moveMessageToBottom(`${MERGE_CARD_KEY}-${jobId}`);
+
+  const mergeBtn = node.querySelector<HTMLButtonElement>('button[data-action="merge"]');
+  const discardBtn = node.querySelector<HTMLButtonElement>('button[data-action="discard"]');
+  if (mergeBtn) {
+    mergeBtn.onclick = async () => {
+      const config = await loadConfig();
+      if (!config.serverUrl) return;
+      try {
+        mergeBtn.disabled = true;
+        discardBtn!.disabled = true;
+        setConnectionStatus("已确认合并，正在处理...");
+        await mergeJob(config.serverUrl, jobId);
+        currentJobStatus = "running";
+        upsertMergeConfirmCard(jobId, "running");
+      } catch (err) {
+        if (isNotFoundError(err)) {
+          currentJobStatus = "cancelled";
+          upsertMergeConfirmCard(jobId, "cancelled");
+          setConnectionStatus("历史任务已过期（服务端可能已重启），请重新提交");
+        } else {
+          setConnectionStatus(formatErrorMessage(config.serverUrl, err));
+        }
+        mergeBtn.disabled = false;
+        discardBtn!.disabled = false;
+      }
+    };
+  }
+  if (discardBtn) {
+    discardBtn.onclick = async () => {
+      const config = await loadConfig();
+      if (!config.serverUrl) return;
+      try {
+        discardBtn.disabled = true;
+        mergeBtn!.disabled = true;
+        await discardMerge(config.serverUrl, jobId);
+        currentJobStatus = "cancelled";
+        upsertMergeConfirmCard(jobId, "cancelled");
+        setConnectionStatus("已放弃合并");
+      } catch (err) {
+        if (isNotFoundError(err)) {
+          currentJobStatus = "cancelled";
+          upsertMergeConfirmCard(jobId, "cancelled");
+          setConnectionStatus("历史任务已过期（服务端可能已重启），无需操作");
+        } else {
+          setConnectionStatus(formatErrorMessage(config.serverUrl, err));
+        }
+        discardBtn.disabled = false;
+        mergeBtn!.disabled = false;
       }
     };
   }
@@ -789,7 +948,7 @@ function handleJobEvent(event: JobEvent): void {
     case "stage":
       appendStageBubble(event);
       if (event.phase === "plan_done") {
-        flushPlanResultBubble(event.jobId);
+        flushPlanResultBubble(event.jobId, undefined, true);
         currentJobStatus = "awaiting_confirm";
         upsertConfirmCard(event.jobId, "awaiting_confirm");
         setConnectionStatus("等待确认执行");
@@ -801,11 +960,30 @@ function handleJobEvent(event: JobEvent): void {
         setConnectionStatus("需要补充信息");
         updateSubmitButton();
       } else if (event.phase === "execute_confirmed") {
+        lockPlanResultBubble(event.jobId);
         currentJobStatus = "pending";
         upsertConfirmCard(event.jobId, "pending");
         setConnectionStatus("已确认执行，排队中");
         updateSubmitButton();
-      } else if (event.phase && ["pull", "branch", "agent", "commit", "merge"].includes(event.phase)) {
+      } else if (event.phase === "execute_ready") {
+        currentJobStatus = "awaiting_merge";
+        upsertMergeConfirmCard(event.jobId, "awaiting_merge");
+        setConnectionStatus("等待确认合并");
+        updateSubmitButton();
+      } else if (event.phase === "merge") {
+        const hasMergeCard = Boolean(
+          el<HTMLElement>("chatMessages").querySelector(`[data-key="${MERGE_CARD_KEY}-${event.jobId}"]`)
+        );
+        const fromMergeConfirm = currentJobStatus === "awaiting_merge" || hasMergeCard;
+        currentJobStatus = "running";
+        if (fromMergeConfirm) {
+          upsertMergeConfirmCard(event.jobId, "running");
+          setConnectionStatus("正在合并到 test");
+        } else {
+          setConnectionStatus("执行中");
+        }
+        updateSubmitButton();
+      } else if (event.phase && ["pull", "branch", "agent", "commit"].includes(event.phase)) {
         currentJobStatus = "running";
         setConnectionStatus("执行中");
         updateSubmitButton();
@@ -826,6 +1004,7 @@ function handleJobEvent(event: JobEvent): void {
       currentJobStatus = "completed";
       appendDoneBubble(event);
       upsertConfirmCard(event.jobId, "completed");
+      upsertMergeConfirmCard(event.jobId, "completed");
       setConnectionStatus("任务已完成");
       activeStream?.close();
       activeStream = null;
@@ -836,6 +1015,7 @@ function handleJobEvent(event: JobEvent): void {
       currentJobStatus = "cancelled";
       appendCancelledBubble(event);
       upsertConfirmCard(event.jobId, "cancelled");
+      upsertMergeConfirmCard(event.jobId, "cancelled");
       setConnectionStatus("任务已取消");
       activeStream?.close();
       activeStream = null;
@@ -847,6 +1027,7 @@ function handleJobEvent(event: JobEvent): void {
         currentJobStatus = "cancelled";
         appendCancelledBubble(event);
         upsertConfirmCard(event.jobId, "cancelled");
+        upsertMergeConfirmCard(event.jobId, "cancelled");
         setConnectionStatus("任务已取消");
       } else {
         currentJobStatus = "failed";
@@ -891,6 +1072,7 @@ function connectJobStream(serverUrl: string, jobId: string, initialStatus?: JobS
         !isTerminalStatus(currentJobStatus) &&
         currentJobStatus !== "awaiting_confirm" &&
         currentJobStatus !== "awaiting_input" &&
+        currentJobStatus !== "awaiting_merge" &&
         Date.now() - recoverAttemptAt > 15_000
       ) {
         recoverAttemptAt = Date.now();
@@ -902,7 +1084,8 @@ function connectJobStream(serverUrl: string, jobId: string, initialStatus?: JobS
         activeJobId === jobId &&
         !isTerminalStatus(currentJobStatus) &&
         currentJobStatus !== "awaiting_confirm" &&
-        currentJobStatus !== "awaiting_input"
+        currentJobStatus !== "awaiting_input" &&
+        currentJobStatus !== "awaiting_merge"
       ) {
         void recoverJobConnection(serverUrl, jobId);
         return;
@@ -1134,7 +1317,9 @@ async function init(): Promise<void> {
       if (
         job.status === "planning" ||
         job.status === "pending" ||
-        job.status === "running"
+        job.status === "running" ||
+        job.status === "awaiting_confirm" ||
+        job.status === "awaiting_merge"
       ) {
         connectJobStream(config.serverUrl, job.jobId, job.status);
       }

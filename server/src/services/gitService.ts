@@ -114,6 +114,24 @@ export class GitService {
     }
   }
 
+  /** 放弃合并：切回 test 并删除本地 feature 分支，test 保持远端最新 */
+  async discardFeatureBranch(branchName: string): Promise<void> {
+    const git = await this.getGit();
+    const defaultBranch = config.GIT_DEFAULT_BRANCH;
+
+    await git.fetch("origin");
+    const current = await this.getCurrentBranch();
+    if (current !== defaultBranch) {
+      await git.checkout(defaultBranch);
+    }
+    await git.pull("origin", defaultBranch);
+
+    const branches = await git.branchLocal();
+    if (branches.all.includes(branchName)) {
+      await git.deleteLocalBranch(branchName, true);
+    }
+  }
+
   getRepoPath(): string {
     return this.repoPath;
   }

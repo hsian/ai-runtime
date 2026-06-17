@@ -7,6 +7,7 @@ import { runAgent, killAgentForJob, AgentAbortedError } from "../services/agent/
 import { config } from "../config.js";
 import { finalizeJobAttachments, jobImagesUpload, multerErrorMessage, stageAttachmentsForAgent } from "../services/uploadService.js";
 import { isMultipartSubmit, parseJobSubmitBody } from "../middleware/parseJobSubmit.js";
+import { confirmJobMerge, discardJobMerge } from "../services/jobMergeService.js";
 import type { JobRequest } from "../types.js";
 
 async function revertPlanWorkspaceChanges(jobId: string, reason: string): Promise<void> {
@@ -233,7 +234,15 @@ jobsRouter.post("/:jobId/execute", (req, res) => {
     return;
   }
 
-  updateJob(jobId, { status: "pending", message: "已确认执行，等待排队..." });
+  const body = req.body as { planSummary?: unknown } | undefined;
+  const planSummary =
+    typeof body?.planSummary === "string" ? body.planSummary.trim() : job.planSummary?.trim();
+  if (!planSummary) {
+    res.status(400).json({ error: "Plan 方案为空，请补充方案内容后再执行" });
+    return;
+  }
+
+  updateJob(jobId, { status: "pending", message: "已确认执行，等待排队...", planSummary });
   appendJobEvent(jobId, { type: "stage", phase: "execute_confirmed", text: "已确认执行，正在加入队列..." });
 
   const jobsAhead = jobQueue.enqueue(jobId);
@@ -255,6 +264,11 @@ jobsRouter.post("/:jobId/cancel", async (req, res) => {
 
   if (job.status === "completed" || job.status === "failed" || job.status === "cancelled") {
     res.status(400).json({ error: `当前状态不可取消: ${job.status}` });
+    return;
+  }
+
+  if (job.status === "awaiting_merge") {
+    res.status(400).json({ error: "当前等待确认合并，请使用放弃合并" });
     return;
   }
 
@@ -281,6 +295,53 @@ jobsRouter.post("/:jobId/cancel", async (req, res) => {
   }
 
   res.json({ ok: true });
+});
+
+jobsRouter.post("/:jobId/merge", (req, res) => {
+  const jobId = req.params.jobId;
+  const job = getJob(jobId);
+  if (!job) {
+    res.status(404).json({ error: "任务不存在" });
+    return;
+  }
+
+  if (job.status !== "awaiting_merge") {
+    res.status(400).json({ error: `当前状态不可合并: ${job.status}` });
+    return;
+  }
+
+  res.status(202).json({
+    jobId,
+    status: "running",
+    message: "已确认合并，正在处理...",
+  });
+
+  confirmJobMerge(jobId).catch((err) => {
+    const latest = getJob(jobId);
+    if (latest?.status === "failed") return;
+    console.error(`[AI Runtime] 合并任务 ${jobId} 失败:`, err);
+  });
+});
+
+jobsRouter.post("/:jobId/discard-merge", async (req, res) => {
+  const jobId = req.params.jobId;
+  const job = getJob(jobId);
+  if (!job) {
+    res.status(404).json({ error: "任务不存在" });
+    return;
+  }
+
+  if (job.status !== "awaiting_merge") {
+    res.status(400).json({ error: `当前状态不可放弃合并: ${job.status}` });
+    return;
+  }
+
+  try {
+    await discardJobMerge(jobId);
+    res.json({ ok: true, status: "cancelled" });
+  } catch (err) {
+    res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
+  }
 });
 
 jobsRouter.get("/:jobId/events", (req, res) => {

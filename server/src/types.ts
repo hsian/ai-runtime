@@ -24,6 +24,7 @@ export type JobStatus =
   | "planning"
   | "awaiting_confirm"
   | "awaiting_input"
+  | "awaiting_merge"
   | "pending"
   | "running"
   | "completed"

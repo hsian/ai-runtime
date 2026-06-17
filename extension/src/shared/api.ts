@@ -75,8 +75,37 @@ export async function submitPlan(
   return postJob(serverUrl, "/api/jobs/plan", body);
 }
 
-export async function executeJob(serverUrl: string, jobId: string): Promise<SubmitResponse> {
+export async function executeJob(
+  serverUrl: string,
+  jobId: string,
+  planSummary?: string
+): Promise<SubmitResponse> {
   const res = await fetch(`${normalizeServerUrl(serverUrl)}/api/jobs/${encodeURIComponent(jobId)}/execute`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(planSummary ? { planSummary } : {}),
+  });
+  const data = (await res.json()) as SubmitResponse & { error?: string };
+  if (!res.ok) {
+    throw new Error(data.error ?? `请求失败: ${res.status}`);
+  }
+  return data;
+}
+
+export async function discardMerge(serverUrl: string, jobId: string): Promise<{ ok: boolean }> {
+  const res = await fetch(
+    `${normalizeServerUrl(serverUrl)}/api/jobs/${encodeURIComponent(jobId)}/discard-merge`,
+    { method: "POST" }
+  );
+  const data = (await res.json()) as { ok?: boolean; error?: string };
+  if (!res.ok) {
+    throw new Error(data.error ?? `请求失败: ${res.status}`);
+  }
+  return { ok: Boolean(data.ok) };
+}
+
+export async function mergeJob(serverUrl: string, jobId: string): Promise<SubmitResponse> {
+  const res = await fetch(`${normalizeServerUrl(serverUrl)}/api/jobs/${encodeURIComponent(jobId)}/merge`, {
     method: "POST",
   });
   const data = (await res.json()) as SubmitResponse & { error?: string };
@@ -157,7 +186,7 @@ export function getNetworkErrorHint(serverUrl: string, err: unknown): string {
 export function formatErrorMessage(serverUrl: string, err: unknown): string {
   const msg = err instanceof Error ? err.message : String(err);
 
-  if (/当前状态不可|任务不存在|分析任务不存在|参数无效|不可执行|不可取消/.test(msg)) {
+  if (/当前状态不可|任务不存在|分析任务不存在|参数无效|不可执行|不可取消|不可合并|不可放弃合并|放弃合并/.test(msg)) {
     return msg;
   }
 
