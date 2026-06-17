@@ -103,6 +103,39 @@ export interface AnalyzeRequirementRequest {
   images?: Blob[];
 }
 
+export interface StartAnalyzeResponse {
+  sessionId: string;
+  status: string;
+  imageCount: number;
+  message?: string;
+}
+
+export interface AnalyzeSessionStatus {
+  sessionId: string;
+  status: "running" | "completed" | "failed" | "cancelled";
+  message?: string;
+  draftPrompt?: string;
+  imageCount?: number;
+  error?: string;
+}
+
+export type AnalyzeEventType = "stage" | "agent_text" | "agent_tool" | "done" | "cancelled" | "error";
+
+export interface AnalyzeEvent {
+  id: string;
+  sessionId: string;
+  timestamp: string;
+  type: AnalyzeEventType;
+  text?: string;
+  phase?: string;
+  delta?: string;
+  toolAction?: "start" | "done";
+  toolName?: string;
+  toolDetail?: string;
+  draftPrompt?: string;
+  message?: string;
+}
+
 export interface AnalyzeRequirementResponse {
   draftPrompt: string;
 }

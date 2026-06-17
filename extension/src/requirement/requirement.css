@@ -117,6 +117,59 @@ body {
   text-decoration: none;
 }
 
+.req-link-btn.req-cancel-btn {
+  color: #dc2626;
+}
+
+.req-link-btn.req-cancel-btn:hover {
+  color: #b91c1c;
+}
+
+.req-analyze-progress {
+  margin-bottom: 10px;
+  padding: 8px 10px;
+  background: #f9fafb;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+}
+
+.req-analyze-progress.hidden {
+  display: none;
+}
+
+.req-progress-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 6px;
+  font-size: 11px;
+  color: #4b5563;
+}
+
+.req-progress-head span:last-child {
+  flex: 0 0 auto;
+  color: #9ca3af;
+  font-variant-numeric: tabular-nums;
+}
+
+.req-progress-log {
+  max-height: 96px;
+  overflow: auto;
+  font-size: 11px;
+  line-height: 1.45;
+  color: #6b7280;
+}
+
+.req-progress-log .req-log-line {
+  padding: 1px 0;
+  word-break: break-word;
+}
+
+.req-progress-log .req-log-line:last-child {
+  color: #374151;
+}
+
 .req-title {
   font-size: 13px;
   font-weight: 600;

@@ -1,6 +1,16 @@
 import { randomUUID } from "crypto";
 import { Router } from "express";
+import { AgentAbortedError } from "../services/agent/claudeAgentService.js";
 import { analyzeRequirement } from "../services/requirementAnalyzer.js";
+import {
+  appendAnalyzeEvent,
+  cancelAnalyzeSession,
+  createAnalyzeSession,
+  getAnalyzeEvents,
+  getAnalyzeSession,
+  subscribeAnalyzeEvents,
+  updateAnalyzeSession,
+} from "../services/analyzeSession.js";
 import {
   finalizeAnalyzeAttachments,
   multerErrorMessage,
@@ -11,6 +21,7 @@ import {
   isMultipartAnalyze,
   parseRequirementAnalyzeBody,
 } from "../middleware/parseRequirementAnalyze.js";
+import type { JobAttachment } from "../types.js";
 
 const MAX_CONTENT_LENGTH = 80_000;
 
@@ -33,6 +44,88 @@ function handleAnalyzeImagesUpload(
   });
 }
 
+async function runAnalyzeSession(
+  sessionId: string,
+  title: string,
+  tapdUrl: string,
+  trimmedContent: string,
+  attachments: JobAttachment[]
+): Promise<void> {
+  try {
+    appendAnalyzeEvent(sessionId, {
+      type: "stage",
+      phase: "prepare",
+      text: "正在准备分析…",
+    });
+
+    if (attachments.length > 0) {
+      appendAnalyzeEvent(sessionId, {
+        type: "stage",
+        phase: "attachments",
+        text: `已接收 ${attachments.length} 张配图`,
+      });
+    }
+
+    const charLabel =
+      trimmedContent.length >= 1000
+        ? `约 ${(trimmedContent.length / 1000).toFixed(1)}k 字`
+        : `约 ${trimmedContent.length} 字`;
+    appendAnalyzeEvent(sessionId, {
+      type: "stage",
+      phase: "agent",
+      text: `Claude 正在分析需求（${charLabel}）…`,
+    });
+    updateAnalyzeSession(sessionId, { message: `Claude 正在分析（${charLabel}）…` });
+
+    const draftPrompt = await analyzeRequirement(title, tapdUrl, trimmedContent, attachments, {
+      sessionId,
+      onEvent: (event) => {
+        if (getAnalyzeSession(sessionId)?.status === "cancelled") return;
+
+        if (event.type === "agent_text" && event.delta) {
+          appendAnalyzeEvent(sessionId, { type: "agent_text", delta: event.delta });
+        }
+
+        if (event.type === "agent_tool" && event.toolName) {
+          const detail = event.toolDetail ? `: ${event.toolDetail}` : "";
+          appendAnalyzeEvent(sessionId, {
+            type: "agent_tool",
+            toolAction: event.toolAction ?? "start",
+            toolName: event.toolName,
+            toolDetail: event.toolDetail,
+            text:
+              event.toolAction === "done"
+                ? `✓ ${event.toolName}`
+                : `▶ ${event.toolName}${detail}`,
+          });
+        }
+      },
+    });
+
+    if (getAnalyzeSession(sessionId)?.status === "cancelled") return;
+
+    updateAnalyzeSession(sessionId, {
+      status: "completed",
+      draftPrompt,
+      message: "分析完成",
+    });
+    appendAnalyzeEvent(sessionId, {
+      type: "done",
+      text: "分析完成",
+      draftPrompt,
+      message: "分析完成",
+    });
+  } catch (err) {
+    if (err instanceof AgentAbortedError || getAnalyzeSession(sessionId)?.status === "cancelled") {
+      return;
+    }
+
+    const message = err instanceof Error ? err.message : String(err);
+    updateAnalyzeSession(sessionId, { status: "failed", error: message, message });
+    appendAnalyzeEvent(sessionId, { type: "error", text: message, message });
+  }
+}
+
 export const requirementsRouter = Router();
 
 requirementsRouter.post("/analyze", handleAnalyzeImagesUpload, async (req, res) => {
@@ -53,11 +146,92 @@ requirementsRouter.post("/analyze", handleAnalyzeImagesUpload, async (req, res) 
     : undefined;
   const sessionId = randomUUID();
   const attachments = finalizeAnalyzeAttachments(sessionId, files);
+  createAnalyzeSession(attachments.length, sessionId);
 
-  try {
-    const draftPrompt = await analyzeRequirement(title, tapdUrl, trimmedContent, attachments);
-    res.json({ draftPrompt, imageCount: attachments.length });
-  } catch (err) {
-    res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
+  appendAnalyzeEvent(sessionId, {
+    type: "stage",
+    phase: "queued",
+    text: "分析任务已创建，正在启动…",
+  });
+
+  void runAnalyzeSession(sessionId, title, tapdUrl, trimmedContent, attachments);
+
+  res.status(202).json({
+    sessionId,
+    status: "running",
+    imageCount: attachments.length,
+    message: "分析已开始",
+  });
+});
+
+requirementsRouter.get("/analyze/:sessionId/stream", (req, res) => {
+  const sessionId = req.params.sessionId;
+  const session = getAnalyzeSession(sessionId);
+  if (!session) {
+    res.status(404).json({ error: "分析任务不存在" });
+    return;
   }
+
+  res.setHeader("Content-Type", "text/event-stream; charset=utf-8");
+  res.setHeader("Cache-Control", "no-cache, no-transform");
+  res.setHeader("Connection", "keep-alive");
+  res.flushHeaders?.();
+
+  const writeEvent = (event: unknown): void => {
+    res.write(`data: ${JSON.stringify(event)}\n\n`);
+  };
+
+  for (const event of getAnalyzeEvents(sessionId)) {
+    writeEvent(event);
+  }
+
+  const unsubscribe = subscribeAnalyzeEvents(sessionId, (event) => {
+    writeEvent(event);
+    if (event.type === "done" || event.type === "cancelled" || event.type === "error") {
+      res.write("event: close\ndata: {}\n\n");
+    }
+  });
+
+  const heartbeat = setInterval(() => {
+    res.write(": ping\n\n");
+  }, 25_000);
+
+  req.on("close", () => {
+    clearInterval(heartbeat);
+    unsubscribe();
+  });
+});
+
+requirementsRouter.post("/analyze/:sessionId/cancel", (req, res) => {
+  const sessionId = req.params.sessionId;
+  const session = getAnalyzeSession(sessionId);
+  if (!session) {
+    res.status(404).json({ error: "分析任务不存在" });
+    return;
+  }
+
+  if (session.status === "completed" || session.status === "failed" || session.status === "cancelled") {
+    res.status(400).json({ error: `当前状态不可取消: ${session.status}` });
+    return;
+  }
+
+  cancelAnalyzeSession(sessionId);
+  res.json({ ok: true, status: "cancelled" });
+});
+
+requirementsRouter.get("/analyze/:sessionId", (req, res) => {
+  const session = getAnalyzeSession(req.params.sessionId);
+  if (!session) {
+    res.status(404).json({ error: "分析任务不存在" });
+    return;
+  }
+
+  res.json({
+    sessionId: session.sessionId,
+    status: session.status,
+    message: session.message,
+    draftPrompt: session.draftPrompt,
+    imageCount: session.imageCount,
+    error: session.error,
+  });
 });

@@ -34,6 +34,13 @@
             <h2>② AI 整理 Prompt</h2>
             <button id="reqAnalyzeBtn" class="req-link-btn" type="button">开始分析</button>
           </div>
+          <div id="reqAnalyzeProgress" class="req-analyze-progress hidden">
+            <div class="req-progress-head">
+              <span id="reqProgressLabel">分析中…</span>
+              <span id="reqProgressElapsed">0s</span>
+            </div>
+            <div id="reqProgressLog" class="req-progress-log"></div>
+          </div>
           <p class="req-hint">分析结果可编辑，确认后加入任务列表</p>
           <textarea
             id="reqDraftPrompt"

@@ -1,6 +1,8 @@
 import type {
+  AnalyzeEvent,
   AnalyzeRequirementRequest,
-  AnalyzeRequirementResponse,
+  AnalyzeSessionStatus,
+  StartAnalyzeResponse,
   TapdRequirementFetchResult,
 } from "./types.js";
 import { normalizeServerUrl } from "./config.js";
@@ -17,10 +19,10 @@ export async function fetchTapdRequirement(): Promise<TapdRequirementFetchResult
   };
 }
 
-export async function analyzeRequirement(
+export async function startAnalyzeRequirement(
   serverUrl: string,
   body: AnalyzeRequirementRequest
-): Promise<AnalyzeRequirementResponse> {
+): Promise<StartAnalyzeResponse> {
   const hasImages = Boolean(body.images?.length);
 
   const res = hasImages
@@ -38,11 +40,72 @@ export async function analyzeRequirement(
         }),
       });
 
-  const data = (await res.json()) as AnalyzeRequirementResponse & { error?: string };
+  const data = (await res.json()) as StartAnalyzeResponse & { error?: string };
   if (!res.ok) {
     throw new Error(data.error ?? `分析失败: ${res.status}`);
   }
   return data;
+}
+
+export async function cancelAnalyzeRequirement(
+  serverUrl: string,
+  sessionId: string
+): Promise<{ ok: boolean }> {
+  const res = await fetch(
+    `${normalizeServerUrl(serverUrl)}/api/requirements/analyze/${encodeURIComponent(sessionId)}/cancel`,
+    { method: "POST" }
+  );
+  const data = (await res.json()) as { ok?: boolean; error?: string };
+  if (!res.ok) {
+    throw new Error(data.error ?? `取消失败: ${res.status}`);
+  }
+  return { ok: Boolean(data.ok) };
+}
+
+export async function fetchAnalyzeSession(
+  serverUrl: string,
+  sessionId: string
+): Promise<AnalyzeSessionStatus> {
+  const res = await fetch(
+    `${normalizeServerUrl(serverUrl)}/api/requirements/analyze/${encodeURIComponent(sessionId)}`
+  );
+  const data = (await res.json()) as AnalyzeSessionStatus & { error?: string };
+  if (!res.ok) {
+    throw new Error(data.error ?? `查询失败: ${res.status}`);
+  }
+  return data;
+}
+
+export function openAnalyzeEventStream(
+  serverUrl: string,
+  sessionId: string,
+  onEvent: (event: AnalyzeEvent) => void,
+  handlers?: {
+    onOpen?: () => void;
+    onError?: (err: Event) => void;
+    onClose?: () => void;
+  }
+): EventSource {
+  const es = new EventSource(
+    `${normalizeServerUrl(serverUrl)}/api/requirements/analyze/${encodeURIComponent(sessionId)}/stream`
+  );
+  es.onmessage = (message) => {
+    try {
+      onEvent(JSON.parse(message.data) as AnalyzeEvent);
+    } catch {
+      // ignore malformed payloads
+    }
+  };
+
+  es.onopen = () => handlers?.onOpen?.();
+  es.onerror = (err) => handlers?.onError?.(err);
+
+  es.addEventListener("close", () => {
+    handlers?.onClose?.();
+    es.close();
+  });
+
+  return es;
 }
 
 function buildAnalyzeFormData(body: AnalyzeRequirementRequest): FormData {
