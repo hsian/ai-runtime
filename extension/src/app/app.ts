@@ -21,8 +21,9 @@ import {
   compressImageForUpload,
   formatBytes,
 } from "../shared/imageCompress.js";
-import { initCodingTaskPicker } from "./codingTaskPicker.js";
+import { initCodingTaskPicker, refreshTaskDrawer } from "./codingTaskPicker.js";
 import { setupComposerResize } from "./composerResize.js";
+import { saveCodingPromptAsTask } from "../shared/requirementStore.js";
 
 interface PendingAttachment {
   id: string;
@@ -1009,6 +1010,12 @@ async function handleSubmit(): Promise<void> {
     setConnectionStatus("已取消发送");
     return;
   }
+
+  void saveCodingPromptAsTask({
+    prompt,
+    pageUrl: pageContext?.url,
+    pageTitle: pageContext?.title,
+  }).then(() => refreshTaskDrawer());
 
   submitBtn.disabled = true;
   seenEventIds.clear();

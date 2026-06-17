@@ -6,17 +6,17 @@
     <title>AI Runtime</title>
   </head>
   <body class="chat-body">
-    <div class="chat-app">
-      <header class="chat-header">
-        <div class="header-left">
-          <h1 class="page-title" id="pageTitle">加载中...</h1>
-          <p class="subtitle page-url" id="pageUrl">加载中...</p>
-          <p class="subtitle" id="connectionStatus">就绪</p>
-        </div>
-        <div class="header-actions">
-          <button id="refreshPageBtn" class="icon-btn" type="button" title="刷新">⟳</button>
-          <button id="settingsBtn" class="icon-btn" type="button" title="设置">⚙</button>
-          <div class="task-picker-wrap" id="taskPickerWrap">
+    <div class="chat-shell" id="chatShell">
+      <div class="chat-app">
+        <header class="chat-header">
+          <div class="header-left">
+            <h1 class="page-title" id="pageTitle">加载中...</h1>
+            <p class="subtitle page-url" id="pageUrl">加载中...</p>
+            <p class="subtitle" id="connectionStatus">就绪</p>
+          </div>
+          <div class="header-actions">
+            <button id="refreshPageBtn" class="icon-btn" type="button" title="刷新">⟳</button>
+            <button id="settingsBtn" class="icon-btn" type="button" title="设置">⚙</button>
             <button id="requirementBtn" class="icon-btn icon-btn-dots" type="button" title="需求模式">
               <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
                 <circle cx="8" cy="3.5" r="1.5" />
@@ -24,35 +24,65 @@
                 <circle cx="8" cy="12.5" r="1.5" />
               </svg>
             </button>
-            <div id="taskPickerDropdown" class="task-picker-dropdown" hidden></div>
           </div>
-        </div>
-      </header>
+        </header>
 
-      <main class="chat-main" id="chatMain">
-        <div class="chat-messages" id="chatMessages"></div>
-      </main>
+        <main class="chat-main" id="chatMain">
+          <div class="chat-messages" id="chatMessages"></div>
+        </main>
 
-      <footer class="chat-footer" id="chatFooter">
-        <div class="footer-resizer" id="footerResizer" title="拖动调整输入区高度"></div>
-        <div class="chat-footer-body">
-          <label class="checkbox compact">
-            <input type="checkbox" id="usePlanMode" checked />
-            先 Plan（读仓库出方案），确认后再执行改代码
-          </label>
-          <div class="composer" id="composer">
-            <div class="composer-input">
-              <div class="attachment-strip" id="attachmentStrip" hidden></div>
-              <textarea
-                id="prompt"
-                rows="1"
-                placeholder="描述要修改的内容；可粘贴或拖拽截图（最多 3 张）"
-              ></textarea>
+        <footer class="chat-footer" id="chatFooter">
+          <div class="footer-resizer" id="footerResizer" title="拖动调整输入区高度"></div>
+          <div class="chat-footer-body">
+            <label class="checkbox compact">
+              <input type="checkbox" id="usePlanMode" checked />
+              先 Plan（读仓库出方案），确认后再执行改代码
+            </label>
+            <div class="composer" id="composer">
+              <div class="composer-input">
+                <div class="attachment-strip" id="attachmentStrip" hidden></div>
+                <textarea
+                  id="prompt"
+                  rows="1"
+                  placeholder="描述要修改的内容；可粘贴或拖拽截图（最多 3 张）"
+                ></textarea>
+              </div>
+              <button id="submitBtn" class="primary send-btn" type="button">发送</button>
             </div>
-            <button id="submitBtn" class="primary send-btn" type="button">发送</button>
           </div>
-        </div>
-      </footer>
+        </footer>
+      </div>
+
+      <div class="task-drawer-aside">
+        <div
+          id="taskDrawerResizer"
+          class="task-drawer-resizer"
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="调整任务面板宽度"
+          tabindex="0"
+        ></div>
+        <aside class="task-drawer" id="taskDrawer" aria-hidden="true">
+          <div class="task-drawer-header">
+            <h2 class="task-drawer-title">任务历史</h2>
+          </div>
+          <div class="task-drawer-body" id="taskDrawerList"></div>
+        </aside>
+        <button
+          id="taskDrawerToggle"
+          class="task-drawer-handle"
+          type="button"
+          title="任务历史"
+          aria-expanded="false"
+          aria-controls="taskDrawer"
+        >
+          <span class="task-drawer-tab">
+            <svg class="task-drawer-chevron" width="10" height="10" viewBox="0 0 10 10" aria-hidden="true">
+              <path d="M6.5 2L3 5l3.5 3" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
+            </svg>
+          </span>
+        </button>
+      </div>
     </div>
 
     <div id="pageConfirmModal" class="page-confirm-modal" hidden>
