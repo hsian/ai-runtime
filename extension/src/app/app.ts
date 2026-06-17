@@ -18,6 +18,7 @@ import {
   compressImageForUpload,
   formatBytes,
 } from "../shared/imageCompress.js";
+import { initCodingTaskPicker } from "./codingTaskPicker.js";
 
 interface PendingAttachment {
   id: string;
@@ -768,6 +769,15 @@ async function init(): Promise<void> {
 
   el<HTMLElement>("settingsBtn").addEventListener("click", () => {
     window.location.href = chrome.runtime.getURL("settings.html");
+  });
+  el<HTMLButtonElement>("requirementBtn").addEventListener("click", () => {
+    window.location.href = chrome.runtime.getURL("requirement.html");
+  });
+  initCodingTaskPicker({
+    onSelect: (task) => {
+      el<HTMLTextAreaElement>("prompt").value = task.draftPrompt;
+      setConnectionStatus(`已载入任务：${task.title}`);
+    },
   });
   el<HTMLElement>("refreshPageBtn").addEventListener("click", refreshPagePreview);
   el<HTMLButtonElement>("submitBtn").addEventListener("click", handleSubmit);

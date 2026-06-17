@@ -1,3 +1,5 @@
+import { extractTapdRequirementInPage } from "../shared/tapdPageExtract.js";
+
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message.type === "GET_PAGE_CONTEXT") {
     const selection = window.getSelection();
@@ -21,6 +23,11 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       selectedSelector,
       viewport: { width: window.innerWidth, height: window.innerHeight },
     });
+    return true;
+  }
+
+  if (message.type === "GET_TAPD_REQUIREMENT") {
+    sendResponse(extractTapdRequirementInPage());
     return true;
   }
 });

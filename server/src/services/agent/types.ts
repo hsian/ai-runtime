@@ -127,6 +127,33 @@ export function looksLikeClarification(summary: string): boolean {
   return CLARIFICATION_PATTERNS.some((pattern) => pattern.test(summary));
 }
 
+export const REQUIREMENT_ANALYZE_SYSTEM_PROMPT =
+  "你是产品经理与技术之间的桥梁。根据 TAPD 需求文档原文，整理成一份给前端代码修改 AI 使用的中文任务描述（prompt）。只输出最终 prompt 正文，不要加前言、解释或 markdown 代码块围栏。严禁编造文档未提及的功能。忽略外链、附件链接和无法访问的资源。信息不足时在 prompt 末尾用「待确认：」列出需要产品经理补充的点。";
+
+export function buildRequirementAnalyzePrompt(
+  title: string,
+  tapdUrl: string,
+  rawContent: string
+): string {
+  return `【TAPD 需求分析 - 只整理 prompt，禁止改代码、禁止搜索仓库】
+
+【需求标题】
+${title}
+
+【TAPD 链接（仅备注，勿访问）】
+${tapdUrl}
+
+【需求原文】
+${rawContent}
+
+【输出要求】
+1. 输出一份可直接用于「根据测试页面修改前端代码」的中文 prompt
+2. 提取：要改什么页面/模块、具体 UI/文案/交互、验收标准
+3. 不要编造原文没有的内容
+4. 忽略外链与附件
+5. 只输出 prompt 正文，不要标题前缀如「以下是 prompt」`;
+}
+
 export function summarizeToolInput(input: unknown): string | undefined {
   if (input == null) return undefined;
   if (typeof input === "string") {

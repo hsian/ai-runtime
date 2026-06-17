@@ -5,6 +5,7 @@ import {
   buildClaudePlanPrompt,
   buildClaudeTaskPrompt,
   PLAN_SYSTEM_PROMPT,
+  REQUIREMENT_ANALYZE_SYSTEM_PROMPT,
   summarizeToolInput,
   SYSTEM_PROMPT,
   type AgentEventHandler,
@@ -235,17 +236,24 @@ export async function runClaudeAgent(
   options?: {
     permissionMode?: string;
     systemPrompt?: string;
-    mode?: "plan" | "execute";
+    mode?: "plan" | "execute" | "requirement";
     jobId?: string;
     attachments?: JobAttachment[];
   }
 ): Promise<AgentResult> {
-  const isPlan = options?.mode === "plan" || options?.permissionMode === "plan";
-  const permissionMode = options?.permissionMode ?? config.CLAUDE_PERMISSION_MODE;
-  const systemPrompt = options?.systemPrompt ?? (isPlan ? PLAN_SYSTEM_PROMPT : SYSTEM_PROMPT);
-  const userPrompt = isPlan
-    ? buildClaudePlanPrompt(prompt, pageContext, options?.attachments)
-    : buildClaudeTaskPrompt(prompt, pageContext, options?.attachments);
+  const isRequirement = options?.mode === "requirement";
+  const isPlan =
+    isRequirement || options?.mode === "plan" || options?.permissionMode === "plan";
+  const permissionMode =
+    options?.permissionMode ?? (isRequirement ? "plan" : config.CLAUDE_PERMISSION_MODE);
+  const systemPrompt =
+    options?.systemPrompt ??
+    (isRequirement ? REQUIREMENT_ANALYZE_SYSTEM_PROMPT : isPlan ? PLAN_SYSTEM_PROMPT : SYSTEM_PROMPT);
+  const userPrompt = isRequirement
+    ? prompt
+    : isPlan
+      ? buildClaudePlanPrompt(prompt, pageContext, options?.attachments)
+      : buildClaudeTaskPrompt(prompt, pageContext, options?.attachments);
 
   const args = [
     "-p",
@@ -262,13 +270,17 @@ export async function runClaudeAgent(
     "--include-partial-messages",
   ];
 
-  // Plan 模式严禁跳过权限，否则会直接改文件
+  // Plan / 需求分析模式严禁跳过权限
   if (config.CLAUDE_SKIP_PERMISSIONS && !isPlan) {
     args.splice(1, 0, "--dangerously-skip-permissions");
   }
 
-  if (isPlan) {
+  if (isPlan && !isRequirement) {
     args.push("--allowedTools", "Read,Grep,Glob,WebFetch,WebSearch");
+  }
+
+  if (isRequirement) {
+    args.push("--allowedTools", "WebSearch");
   }
 
   if (config.CLAUDE_MODEL) {
@@ -276,7 +288,7 @@ export async function runClaudeAgent(
   }
 
   console.log(
-    `[AI Runtime] 调用 Claude Code CLI (${IS_WINDOWS ? "Windows" : process.platform})，模式: ${isPlan ? "plan" : "execute"}，工作目录: ${repoPath}`
+    `[AI Runtime] 调用 Claude Code CLI (${IS_WINDOWS ? "Windows" : process.platform})，模式: ${isRequirement ? "requirement" : isPlan ? "plan" : "execute"}，工作目录: ${repoPath}`
   );
   console.log(`[AI Runtime] 任务: ${prompt}`);
 

@@ -2,6 +2,7 @@ import express from "express";
 import cors from "cors";
 import { config } from "./config.js";
 import { jobsRouter } from "./routes/jobs.js";
+import { requirementsRouter } from "./routes/requirements.js";
 
 const app = express();
 
@@ -19,6 +20,7 @@ app.get("/health", (_req, res) => {
 });
 
 app.use("/api/jobs", jobsRouter);
+app.use("/api/requirements", requirementsRouter);
 
 const server = app.listen(config.PORT, "0.0.0.0", () => {
   console.log(`[AI Runtime] 服务已启动: http://0.0.0.0:${config.PORT}`);

@@ -8,6 +8,7 @@ const dist = resolve(__dirname, "../dist");
 const moves = [
   ["src/app/app.html", "app.html"],
   ["src/settings/settings.html", "settings.html"],
+  ["src/requirement/requirement.html", "requirement.html"],
 ];
 
 for (const [from, to] of moves) {
@@ -18,7 +19,7 @@ for (const [from, to] of moves) {
   }
 }
 
-for (const htmlFile of ["app.html", "settings.html"]) {
+for (const htmlFile of ["app.html", "settings.html", "requirement.html"]) {
   const htmlPath = resolve(dist, htmlFile);
   if (!existsSync(htmlPath)) continue;
 

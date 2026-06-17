@@ -10,6 +10,7 @@ export default defineConfig({
       input: {
         app: resolve(__dirname, "src/app/app.html"),
         settings: resolve(__dirname, "src/settings/settings.html"),
+        requirement: resolve(__dirname, "src/requirement/requirement.html"),
         background: resolve(__dirname, "src/background/background.ts"),
         content: resolve(__dirname, "src/content/content.ts"),
       },
@@ -17,12 +18,15 @@ export default defineConfig({
         entryFileNames: (chunk) => {
           if (chunk.name === "app") return "app.js";
           if (chunk.name === "settings") return "settings.js";
+          if (chunk.name === "requirement") return "requirement.js";
           return "[name].js";
         },
         chunkFileNames: "chunks/[name].js",
         assetFileNames: (asset) => {
           if (asset.name === "app.html") return "app.html";
           if (asset.name === "settings.html") return "settings.html";
+          if (asset.name === "requirement.html") return "requirement.html";
+          if (asset.name === "requirement.css") return "requirement.css";
           if (asset.name?.endsWith(".css")) return "app.css";
           return "assets/[name][extname]";
         },

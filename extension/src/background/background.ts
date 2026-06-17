@@ -1,4 +1,10 @@
 import type { PageContext } from "../shared/types.js";
+import {
+  extractTapdRequirementInPage,
+  isTapdUrl,
+  TAPD_TAB_URL_PATTERNS,
+  type TapdExtractResult,
+} from "../shared/tapdPageExtract.js";
 
 let lastBrowserTabId: number | null = null;
 
@@ -40,6 +46,70 @@ async function getTargetTab(): Promise<chrome.tabs.Tab | undefined> {
   const windows = await chrome.windows.getAll({ populate: true, windowTypes: ["normal"] });
   const focused = windows.find((w) => w.focused) ?? windows[0];
   return focused?.tabs?.find((t) => t.active && isBrowserTab(t));
+}
+
+async function findTapdTab(): Promise<chrome.tabs.Tab | undefined> {
+  if (lastBrowserTabId !== null) {
+    try {
+      const tab = await chrome.tabs.get(lastBrowserTabId);
+      if (isBrowserTab(tab) && isTapdUrl(tab.url)) return tab;
+    } catch {
+      lastBrowserTabId = null;
+    }
+  }
+
+  let tapdTabs = await chrome.tabs.query({ url: TAPD_TAB_URL_PATTERNS });
+  if (tapdTabs.length === 0) {
+    const allTabs = await chrome.tabs.query({});
+    tapdTabs = allTabs.filter((tab) => isTapdUrl(tab.url));
+  }
+  if (tapdTabs.length === 0) return undefined;
+
+  const activeTab = tapdTabs.find((tab) => tab.active);
+  if (activeTab) return activeTab;
+
+  const windows = await chrome.windows.getAll({ populate: true, windowTypes: ["normal"] });
+  const focusedWindow = windows.find((w) => w.focused) ?? windows[0];
+  if (focusedWindow?.id !== undefined) {
+    const inFocusedWindow = tapdTabs.find(
+      (tab) => tab.windowId === focusedWindow.id && tab.active
+    );
+    if (inFocusedWindow) return inFocusedWindow;
+
+    const anyInFocusedWindow = tapdTabs.find((tab) => tab.windowId === focusedWindow.id);
+    if (anyInFocusedWindow) return anyInFocusedWindow;
+  }
+
+  return tapdTabs.sort((a, b) => (b.lastAccessed ?? 0) - (a.lastAccessed ?? 0))[0];
+}
+
+async function readTapdFromTab(tabId: number): Promise<TapdExtractResult> {
+  try {
+    const response = (await chrome.tabs.sendMessage(tabId, {
+      type: "GET_TAPD_REQUIREMENT",
+    })) as TapdExtractResult | undefined;
+    if (response && typeof response === "object") {
+      return response;
+    }
+  } catch {
+    // content script 可能未注入（页面打开早于插件安装、或 SPA 未刷新）
+  }
+
+  try {
+    const [injection] = await chrome.scripting.executeScript({
+      target: { tabId },
+      func: extractTapdRequirementInPage,
+    });
+    if (injection?.result && typeof injection.result === "object") {
+      return injection.result as TapdExtractResult;
+    }
+    return { ok: false, error: "读取 TAPD 需求失败：页面未返回有效内容" };
+  } catch {
+    return {
+      ok: false,
+      error: "无法读取 TAPD 页面，请刷新 TAPD 需求页后重试",
+    };
+  }
 }
 
 async function readPageContext(tabId: number): Promise<PageContext> {
@@ -140,6 +210,27 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
           viewport: { width: 0, height: 0 },
         },
       });
+    })();
+    return true;
+  }
+
+  if (message.type === "GET_TAPD_REQUIREMENT") {
+    void (async () => {
+      const tab = await findTapdTab();
+      if (!tab?.id) {
+        sendResponse({
+          ok: false,
+          error: "未找到 TAPD 页面，请先在浏览器打开 TAPD 需求详情页",
+        });
+        return;
+      }
+
+      const response = await readTapdFromTab(tab.id);
+      if (!response.ok) {
+        sendResponse({ ok: false, error: response.error ?? "读取 TAPD 需求失败" });
+        return;
+      }
+      sendResponse({ ok: true, data: response.data });
     })();
     return true;
   }

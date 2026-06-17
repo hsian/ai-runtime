@@ -72,3 +72,30 @@ export interface JobEvent {
 export interface StorageConfig {
   serverUrl: string;
 }
+
+export interface TapdRequirement {
+  url: string;
+  title: string;
+  contentText: string;
+  extractedAt: string;
+}
+
+export interface RequirementTask {
+  id: string;
+  title: string;
+  tapdUrl: string;
+  rawContent: string;
+  draftPrompt: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AnalyzeRequirementRequest {
+  title: string;
+  tapdUrl: string;
+  rawContent: string;
+}
+
+export interface AnalyzeRequirementResponse {
+  draftPrompt: string;
+}

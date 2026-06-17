@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>AI Runtime - 需求模式</title>
+  </head>
+  <body>
+    <div class="req-app">
+      <header class="req-header">
+        <a class="req-back" id="backLink" href="app.html">← 编码模式</a>
+        <div class="req-header-main">
+          <h1>需求模式</h1>
+          <p class="req-status" id="reqStatus">就绪</p>
+        </div>
+        <button id="reqRefreshBtn" class="req-icon-btn" type="button" title="重新读取 TAPD">⟳</button>
+      </header>
+
+      <main class="req-main">
+        <section class="req-card">
+          <div class="req-card-head">
+            <h2>① 读取 TAPD 需求</h2>
+          </div>
+          <p class="req-title" id="reqPageTitle">请在浏览器打开 TAPD 需求详情页</p>
+          <p class="req-url" id="reqPageUrl"></p>
+          <details class="req-raw" open>
+            <summary>原始需求预览</summary>
+            <pre id="reqRawPreview"></pre>
+          </details>
+        </section>
+
+        <section class="req-card">
+          <div class="req-card-head">
+            <h2>② AI 整理 Prompt</h2>
+            <button id="reqAnalyzeBtn" class="req-link-btn" type="button">开始分析</button>
+          </div>
+          <p class="req-hint">分析结果可编辑，确认后加入任务列表</p>
+          <textarea
+            id="reqDraftPrompt"
+            class="req-prompt"
+            rows="12"
+            placeholder="点击「开始分析」由 AI 整理需求；也可手动编写"
+          ></textarea>
+        </section>
+      </main>
+
+      <footer class="req-footer">
+        <button id="reqSaveBtn" class="req-primary" type="button">加入任务</button>
+      </footer>
+    </div>
+    <script type="module" src="./requirement.ts"></script>
+  </body>
+</html>
