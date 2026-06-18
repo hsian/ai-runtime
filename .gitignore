@@ -1,4 +1,5 @@
 server/data/uploads/
+server/data/runtime-state.json
 dist/
 workspace/
 .env

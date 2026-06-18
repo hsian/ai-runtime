@@ -1,5 +1,9 @@
 import type { JobStatus, PageContext, SubmitRequest, SubmitResponse } from "./types.js";
 import { normalizeServerUrl } from "./config.js";
+import {
+  clearPendingServerCancel,
+  getPendingServerCancelJobId,
+} from "./codingJobStore.js";
 
 export async function fetchPageContext(includeContext: boolean): Promise<PageContext | undefined> {
   if (!includeContext) return undefined;
@@ -124,6 +128,29 @@ export async function cancelJob(serverUrl: string, jobId: string): Promise<{ ok:
     throw new Error(data.error ?? `请求失败: ${res.status}`);
   }
   return { ok: Boolean(data.ok) };
+}
+
+function isCancelSettledError(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err);
+  return /不存在|404|not found|当前状态不可取消/i.test(msg);
+}
+
+/** 补发断网时未送达的取消请求；返回 true 表示无需再重试 */
+export async function flushPendingServerCancel(serverUrl: string): Promise<boolean> {
+  const jobId = await getPendingServerCancelJobId();
+  if (!jobId) return true;
+
+  try {
+    await cancelJob(serverUrl, jobId);
+    await clearPendingServerCancel();
+    return true;
+  } catch (err) {
+    if (isCancelSettledError(err)) {
+      await clearPendingServerCancel();
+      return true;
+    }
+    return false;
+  }
 }
 
 export async function queryJobStatus(serverUrl: string, jobId: string): Promise<JobStatus> {

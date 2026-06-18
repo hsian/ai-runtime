@@ -408,18 +408,3 @@ jobsRouter.get("/:jobId", (req, res) => {
 jobsRouter.get("/", (_req, res) => {
   res.json({ jobs: listJobs() });
 });
-
-export function resumeInterruptedPlans(): void {
-  for (const job of listJobs()) {
-    if (job.status !== "planning" || !job.requiresConfirm) continue;
-
-    console.log(`[AI Runtime] 恢复未完成的 Plan 任务: ${job.jobId}`);
-    runPlan(job.jobId).catch((err) => {
-      const latest = getJob(job.jobId);
-      if (latest?.status === "cancelled" || err instanceof AgentAbortedError) return;
-
-      updateJob(job.jobId, { status: "failed", error: String(err), message: "Plan 执行失败" });
-      appendJobEvent(job.jobId, { type: "error", message: String(err), text: "Plan 执行失败" });
-    });
-  }
-}

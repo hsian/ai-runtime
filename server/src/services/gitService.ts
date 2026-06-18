@@ -142,6 +142,32 @@ export class GitService {
     return status.files.length > 0;
   }
 
+  /** 服务重启后：还原工作区、回到基线分支、清理 plugin-fix 分支 */
+  async resetWorkspaceAfterRestart(): Promise<void> {
+    const git = await this.getGit();
+    const defaultBranch = config.GIT_DEFAULT_BRANCH;
+
+    await git.reset(["--hard", "HEAD"]);
+    await git.clean("f", ["-d"]);
+
+    await git.fetch("origin").catch(() => {});
+
+    const current = (await git.revparse(["--abbrev-ref", "HEAD"])).trim();
+    if (current !== defaultBranch) {
+      await git.checkout(defaultBranch);
+    }
+
+    await git.pull("origin", defaultBranch).catch((err) => {
+      console.warn("[GitService] 拉取基线分支失败:", err instanceof Error ? err.message : err);
+    });
+
+    const branches = await git.branchLocal();
+    for (const name of branches.all) {
+      if (!name.startsWith("plugin-fix/")) continue;
+      await git.deleteLocalBranch(name, true).catch(() => {});
+    }
+  }
+
   /** 丢弃工作区所有未提交改动（Plan 误改或取消后还原） */
   async discardUncommittedChanges(): Promise<string[]> {
     const git = await this.getGit();

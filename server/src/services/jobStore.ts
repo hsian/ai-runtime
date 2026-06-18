@@ -1,33 +1,14 @@
 import { v4 as uuidv4 } from "uuid";
 import type { Job, JobRequest } from "../types.js";
-import { loadPersistedJobs, touchJobPersistence } from "./jobPersistence.js";
 
 const jobs = new Map<string, Job>();
-
-function markInterruptedJobs(): void {
-  for (const job of jobs.values()) {
-    if (job.status === "running" || job.status === "pending") {
-      jobs.set(job.jobId, {
-        ...job,
-        status: "failed",
-        error: "服务重启导致任务中断",
-        message: "服务重启导致任务中断，请重新提交",
-        updatedAt: new Date().toISOString(),
-      });
-    }
-  }
-}
 
 export function getJobsMap(): Map<string, Job> {
   return jobs;
 }
 
 export function initJobStore(): void {
-  for (const job of loadPersistedJobs()) {
-    jobs.set(job.jobId, job);
-  }
-  markInterruptedJobs();
-  touchJobPersistence();
+  // 任务仅保存在内存中，服务重启后清空
 }
 
 export function createJob(request: JobRequest): Job {
@@ -44,7 +25,6 @@ export function createJob(request: JobRequest): Job {
     updatedAt: now,
   };
   jobs.set(job.jobId, job);
-  touchJobPersistence();
   return job;
 }
 
@@ -58,7 +38,6 @@ export function updateJob(jobId: string, patch: Partial<Job>): Job | undefined {
 
   const updated: Job = { ...job, ...patch, updatedAt: new Date().toISOString() };
   jobs.set(jobId, updated);
-  touchJobPersistence();
   return updated;
 }
 

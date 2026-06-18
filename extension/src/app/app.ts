@@ -10,6 +10,7 @@ import {
   cancelJob,
   discardMerge,
   executeJob,
+  flushPendingServerCancel,
   mergeJob,
   queryJobStatus,
   queryJobStatusWithRetry,
@@ -26,6 +27,16 @@ import {
 import { initCodingTaskPicker, refreshTaskDrawer } from "./codingTaskPicker.js";
 import { setupComposerResize } from "./composerResize.js";
 import { saveCodingPromptAsTask } from "../shared/requirementStore.js";
+import {
+  appendCodingJobEvent,
+  clearCodingJobSession,
+  clearPendingServerCancel,
+  getCodingJobSession,
+  getPendingServerCancelJobId,
+  initCodingJobSession,
+  markPendingServerCancel,
+  type CodingJobSession,
+} from "../shared/codingJobStore.js";
 
 interface PendingAttachment {
   id: string;
@@ -46,6 +57,14 @@ let currentJobStatus: JobStatusType | null = null;
 const seenEventIds = new Set<string>();
 let lastEventAt = Date.now();
 let recoverAttemptAt = 0;
+let recoveryStopped = false;
+let recoveryFailureCount = 0;
+const MAX_RECOVERY_FAILURES = 3;
+const RECOVER_QUIET_MS = 12_000;
+const RECOVER_RETRY_GAP_MS = 8_000;
+const PENDING_CANCEL_RETRY_MS = 10_000;
+
+let pendingCancelRetryTimer: ReturnType<typeof setInterval> | null = null;
 let lastLocalUserBubble:
   | { localId: string; text: string; pageUrl?: string; createdAtMs: number; imageUrls?: string[] }
   | null = null;
@@ -168,6 +187,72 @@ function updateSubmitButton(): void {
   btn.classList.toggle("danger", cancellable);
 }
 
+function stopPendingCancelRetry(): void {
+  if (!pendingCancelRetryTimer) return;
+  clearInterval(pendingCancelRetryTimer);
+  pendingCancelRetryTimer = null;
+}
+
+async function tryFlushPendingServerCancel(serverUrl: string): Promise<void> {
+  const settled = await flushPendingServerCancel(serverUrl);
+  if (settled) stopPendingCancelRetry();
+}
+
+function startPendingCancelRetry(serverUrl: string): void {
+  void tryFlushPendingServerCancel(serverUrl);
+  if (pendingCancelRetryTimer) return;
+  pendingCancelRetryTimer = setInterval(() => {
+    void tryFlushPendingServerCancel(serverUrl);
+  }, PENDING_CANCEL_RETRY_MS);
+}
+
+async function ensurePendingCancelRetry(serverUrl: string): Promise<void> {
+  const pending = await getPendingServerCancelJobId();
+  if (pending) startPendingCancelRetry(serverUrl);
+}
+
+function resetJobRecovery(): void {
+  recoveryStopped = false;
+  recoveryFailureCount = 0;
+  recoverAttemptAt = 0;
+}
+
+function stopJobRecovery(): void {
+  recoveryStopped = true;
+  activeStream?.close();
+  activeStream = null;
+}
+
+function applyLocalJobCancelled(jobId: string, message: string): void {
+  stopJobRecovery();
+  activeJobId = null;
+  void chrome.storage.local.remove(["lastJobId"]);
+
+  if (currentJobStatus === "cancelled") {
+    updateSubmitButton();
+    setConnectionStatus(message);
+    return;
+  }
+
+  handleJobEvent({
+    id: `local-cancel-${Date.now()}`,
+    jobId,
+    timestamp: new Date().toISOString(),
+    type: "cancelled",
+    text: message,
+    message,
+  });
+}
+
+function abandonActiveJob(message: string): void {
+  stopJobRecovery();
+  activeJobId = null;
+  currentJobStatus = null;
+  void chrome.storage.local.remove(["lastJobId"]);
+  updateSubmitButton();
+  setConnectionStatus(message);
+}
+
 async function cancelActiveJob(): Promise<void> {
   const jobId = activeJobId;
   if (!jobId) return;
@@ -183,18 +268,15 @@ async function cancelActiveJob(): Promise<void> {
   try {
     setConnectionStatus("正在取消任务...");
     await cancelJob(config.serverUrl, jobId);
-    // 取消事件会通过 SSE 再发一次；这里先乐观更新，避免用户感觉没反应
-    currentJobStatus = "cancelled";
-    updateSubmitButton();
-    setConnectionStatus("任务已取消");
-  } catch (err) {
-    if (isNotFoundError(err)) {
-      resetActiveJob("服务端任务已不存在（可能已重启或超时），请重新提交");
-    } else {
-      setConnectionStatus(formatErrorMessage(config.serverUrl, err));
-    }
+    await clearPendingServerCancel();
+    applyLocalJobCancelled(jobId, "任务已取消");
+  } catch {
+    await markPendingServerCancel(jobId);
+    applyLocalJobCancelled(jobId, "任务已取消（服务不可用，已在本地结束）");
+    startPendingCancelRetry(config.serverUrl);
   } finally {
     btn.disabled = false;
+    updateSubmitButton();
   }
 }
 
@@ -215,10 +297,58 @@ function scrollChatToBottom(): void {
   });
 }
 
-function clearChatScreen(): void {
+function clearChatDom(): void {
   el<HTMLElement>("chatMessages").innerHTML = "";
   seenEventIds.clear();
   lastLocalUserBubble = null;
+}
+
+function clearChatScreen(): void {
+  clearChatDom();
+  void clearCodingJobSession();
+  void chrome.storage.local.remove(["lastJobId"]);
+}
+
+function persistJobEvent(event: JobEvent): void {
+  appendCodingJobEvent(event.jobId, event, {
+    status: currentJobStatus ?? undefined,
+    planSummary: getPlanResultText(event.jobId),
+  });
+}
+
+async function restoreChatFromSession(): Promise<CodingJobSession | null> {
+  const session = await getCodingJobSession();
+  if (!session || session.events.length === 0) return session;
+
+  clearChatDom();
+  activeJobId = session.jobId;
+  currentJobStatus = session.status;
+
+  for (const event of session.events) {
+    handleJobEvent(event, { skipPersist: true });
+  }
+
+  if (session.planSummary && !hasPlanResultBubble(session.jobId)) {
+    renderPlanResultFromSummary(
+      session.jobId,
+      session.planSummary,
+      session.status === "awaiting_confirm"
+    );
+  }
+
+  return session;
+}
+
+function isStreamRecoverableStatus(status: JobStatusType): boolean {
+  return status === "planning" || status === "running";
+}
+
+function isStaticRecoverableStatus(status: JobStatusType): boolean {
+  return status === "awaiting_confirm" || status === "awaiting_input" || status === "awaiting_merge";
+}
+
+function isServerRestartedJob(job: JobStatus): boolean {
+  return job.status === "cancelled" && (job.message?.includes("重启") ?? false);
 }
 
 function setupChatContextMenu(): void {
@@ -307,13 +437,34 @@ function confirmCardStatusLabel(status: JobStatusType): string {
 }
 
 function resetActiveJob(message: string): void {
-  activeStream?.close();
-  activeStream = null;
+  stopJobRecovery();
   activeJobId = null;
   currentJobStatus = null;
   void chrome.storage.local.remove(["lastJobId"]);
   updateSubmitButton();
   setConnectionStatus(message);
+}
+
+/** 启动时发现本地 jobId 在服务端已不存在：保留本地聊天记录，恢复就绪状态 */
+function dismissStaleJob(localStatus?: JobStatusType): void {
+  activeStream?.close();
+  activeStream = null;
+  activeJobId = null;
+  currentJobStatus = localStatus && isTerminalStatus(localStatus) ? localStatus : null;
+  void chrome.storage.local.remove(["lastJobId"]);
+  updateSubmitButton();
+
+  if (localStatus && isTerminalStatus(localStatus)) {
+    applyHeaderStatusFromJob({
+      jobId: "",
+      status: localStatus,
+      createdAt: "",
+      updatedAt: "",
+    });
+    return;
+  }
+
+  setConnectionStatus("就绪");
 }
 
 function renderPlanResultFromSummary(jobId: string, summary: string, editable = false): void {
@@ -363,18 +514,38 @@ function applyServerJobState(job: JobStatus): void {
 }
 
 async function recoverJobConnection(serverUrl: string, jobId: string): Promise<void> {
-  if (activeJobId !== jobId || isTerminalStatus(currentJobStatus)) return;
+  if (
+    recoveryStopped ||
+    activeJobId !== jobId ||
+    isTerminalStatus(currentJobStatus)
+  ) {
+    return;
+  }
+
+  if (Date.now() - recoverAttemptAt < RECOVER_RETRY_GAP_MS) return;
+  recoverAttemptAt = Date.now();
 
   try {
-    const job = await queryJobStatusWithRetry(serverUrl, jobId);
-    await syncMissedJobEvents(serverUrl, jobId);
+    const job = await queryJobStatusWithRetry(serverUrl, jobId, 2);
+    recoveryFailureCount = 0;
+
+    if (isServerRestartedJob(job)) {
+      abandonActiveJob("服务已断开，请重新提交");
+      return;
+    }
+
+    if (job.status === "pending") {
+      abandonActiveJob("连接已断开，排队任务已失效，请重新提交");
+      return;
+    }
+
+    await syncMissedJobEvents(serverUrl, job.jobId);
     applyServerJobState(job);
 
     if (isTerminalStatus(job.status)) {
       if (job.status === "failed") {
         setConnectionStatus(job.error ?? job.message ?? "Plan 执行失败");
-        activeStream?.close();
-        activeStream = null;
+        stopJobRecovery();
         updateSubmitButton();
       } else {
         resetActiveJob(
@@ -388,16 +559,30 @@ async function recoverJobConnection(serverUrl: string, jobId: string): Promise<v
       return;
     }
 
-    if (job.status === "awaiting_confirm" || job.status === "awaiting_input" || job.status === "awaiting_merge") {
+    if (isStaticRecoverableStatus(job.status)) {
+      return;
+    }
+
+    if (!isStreamRecoverableStatus(job.status)) {
+      abandonActiveJob("服务已断开，请重新提交");
       return;
     }
 
     connectJobStream(serverUrl, jobId, job.status);
     setConnectionStatus("连接已恢复，继续接收进度…");
   } catch (err) {
-    if (isNotFoundError(err)) {
-      resetActiveJob("服务端任务已不存在（可能已重启或超时），请重新提交");
+    recoveryFailureCount += 1;
+
+    if (isNotFoundError(err) || recoveryFailureCount >= MAX_RECOVERY_FAILURES) {
+      abandonActiveJob(
+        isNotFoundError(err)
+          ? "服务已断开，请重新提交"
+          : "无法连接服务，请检查服务是否启动后重新提交"
+      );
+      return;
     }
+
+    setConnectionStatus(`连接中断，正在重试（${recoveryFailureCount}/${MAX_RECOVERY_FAILURES}）…`);
   }
 }
 
@@ -931,7 +1116,7 @@ function setupAttachmentHandlers(): void {
   });
 }
 
-function handleJobEvent(event: JobEvent): void {
+function handleJobEvent(event: JobEvent, options?: { skipPersist?: boolean }): void {
   if (seenEventIds.has(event.id)) return;
   seenEventIds.add(event.id);
   lastEventAt = Date.now();
@@ -1040,6 +1225,10 @@ function handleJobEvent(event: JobEvent): void {
       break;
   }
 
+  if (!options?.skipPersist) {
+    persistJobEvent(event);
+  }
+
   scrollChatToBottom();
 }
 
@@ -1047,12 +1236,13 @@ function connectJobStream(serverUrl: string, jobId: string, initialStatus?: JobS
   activeStream?.close();
   activeJobId = jobId;
   if (initialStatus) currentJobStatus = initialStatus;
+  resetJobRecovery();
   setConnectionStatus("加载任务记录…");
   lastEventAt = Date.now();
-  recoverAttemptAt = 0;
 
   activeStream = openJobEventStream(serverUrl, jobId, handleJobEvent, {
     onOpen: () => {
+      recoveryFailureCount = 0;
       if (currentJobStatus) {
         applyHeaderStatusFromJob({ jobId, status: currentJobStatus, createdAt: "", updatedAt: "" });
       } else {
@@ -1061,26 +1251,19 @@ function connectJobStream(serverUrl: string, jobId: string, initialStatus?: JobS
       updateSubmitButton();
     },
     onError: () => {
+      if (recoveryStopped || isTerminalStatus(currentJobStatus)) return;
+
       const quietMs = Date.now() - lastEventAt;
-      const recoverAfterMs = currentJobStatus === "planning" ? 120_000 : 20_000;
-      if (quietMs > 4000 && activeStream && !isTerminalStatus(currentJobStatus)) {
-        setConnectionStatus("Plan 分析中，连接不稳定，正在自动重试…");
+      if (quietMs > 3000) {
+        setConnectionStatus(
+          recoveryFailureCount > 0
+            ? `连接中断，正在重试（${recoveryFailureCount}/${MAX_RECOVERY_FAILURES}）…`
+            : "连接中断，正在尝试恢复…"
+        );
       }
+
       if (
-        quietMs > recoverAfterMs &&
-        activeJobId === jobId &&
-        !isTerminalStatus(currentJobStatus) &&
-        currentJobStatus !== "awaiting_confirm" &&
-        currentJobStatus !== "awaiting_input" &&
-        currentJobStatus !== "awaiting_merge" &&
-        Date.now() - recoverAttemptAt > 15_000
-      ) {
-        recoverAttemptAt = Date.now();
-        void recoverJobConnection(serverUrl, jobId);
-      }
-    },
-    onClose: () => {
-      if (
+        quietMs > RECOVER_QUIET_MS &&
         activeJobId === jobId &&
         !isTerminalStatus(currentJobStatus) &&
         currentJobStatus !== "awaiting_confirm" &&
@@ -1088,11 +1271,25 @@ function connectJobStream(serverUrl: string, jobId: string, initialStatus?: JobS
         currentJobStatus !== "awaiting_merge"
       ) {
         void recoverJobConnection(serverUrl, jobId);
+      }
+    },
+    onClose: () => {
+      if (
+        recoveryStopped ||
+        activeJobId !== jobId ||
+        isTerminalStatus(currentJobStatus) ||
+        currentJobStatus === "awaiting_confirm" ||
+        currentJobStatus === "awaiting_input" ||
+        currentJobStatus === "awaiting_merge"
+      ) {
+        if (activeStream && currentJobStatus) {
+          applyHeaderStatusFromJob({ jobId, status: currentJobStatus, createdAt: "", updatedAt: "" });
+        }
         return;
       }
-      if (activeStream && currentJobStatus) {
-        applyHeaderStatusFromJob({ jobId, status: currentJobStatus, createdAt: "", updatedAt: "" });
-      }
+
+      setConnectionStatus("连接中断，正在尝试恢复…");
+      void recoverJobConnection(serverUrl, jobId);
     },
   });
 }
@@ -1183,6 +1380,8 @@ async function handleSubmit(): Promise<void> {
     return;
   }
 
+  await flushPendingServerCancel(config.serverUrl);
+
   const pageContext = await fetchPageContext(includeContext);
   if (pageContext) {
     renderPagePreview(pageContext.url, pageContext.title);
@@ -1261,6 +1460,7 @@ async function handleSubmit(): Promise<void> {
     }
 
     el<HTMLTextAreaElement>("prompt").value = "";
+    await initCodingJobSession(data.jobId, data.status as JobStatusType);
     await chrome.storage.local.set({ lastJobId: data.jobId });
     resetPlanOutputBuffer(data.jobId);
 
@@ -1275,7 +1475,6 @@ async function handleSubmit(): Promise<void> {
 }
 
 async function init(): Promise<void> {
-  const stored = await chrome.storage.local.get(["lastJobId"]);
   const config = await loadConfig();
 
   await refreshPagePreview();
@@ -1306,27 +1505,80 @@ async function init(): Promise<void> {
     }
   });
 
-  window.addEventListener("focus", refreshPagePreview);
+  window.addEventListener("focus", () => {
+    void refreshPagePreview();
+    void loadConfig().then((cfg) => {
+      if (cfg.serverUrl) void tryFlushPendingServerCancel(cfg.serverUrl);
+    });
+  });
   updateSubmitButton();
 
-  if (stored.lastJobId && config.serverUrl) {
-    try {
-      const job = await queryJobStatus(config.serverUrl, stored.lastJobId as string);
-      await syncMissedJobEvents(config.serverUrl, job.jobId);
-      applyServerJobState(job);
-      if (
-        job.status === "planning" ||
-        job.status === "pending" ||
-        job.status === "running" ||
-        job.status === "awaiting_confirm" ||
-        job.status === "awaiting_merge"
-      ) {
-        connectJobStream(config.serverUrl, job.jobId, job.status);
-      }
-    } catch {
-      await chrome.storage.local.remove(["lastJobId"]);
-      setConnectionStatus("就绪");
+  if (config.serverUrl) {
+    void tryFlushPendingServerCancel(config.serverUrl);
+    void ensurePendingCancelRetry(config.serverUrl);
+  }
+
+  const session = await restoreChatFromSession();
+  const jobId = session?.jobId ?? (await chrome.storage.local.get(["lastJobId"])).lastJobId as string | undefined;
+
+  if (!jobId || !config.serverUrl) {
+    if (session?.status) {
+      applyHeaderStatusFromJob({
+        jobId: session.jobId,
+        status: session.status,
+        createdAt: session.updatedAt,
+        updatedAt: session.updatedAt,
+      });
+      updateSubmitButton();
     }
+    return;
+  }
+
+  try {
+    const job = await queryJobStatus(config.serverUrl, jobId);
+
+    if (isServerRestartedJob(job)) {
+      dismissStaleJob(session?.status ?? "cancelled");
+      return;
+    }
+
+    if (job.status === "pending") {
+      dismissStaleJob("cancelled");
+      setConnectionStatus("连接已断开，排队任务已失效，请重新提交");
+      return;
+    }
+
+    await syncMissedJobEvents(config.serverUrl, job.jobId);
+    applyServerJobState(job);
+
+    if (isTerminalStatus(job.status)) {
+      applyHeaderStatusFromJob(job);
+      updateSubmitButton();
+      return;
+    }
+
+    if (isStaticRecoverableStatus(job.status)) {
+      activeJobId = job.jobId;
+      await chrome.storage.local.set({ lastJobId: job.jobId });
+      updateSubmitButton();
+      return;
+    }
+
+    if (isStreamRecoverableStatus(job.status)) {
+      activeJobId = job.jobId;
+      await chrome.storage.local.set({ lastJobId: job.jobId });
+      connectJobStream(config.serverUrl, job.jobId, job.status);
+      return;
+    }
+
+    dismissStaleJob(session?.status);
+  } catch (err) {
+    if (isNotFoundError(err)) {
+      dismissStaleJob(session?.status);
+      return;
+    }
+    void chrome.storage.local.remove(["lastJobId"]);
+    setConnectionStatus(formatErrorMessage(config.serverUrl, err));
   }
 }
 

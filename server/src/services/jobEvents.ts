@@ -1,5 +1,4 @@
 import { randomUUID } from "crypto";
-import { loadPersistedJobEvents, touchJobPersistence } from "./jobPersistence.js";
 
 export type JobEventType =
   | "user"
@@ -48,12 +47,6 @@ export function getJobEventsMap(): Map<string, JobEvent[]> {
   return events;
 }
 
-export function initJobEvents(): void {
-  for (const [jobId, list] of loadPersistedJobEvents()) {
-    events.set(jobId, list);
-  }
-}
-
 export function appendJobEvent(jobId: string, input: JobEventInput): JobEvent {
   const event: JobEvent = {
     id: randomUUID(),
@@ -68,7 +61,6 @@ export function appendJobEvent(jobId: string, input: JobEventInput): JobEvent {
     list.splice(0, list.length - MAX_EVENTS_PER_JOB);
   }
   events.set(jobId, list);
-  touchJobPersistence();
 
   const subs = subscribers.get(jobId);
   if (subs) {
