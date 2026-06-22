@@ -75,69 +75,79 @@ export interface StorageConfig {
   serverUrl: string;
 }
 
-export interface TapdRequirement {
-  url: string;
-  title: string;
-  contentText: string;
-  extractedAt: string;
-  imageCount?: number;
-}
-
-export interface TapdRequirementFetchResult {
-  requirement: TapdRequirement;
-  imageBlobs: Blob[];
-}
-
-export interface RequirementTask {
+export interface CodingTask {
   id: string;
   title: string;
-  tapdUrl: string;
+  pageUrl: string;
   rawContent: string;
   draftPrompt: string;
   createdAt: string;
   updatedAt: string;
 }
 
-export interface AnalyzeRequirementRequest {
-  title: string;
-  tapdUrl: string;
-  rawContent: string;
-  images?: Blob[];
-}
-
-export interface StartAnalyzeResponse {
-  sessionId: string;
-  status: string;
-  imageCount: number;
-  message?: string;
-}
-
-export interface AnalyzeSessionStatus {
-  sessionId: string;
-  status: "running" | "completed" | "failed" | "cancelled";
-  message?: string;
-  draftPrompt?: string;
-  imageCount?: number;
-  error?: string;
-}
-
-export type AnalyzeEventType = "stage" | "agent_text" | "agent_tool" | "done" | "cancelled" | "error";
-
-export interface AnalyzeEvent {
+export interface TapdIteration {
   id: string;
-  sessionId: string;
-  timestamp: string;
-  type: AnalyzeEventType;
-  text?: string;
-  phase?: string;
-  delta?: string;
-  toolAction?: "start" | "done";
-  toolName?: string;
-  toolDetail?: string;
-  draftPrompt?: string;
-  message?: string;
+  name: string;
+  status?: string;
+  startdate?: string;
+  enddate?: string;
 }
 
-export interface AnalyzeRequirementResponse {
-  draftPrompt: string;
+export interface TapdTaskItem {
+  id: string;
+  name: string;
+  description?: string;
+  status?: string;
+  owner?: string;
+  priority_label?: string;
+  story_id?: string;
+  iteration_id?: string;
+  imageCount?: number;
+}
+
+export type TapdBatchSessionStatus =
+  | "idle"
+  | "running"
+  | "waiting_confirm"
+  | "waiting_merge"
+  | "waiting_input"
+  | "paused"
+  | "completed"
+  | "cancelled";
+
+export type TapdBatchTaskStatus =
+  | "pending"
+  | "running"
+  | "completed"
+  | "failed"
+  | "skipped";
+
+export interface TapdBatchTask {
+  id: string;
+  tapdTaskId: string;
+  title: string;
+  prompt: string;
+  sourceHtml?: string;
+  imageCount?: number;
+  order: number;
+  status: TapdBatchTaskStatus;
+  jobId?: string;
+  error?: string;
+  failedPhase?: string;
+  completedAt?: string;
+}
+
+export interface TapdBatchSession {
+  id: string;
+  workspaceId: string;
+  iterationId: string;
+  iterationName: string;
+  status: TapdBatchSessionStatus;
+  tasks: TapdBatchTask[];
+  currentTaskId?: string;
+  activeJobId?: string;
+  planSummary?: string;
+  pauseReason?: string;
+  createdAt: string;
+  updatedAt: string;
 }

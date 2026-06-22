@@ -1,7 +1,6 @@
 import { mkdirSync, renameSync } from "fs";
 import { copyFile, mkdir } from "fs/promises";
 import { extname, join, resolve } from "path";
-import type { Express } from "express";
 import multer from "multer";
 import { config } from "../config.js";
 import type { JobAttachment } from "../types.js";
@@ -34,38 +33,6 @@ export const jobImagesUpload = multer({
     cb(new Error("仅支持 JPEG、PNG、WebP、GIF 图片"));
   },
 });
-
-export const ANALYZE_MAX_IMAGES = 8;
-
-export const requirementImagesUpload = multer({
-  storage: multer.diskStorage({
-    destination: (_req, _file, cb) => {
-      cb(null, TMP_DIR);
-    },
-    filename: (_req, file, cb) => {
-      const ext = extname(file.originalname) || ".webp";
-      cb(null, `${Date.now()}-${Math.random().toString(36).slice(2, 8)}${ext}`);
-    },
-  }),
-  limits: {
-    fileSize: config.UPLOAD_MAX_BYTES,
-    files: ANALYZE_MAX_IMAGES,
-  },
-  fileFilter: (_req, file, cb) => {
-    if (IMAGE_MIME.test(file.mimetype)) {
-      cb(null, true);
-      return;
-    }
-    cb(new Error("仅支持 JPEG、PNG、WebP、GIF 图片"));
-  },
-});
-
-export function finalizeAnalyzeAttachments(
-  sessionId: string,
-  files: Express.Multer.File[] | undefined
-): JobAttachment[] {
-  return finalizeJobAttachments(`analyze/${sessionId}`, files);
-}
 
 export function finalizeJobAttachments(
   jobId: string,

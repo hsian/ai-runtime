@@ -14,7 +14,6 @@ const envSchema = z.object({
   CLAUDE_CLI_PATH: z.string().default("claude"),
   CLAUDE_MODEL: z.string().optional(),
   CLAUDE_TIMEOUT_MS: z.coerce.number().default(600_000),
-  REQUIREMENT_ANALYZE_TIMEOUT_MS: z.coerce.number().default(180_000),
   CLAUDE_PERMISSION_MODE: z
     .enum(["acceptEdits", "bypassPermissions", "default", "dontAsk", "auto", "plan"])
     .default("acceptEdits"),
@@ -45,7 +44,18 @@ const envSchema = z.object({
   UPLOAD_DIR: z.string().default("./data/uploads"),
   UPLOAD_MAX_BYTES: z.coerce.number().default(300 * 1024),
   UPLOAD_MAX_COUNT: z.coerce.number().default(3),
+  TAPD_API_BASE: z.string().url().default("https://api.tapd.cn"),
+  TAPD_CLIENT_ID: z.string().optional(),
+  TAPD_CLIENT_SECRET: z.string().optional(),
+  TAPD_WORKSPACE_ID: z.string().optional(),
 });
+
+export interface TapdConfig {
+  apiBase: string;
+  clientId: string;
+  clientSecret: string;
+  workspaceId: string;
+}
 
 function loadConfig() {
   const envPath = resolve(process.cwd(), ".env");
@@ -81,6 +91,24 @@ function loadConfig() {
 }
 
 export const config = loadConfig();
+
+export function isTapdConfigured(): boolean {
+  return Boolean(
+    config.TAPD_CLIENT_ID && config.TAPD_CLIENT_SECRET && config.TAPD_WORKSPACE_ID
+  );
+}
+
+export function getTapdConfig(): TapdConfig {
+  if (!isTapdConfigured()) {
+    throw new Error("TAPD 未配置");
+  }
+  return {
+    apiBase: config.TAPD_API_BASE.replace(/\/$/, ""),
+    clientId: config.TAPD_CLIENT_ID!,
+    clientSecret: config.TAPD_CLIENT_SECRET!,
+    workspaceId: config.TAPD_WORKSPACE_ID!,
+  };
+}
 
 export function getAuthenticatedRepoUrl(): string {
   const url = new URL(config.GIT_REPO_URL);

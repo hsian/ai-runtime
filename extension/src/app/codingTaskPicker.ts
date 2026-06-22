@@ -1,9 +1,9 @@
-import { deleteRequirementTask, listRequirementTasks } from "../shared/requirementStore.js";
-import type { RequirementTask } from "../shared/types.js";
+import { deleteCodingTask, listCodingTasks } from "../shared/codingTaskStore.js";
+import type { CodingTask } from "../shared/types.js";
 import "./task-picker.css";
 
 export interface CodingTaskPickerOptions {
-  onSelect: (task: RequirementTask) => void;
+  onSelect: (task: CodingTask) => void;
 }
 
 const DRAWER_OPEN_KEY = "taskDrawerOpen";
@@ -37,7 +37,7 @@ function summarize(text: string, max = 72): string {
 async function renderTaskList(): Promise<void> {
   if (!listEl) return;
 
-  const tasks = await listRequirementTasks();
+  const tasks = await listCodingTasks();
   if (tasks.length === 0) {
     listEl.innerHTML = `<div class="task-picker-empty">暂无已保存的任务</div>`;
     return;
@@ -162,14 +162,14 @@ export function initCodingTaskPicker(options: CodingTaskPickerOptions): void {
     const deleteId = target.closest<HTMLElement>("[data-delete-id]")?.dataset.deleteId;
     if (deleteId) {
       event.stopPropagation();
-      void deleteRequirementTask(deleteId).then(() => renderTaskList());
+      void deleteCodingTask(deleteId).then(() => renderTaskList());
       return;
     }
 
     const taskId = target.closest<HTMLElement>("[data-task-id]")?.dataset.taskId;
     if (!taskId) return;
 
-    void listRequirementTasks().then((tasks) => {
+    void listCodingTasks().then((tasks) => {
       const task = tasks.find((item) => item.id === taskId);
       if (task) {
         options.onSelect(task);

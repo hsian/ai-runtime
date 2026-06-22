@@ -689,6 +689,43 @@ body.composer-resizing {
   flex: 1;
 }
 
+.plan-reply-label {
+  display: block;
+  font-size: 11px;
+  color: #666;
+  margin: 8px 0 4px;
+}
+
+.plan-reply-details {
+  margin-top: 8px;
+}
+
+.plan-reply-summary {
+  font-size: 12px;
+  color: #4f46e5;
+  cursor: pointer;
+  user-select: none;
+}
+
+.plan-reply-input {
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid #d0d0d0;
+  border-radius: 6px;
+  padding: 8px;
+  font-size: 12px;
+  line-height: 1.45;
+  resize: vertical;
+  min-height: 64px;
+  font-family: inherit;
+}
+
+.plan-reply-input:focus {
+  outline: none;
+  border-color: #4a90d9;
+  box-shadow: 0 0 0 2px rgba(74, 144, 217, 0.15);
+}
+
 .queue-title {
   font-size: 12px;
   font-weight: 600;

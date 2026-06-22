@@ -83,7 +83,7 @@ ${prompt}
 }
 
 export const PLAN_SYSTEM_PROMPT =
-  "你是 Claude Code 的 Plan 模式助手，在 Git 工作区内分析代码。只允许阅读、搜索、分析代码，严禁修改、创建或删除任何文件。根据用户描述和当前测试页面 URL 定位相关源码，输出可执行的改动方案。严禁编造对话历史。若信息不足，说明需要补充什么后停止，不要无意义探索仓库。";
+  "你是 Claude Code 的 Plan 模式助手，在 Git 工作区内分析代码。只允许阅读、搜索、分析代码，严禁修改、创建或删除任何文件。根据用户描述和当前测试页面 URL 定位相关源码，输出可执行的改动方案。严禁编造对话历史。若信息严重不足无法出方案，说明缺什么后停止；否则直接给出完整方案，不要向用户提问或写「告诉我」「如需调整请说」等收尾。";
 
 export function buildClaudePlanPrompt(
   prompt: string,
@@ -116,9 +116,10 @@ ${prompt}
 【输出要求】
 1. 只分析并给出改动方案（涉及哪些文件、怎么改），不要执行修改
 2. 结合页面 URL/路由在仓库中搜索定位
-3. 需求简单明确时直接给方案，不要追问
-4. 信息不足时说明需要补充什么，然后停止
-5. 用简洁中文输出`;
+3. 需求简单明确时直接给完整方案，不要追问用户
+4. 仅在关键信息缺失、无法判断改哪里时才说明缺什么，然后停止
+5. 方案可执行时不要写「请确认」「告诉我」「如需调整」等让用户回复的收尾句
+6. 用简洁中文输出`;
 }
 
 const CLARIFICATION_PATTERNS = [
@@ -131,84 +132,22 @@ const CLARIFICATION_PATTERNS = [
   /什么意思/,
   /比如：/,
   /请告诉我/,
+  /告诉我/,
   /需要我/,
   /是否要/,
   /还是其他/,
+  /如需调整/,
+  /请选择/,
+  /选哪个/,
+  /哪个方案/,
+  /备选\s*[A-Za-z]/,
+  /请确认/,
+  /？\s*$/,
+  /\?\s*$/,
 ];
 
 export function looksLikeClarification(summary: string): boolean {
   return CLARIFICATION_PATTERNS.some((pattern) => pattern.test(summary));
-}
-
-export const REQUIREMENT_ANALYZE_SYSTEM_PROMPT =
-  "你是中文需求文案校稿助手。任务只有一个：把 TAPD 原始需求过滤一遍，让文字更通顺、表达更精准。\n" +
-  "本步骤与代码仓库完全无关——不读源码、不搜项目、不输出文件路径、不做技术方案。\n" +
-  "硬性规则：\n" +
-  "1. 禁止 Grep/Glob/WebSearch/WebFetch，禁止调用与配图无关的工具\n" +
-  "2. 只润色原文，不扩写、不总结、不重组为需求文档、不补背景、不补验收标准\n" +
-  "3. 保留原文的意思、信息量、顺序、页面名、按钮名、字段名、业务词、数字、条件和示例\n" +
-  "4. 可以删除明显重复、寒暄、无关外链、乱码和噪音；不确定的内容原样保留\n" +
-  "5. 只输出润色后的正文，不要前言、标题、解释或 markdown 代码块\n" +
-  "6. 输出必须按自然段编号，每段单独换行，格式为「1. ...」「2. ...」「3. ...」\n" +
-  "7. 不要输出「图片」「[图片]」「配图」这类占位词；图片只用于辅助理解原文";
-
-function buildRequirementAttachmentSection(attachments: JobAttachment[]): string {
-  if (!attachments.length) return "";
-
-  const lines = attachments.map((file, index) => `- 配图 ${index + 1}: ${file.path}`).join("\n");
-  return `
-【TAPD 配图】
-共 ${attachments.length} 张。必须先用 Read 读取这些图片，结合图片校准原文表达；但输出正文里不要出现「图片」「配图」「如图」等占位说明。
-仅允许读取以下文件：
-${lines}`;
-}
-
-function stripImagePlaceholders(text: string): string {
-  return text
-    .replace(/\[图片(?::[^\]]*)?\]/g, "")
-    .replace(/^\s*(图片|配图)\s*$/gm, "")
-    .replace(/\n{3,}/g, "\n\n")
-    .trim();
-}
-
-export function buildRequirementAnalyzePrompt(
-  title: string,
-  tapdUrl: string,
-  rawContent: string,
-  attachments: JobAttachment[] = []
-): string {
-  const attachmentPart = buildRequirementAttachmentSection(attachments);
-  const cleanedRawContent = stripImagePlaceholders(rawContent);
-
-  return `【需求原文校稿 - 只润色，不改需求】
-
-把下方 TAPD 原始需求用 AI 过滤一遍：让文字更通顺，表达意思更精准。
-仅此而已。不要改写成产品文档，不要重新设计结构，不要分析代码，不要写技术方案。
-
-【需求标题】
-${title}
-
-【TAPD 链接（备注）】
-${tapdUrl}
-${attachmentPart}
-【TAPD 原文】
-${cleanedRawContent}
-
-【校稿要求】
-1. 尽量保持原文段落和表达顺序，只做必要的语句润色
-2. 保留所有具体信息，不要用抽象词替换具体描述
-3. 不要新增原文没有的信息；不要猜测需求意图
-4. 原文含糊的地方可以稍微改顺，但不能改变含义
-${attachments.length > 0 ? "5. 必须先读取配图，用配图帮助理解原文；不要额外编造图中没有的需求，也不要在输出里写「图片」「配图」「如图」\n" : ""}6. 直接输出润色后的需求正文
-7. 按原文自然段拆分输出，每段用数字编号；每个编号必须单独占一行，编号之间空一行
-8. 禁止把多个编号写在同一行，例如禁止输出「1. ...2. ...3. ...」这种粘连格式
-
-正确示例：
-1. 第一段润色后的内容
-
-2. 第二段润色后的内容
-
-3. 第三段润色后的内容`;
 }
 
 export function summarizeToolInput(input: unknown): string | undefined {

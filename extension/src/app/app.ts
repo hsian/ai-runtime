@@ -1,4 +1,6 @@
 import "../shared/styles.css";
+import "../shared/shellView.css";
+import { initTapdBatchPanel } from "../tapd-batch/tapd-batch.js";
 import { loadConfig } from "../shared/config.js";
 import {
   fetchCurrentTabPreview,
@@ -14,6 +16,7 @@ import {
   mergeJob,
   queryJobStatus,
   queryJobStatusWithRetry,
+  replyToPlan,
   submitPlan,
   submitJob,
 } from "../shared/api.js";
@@ -26,7 +29,8 @@ import {
 } from "../shared/imageCompress.js";
 import { initCodingTaskPicker, refreshTaskDrawer } from "./codingTaskPicker.js";
 import { setupComposerResize } from "./composerResize.js";
-import { saveCodingPromptAsTask } from "../shared/requirementStore.js";
+import { saveCodingPromptAsTask } from "../shared/codingTaskStore.js";
+import { mountPlanConfirmCard } from "../shared/planConfirmCard.js";
 import {
   appendCodingJobEvent,
   clearCodingJobSession,
@@ -418,7 +422,7 @@ function confirmCardStatusLabel(status: JobStatusType): string {
     case "awaiting_confirm":
       return "";
     case "awaiting_input":
-      return "需要补充信息（请重新提交更明确的需求）";
+      return "需要补充信息";
     case "cancelled":
       return "已取消";
     case "completed":
@@ -728,93 +732,65 @@ function appendStageBubble(event: JobEvent): void {
 
 function upsertConfirmCard(jobId: string, status: JobStatusType = currentJobStatus ?? "awaiting_confirm"): void {
   const node = ensureMessageElement(`${CONFIRM_CARD_KEY}-${jobId}`, "msg msg-queue");
-  const readonly = status !== "awaiting_confirm";
-  const statusLabel = confirmCardStatusLabel(status);
-
-  if (readonly) {
-    node.innerHTML = `
-      <div class="msg-meta">Plan 确认</div>
-      <div class="queue-card">
-        <div class="queue-title">Plan 完成：是否执行修改？</div>
-        <div class="confirm-status">${escapeHtml(statusLabel)}</div>
-      </div>
-    `;
-    moveMessageToBottom(`${CONFIRM_CARD_KEY}-${jobId}`);
-    return;
-  }
-
-  node.innerHTML = `
-    <div class="msg-meta">等待确认</div>
-    <div class="queue-card">
-      <div class="queue-title">Plan 完成：是否执行修改？</div>
-      <div class="confirm-actions">
-        <button class="primary" data-action="execute">执行修改</button>
-        <button class="secondary" data-action="cancel">取消</button>
-      </div>
-      <div class="hint" style="margin-top:8px;">可直接编辑上方方案，确认后按编辑内容执行</div>
-      <div class="hint" style="margin-top:4px;">执行完成后还需确认才会合并到 test</div>
-    </div>
-  `;
-  moveMessageToBottom(`${CONFIRM_CARD_KEY}-${jobId}`);
-
-  const execBtn = node.querySelector<HTMLButtonElement>('button[data-action="execute"]');
-  const cancelBtn = node.querySelector<HTMLButtonElement>('button[data-action="cancel"]');
-  if (execBtn) {
-    execBtn.onclick = async () => {
+  mountPlanConfirmCard(node, jobId, status, {
+    getPlanText: (id) => getPlanResultText(id) ?? "",
+    onExecute: async (id, planSummary) => {
       const config = await loadConfig();
       if (!config.serverUrl) return;
+      if (!planSummary) {
+        setConnectionStatus("Plan 方案为空，请先填写方案内容");
+        return;
+      }
       try {
-        execBtn.disabled = true;
-        cancelBtn!.disabled = true;
-        const planSummary = getPlanResultText(jobId);
-        if (!planSummary) {
-          setConnectionStatus("Plan 方案为空，请先填写方案内容");
-          execBtn.disabled = false;
-          cancelBtn!.disabled = false;
-          return;
-        }
         setConnectionStatus("已确认执行，正在加入队列...");
-        await executeJob(config.serverUrl, jobId, planSummary);
-        lockPlanResultBubble(jobId);
+        await executeJob(config.serverUrl, id, planSummary);
+        lockPlanResultBubble(id);
         currentJobStatus = "pending";
-        upsertConfirmCard(jobId, "pending");
+        upsertConfirmCard(id, "pending");
       } catch (err) {
         if (isNotFoundError(err)) {
           currentJobStatus = "cancelled";
-          upsertConfirmCard(jobId, "cancelled");
+          upsertConfirmCard(id, "cancelled");
           setConnectionStatus("历史任务已过期（服务端可能已重启），请重新提交");
         } else {
           setConnectionStatus(formatErrorMessage(config.serverUrl, err));
         }
-        execBtn.disabled = false;
-        cancelBtn!.disabled = false;
       }
-    };
-  }
-  if (cancelBtn) {
-    cancelBtn.onclick = async () => {
+    },
+    onPlanReply: async (id, reply) => {
       const config = await loadConfig();
       if (!config.serverUrl) return;
       try {
-        cancelBtn.disabled = true;
-        execBtn!.disabled = true;
-        await cancelJob(config.serverUrl, jobId);
+        resetPlanOutputBuffer(id);
+        currentJobStatus = "planning";
+        upsertConfirmCard(id, "planning");
+        setConnectionStatus("正在根据补充说明继续分析...");
+        await replyToPlan(config.serverUrl, id, reply);
+      } catch (err) {
+        setConnectionStatus(formatErrorMessage(config.serverUrl, err));
+        upsertConfirmCard(id, currentJobStatus ?? "awaiting_input");
+      }
+    },
+    onCancel: async (id) => {
+      const config = await loadConfig();
+      if (!config.serverUrl) return;
+      try {
+        await cancelJob(config.serverUrl, id);
         currentJobStatus = "cancelled";
-        upsertConfirmCard(jobId, "cancelled");
+        upsertConfirmCard(id, "cancelled");
         setConnectionStatus("任务已取消");
       } catch (err) {
         if (isNotFoundError(err)) {
           currentJobStatus = "cancelled";
-          upsertConfirmCard(jobId, "cancelled");
+          upsertConfirmCard(id, "cancelled");
           setConnectionStatus("历史任务已过期（服务端可能已重启），无需操作");
         } else {
           setConnectionStatus(formatErrorMessage(config.serverUrl, err));
         }
-        cancelBtn.disabled = false;
-        execBtn!.disabled = false;
       }
-    };
-  }
+    },
+  });
+  moveMessageToBottom(`${CONFIRM_CARD_KEY}-${jobId}`);
 }
 
 function mergeCardStatusLabel(status: JobStatusType): string {
@@ -1175,6 +1151,7 @@ function handleJobEvent(event: JobEvent, options?: { skipPersist?: boolean }): v
       } else if (event.phase === "plan") {
         resetPlanOutputBuffer(event.jobId);
         currentJobStatus = "planning";
+        upsertConfirmCard(event.jobId, "planning");
         setConnectionStatus("Plan 分析中");
         updateSubmitButton();
       }
@@ -1474,6 +1451,23 @@ async function handleSubmit(): Promise<void> {
   }
 }
 
+let batchPanelReady = false;
+
+function switchAppView(view: "coding" | "batch"): void {
+  const codingView = el<HTMLElement>("codingView");
+  const batchPanel = el<HTMLElement>("tapdBatchPanel");
+  const batchBtn = el<HTMLButtonElement>("tapdBatchBtn");
+
+  codingView.hidden = view !== "coding";
+  batchPanel.hidden = view !== "batch";
+  batchBtn.classList.toggle("icon-btn-active", view === "batch");
+
+  if (view === "batch" && !batchPanelReady) {
+    initTapdBatchPanel(batchPanel, { onBack: () => switchAppView("coding") });
+    batchPanelReady = true;
+  }
+}
+
 async function init(): Promise<void> {
   const config = await loadConfig();
 
@@ -1482,8 +1476,8 @@ async function init(): Promise<void> {
   el<HTMLElement>("settingsBtn").addEventListener("click", () => {
     window.location.href = chrome.runtime.getURL("settings.html");
   });
-  el<HTMLButtonElement>("requirementBtn").addEventListener("click", () => {
-    window.location.href = chrome.runtime.getURL("requirement.html");
+  el<HTMLButtonElement>("tapdBatchBtn").addEventListener("click", () => {
+    switchAppView("batch");
   });
   initCodingTaskPicker({
     onSelect: (task) => {
@@ -1579,6 +1573,10 @@ async function init(): Promise<void> {
     }
     void chrome.storage.local.remove(["lastJobId"]);
     setConnectionStatus(formatErrorMessage(config.serverUrl, err));
+  }
+
+  if (location.hash === "#batch") {
+    switchAppView("batch");
   }
 }
 

@@ -79,6 +79,26 @@ export async function submitPlan(
   return postJob(serverUrl, "/api/jobs/plan", body);
 }
 
+export async function replyToPlan(
+  serverUrl: string,
+  jobId: string,
+  reply: string
+): Promise<SubmitResponse> {
+  const res = await fetch(
+    `${normalizeServerUrl(serverUrl)}/api/jobs/${encodeURIComponent(jobId)}/plan-reply`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ reply }),
+    }
+  );
+  const data = (await res.json()) as SubmitResponse & { error?: string };
+  if (!res.ok) {
+    throw new Error(data.error ?? `请求失败: ${res.status}`);
+  }
+  return data;
+}
+
 export async function executeJob(
   serverUrl: string,
   jobId: string,

@@ -8,7 +8,6 @@ const dist = resolve(__dirname, "../dist");
 const moves = [
   ["src/app/app.html", "app.html"],
   ["src/settings/settings.html", "settings.html"],
-  ["src/requirement/requirement.html", "requirement.html"],
 ];
 
 for (const [from, to] of moves) {
@@ -19,7 +18,7 @@ for (const [from, to] of moves) {
   }
 }
 
-for (const htmlFile of ["app.html", "settings.html", "requirement.html"]) {
+for (const htmlFile of ["app.html", "settings.html"]) {
   const htmlPath = resolve(dist, htmlFile);
   if (!existsSync(htmlPath)) continue;
 
@@ -29,6 +28,18 @@ for (const htmlFile of ["app.html", "settings.html", "requirement.html"]) {
     .replace(/href="\.\.\/\.\.\//g, 'href="./');
   writeFileSync(htmlPath, fixed);
 }
+
+writeFileSync(
+  resolve(dist, "tapd-batch.html"),
+  `<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <script>location.replace("./app.html#batch");</script>
+  </head>
+  <body></body>
+</html>`
+);
 
 const nestedSrc = resolve(dist, "src");
 if (existsSync(nestedSrc)) {
