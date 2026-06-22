@@ -1,7 +1,7 @@
 import "../shared/styles.css";
 import "./tapd-batch.css";
 import { loadConfig } from "../shared/config.js";
-import { formatErrorMessage, fetchJobEvents } from "../shared/api.js";
+import { formatErrorMessage, fetchJobEvents, queryJobStatus } from "../shared/api.js";
 import { JobProgressView } from "../shared/jobProgressView.js";
 import {
   buildTaskPrompt,
@@ -15,6 +15,7 @@ import {
   createBatchTask,
   listCompletedTapdTaskIds,
   loadTapdBatchSession,
+  saveTapdBatchSession,
 } from "../shared/tapdBatchStore.js";
 import type { JobEvent, TapdBatchSession, TapdBatchTask, TapdIteration, TapdTaskItem } from "../shared/types.js";
 
@@ -39,6 +40,7 @@ const SELECTED_ITERATION_KEY = "tapdBatchSelectedIterationId";
 
 let panelRoot: HTMLElement | null = null;
 let panelInitialized = false;
+let tapdResetConfirmResolver: ((confirmed: boolean) => void) | null = null;
 
 export interface TapdBatchPanelOptions {
   onBack?: () => void;
@@ -77,12 +79,12 @@ function statusLabel(status: TapdBatchTask["status"]): string {
 function sessionStatusLabel(status: TapdBatchSession["status"]): string {
   const map: Record<TapdBatchSession["status"], string> = {
     idle: "就绪",
-    running: "批次运行中",
+    running: "任务运行中",
     waiting_confirm: "等待确认 Plan",
     waiting_merge: "等待确认合并",
     waiting_input: "需要补充信息",
     paused: "已暂停",
-    completed: "批次已完成",
+    completed: "全部任务已完成",
     cancelled: "已终止",
   };
   return map[status] ?? status;
@@ -237,6 +239,9 @@ function applySession(next: TapdBatchSession | null): void {
     if (!next) {
       el<HTMLElement>("progressSection").hidden = true;
       setStatus("就绪");
+    } else if (next.status === "cancelled" || next.status === "completed") {
+      setStatus(next.pauseReason ?? sessionStatusLabel(next.status));
+      ensureProgressView().clearGateCards();
     }
     return;
   }
@@ -369,7 +374,7 @@ function updateFooter(): void {
   startBtn.hidden = false;
 
   if (!active) {
-    startBtn.textContent = "开始批次";
+    startBtn.textContent = "开始任务";
     startBtn.disabled = loopRunning || checkedCount === 0;
     loadBtn.disabled = loopRunning;
     return;
@@ -396,7 +401,7 @@ function updateFooter(): void {
       break;
     default:
       startBtn.hidden = false;
-      startBtn.textContent = "开始批次";
+      startBtn.textContent = "开始任务";
       startBtn.disabled = true;
       break;
   }
@@ -541,12 +546,91 @@ async function startBatch(): Promise<void> {
   await syncStateFromBackground();
 }
 
+function closeTapdResetConfirmModal(confirmed: boolean): void {
+  const modal = document.getElementById("tapdResetConfirmModal");
+  if (modal) modal.hidden = true;
+  const resolver = tapdResetConfirmResolver;
+  tapdResetConfirmResolver = null;
+  resolver?.(confirmed);
+}
+
+function showTapdResetConfirmModal(): Promise<boolean> {
+  return new Promise((resolve) => {
+    const modal = document.getElementById("tapdResetConfirmModal");
+    if (!modal) {
+      resolve(true);
+      return;
+    }
+    tapdResetConfirmResolver = resolve;
+    modal.hidden = false;
+    document.getElementById<HTMLButtonElement>("tapdResetConfirmOk")?.focus();
+  });
+}
+
+function setupTapdResetConfirmModal(): void {
+  document.getElementById("tapdResetConfirmOk")?.addEventListener("click", () => {
+    closeTapdResetConfirmModal(true);
+  });
+  document.getElementById("tapdResetConfirmCancel")?.addEventListener("click", () => {
+    closeTapdResetConfirmModal(false);
+  });
+  document.getElementById("tapdResetConfirmBackdrop")?.addEventListener("click", () => {
+    closeTapdResetConfirmModal(false);
+  });
+  document.addEventListener("keydown", (event) => {
+    if (event.key !== "Escape") return;
+    const modal = document.getElementById("tapdResetConfirmModal");
+    if (modal && !modal.hidden) {
+      closeTapdResetConfirmModal(false);
+    }
+  });
+}
+
+async function resetTapdTaskPanel(): Promise<void> {
+  if (hasActiveBatchSession(session) || loopRunning) {
+    try {
+      await sendTapdBatchCommand({ type: "TAPD_BATCH_CANCEL" });
+    } catch {
+      // ignore
+    }
+  }
+
+  session = null;
+  loopRunning = false;
+  pickerRows = [];
+  iterations = [];
+  workspaceId = "";
+
+  progressView?.reset();
+  activeProgressJobId = null;
+
+  el<HTMLElement>("queueSection").hidden = true;
+  el<HTMLElement>("progressSection").hidden = true;
+  el<HTMLElement>("taskPickerList").innerHTML = `<p class="batch-empty">请先选择迭代并加载任务</p>`;
+
+  await Promise.all([
+    saveTapdBatchSession(null),
+    chrome.storage.local.remove([SELECTED_ITERATION_KEY, TAPD_BATCH_JOB_LOG]),
+  ]);
+
+  setStatus("就绪");
+  updateFooter();
+
+  await loadIterations(true);
+}
+
+async function handleRefreshClick(): Promise<void> {
+  const confirmed = await showTapdResetConfirmModal();
+  if (!confirmed) return;
+  await resetTapdTaskPanel();
+}
+
 function bindEvents(options?: TapdBatchPanelOptions): void {
   el<HTMLButtonElement>("backToCodingBtn").addEventListener("click", () => {
     options?.onBack?.();
   });
   el<HTMLButtonElement>("batchRefreshBtn").addEventListener("click", () => {
-    void loadIterations(false).then(() => loadTasks());
+    void handleRefreshClick();
   });
   el<HTMLButtonElement>("loadTasksBtn").addEventListener("click", () => void loadTasks());
   el<HTMLSelectElement>("iterationSelect").addEventListener("change", () => {
@@ -642,9 +726,21 @@ function bindEvents(options?: TapdBatchPanelOptions): void {
       const event = message.event as JobEvent;
       ensureProgressView().handleEvent(event);
       if (event.phase === "plan_done" && event.jobId) {
-        const summary = session?.planSummary;
-        if (summary) ensureProgressView().renderPlan(event.jobId, summary, true);
-        ensureProgressView().renderConfirmCard(event.jobId, "awaiting_confirm");
+        void (async () => {
+          const view = ensureProgressView();
+          if (serverUrl) {
+            try {
+              const job = await queryJobStatus(serverUrl, event.jobId);
+              if (job.planSummary?.trim()) {
+                view.renderPlan(event.jobId, job.planSummary, true);
+              }
+            } catch {
+              const summary = session?.planSummary;
+              if (summary) view.renderPlan(event.jobId, summary, true);
+            }
+          }
+          view.renderConfirmCard(event.jobId, "awaiting_confirm");
+        })();
       }
       if (event.phase === "plan_need_more" && event.jobId) {
         const summary = session?.planSummary;
@@ -663,6 +759,7 @@ function bindEvents(options?: TapdBatchPanelOptions): void {
 async function initPanel(options?: TapdBatchPanelOptions): Promise<void> {
   const config = await loadConfig();
   serverUrl = config.serverUrl;
+  setupTapdResetConfirmModal();
   bindEvents(options);
   await loadIterations();
 

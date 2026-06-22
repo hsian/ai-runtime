@@ -54,7 +54,11 @@ export async function fetchTapdIterationTasks(
 }
 
 export function htmlToPlainPromptText(html: string): string {
-  const withoutImgs = html.replace(/<img\b[^>]*>/gi, " [配图] ");
+  let imageIndex = 0;
+  const withoutImgs = html.replace(/<img\b[^>]*>/gi, () => {
+    imageIndex += 1;
+    return ` [配图${imageIndex}] `;
+  });
   const text = withoutImgs
     .replace(/<br\s*\/?>/gi, "\n")
     .replace(/<\/p>/gi, "\n")
@@ -77,54 +81,32 @@ export function buildTaskPrompt(task: TapdTaskItem, editedPrompt?: string): stri
   const description = task.description?.trim();
   if (description) {
     const plain = htmlToPlainPromptText(description);
-    if (plain) return plain;
+    const imageCount = task.imageCount ?? (description.match(/<img\b/gi)?.length ?? 0);
+    if (plain) {
+      if (imageCount > 0 && !plain.includes("【配图说明")) {
+        return `${plain}
+
+【配图说明 — 必须遵守】
+任务描述中的「如图N」「图N」「[配图N]」均指第 N 张配图，与随任务上传的附件「图N」路径一一对应（如图2 = 图2 = 配图2）。
+分析某段需求时，若文字提到「如图N」，必须先 Read 对应编号的附件图片，再写该段方案。
+- 弹窗、抽屉、表单的布局、字段、文案以对应截图为准，只实现截图里出现的内容
+- 禁止臆造截图未出现的模块、按钮、表格列
+- 若文字描述与截图冲突，以截图为准
+（描述中含 ${imageCount} 张配图，按 HTML 出现顺序编号为配图1…配图${imageCount}）`;
+      }
+      return plain;
+    }
     return description;
   }
   return task.name?.trim() || "未命名任务";
 }
 
-interface SerializedTapdImage {
-  dataUrl: string;
-  mime?: string;
-  name?: string;
-}
-
-function dataUrlToBlob(dataUrl: string, typeHint?: string): Blob | null {
-  const match = /^data:([^;,]+)?(;base64)?,(.*)$/s.exec(dataUrl);
-  if (!match) return null;
-  const mime = typeHint || match[1] || "application/octet-stream";
-  const payload = match[3] ?? "";
-  const binary = match[2] ? atob(payload) : decodeURIComponent(payload);
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i += 1) {
-    bytes[i] = binary.charCodeAt(i);
-  }
-  return new Blob([bytes], { type: mime });
-}
-
 export async function fetchTapdDescriptionImages(
   serverUrl: string,
-  html: string
+  html: string,
+  workspaceId?: string
 ): Promise<Blob[]> {
-  if (!html.trim() || !/<img\b/i.test(html)) return [];
-
-  const res = await fetch(`${normalizeServerUrl(serverUrl)}/api/tapd/images/from-html`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ html }),
-  });
-  const data = (await res.json()) as {
-    images?: SerializedTapdImage[];
-    error?: string;
-  };
-  if (!res.ok) {
-    throw new Error(data.error ?? `下载配图失败: ${res.status}`);
-  }
-
-  const blobs: Blob[] = [];
-  for (const item of data.images ?? []) {
-    const blob = dataUrlToBlob(item.dataUrl, item.mime);
-    if (blob) blobs.push(blob);
-  }
-  return blobs;
+  const { prepareTapdJobImages } = await import("./tapdJobImages.js");
+  const result = await prepareTapdJobImages(serverUrl, html, workspaceId);
+  return result.images;
 }

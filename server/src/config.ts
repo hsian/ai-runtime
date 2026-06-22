@@ -13,7 +13,7 @@ const envSchema = z.object({
   WORKSPACE_DIR: z.string().default("./workspace"),
   CLAUDE_CLI_PATH: z.string().default("claude"),
   CLAUDE_MODEL: z.string().optional(),
-  CLAUDE_TIMEOUT_MS: z.coerce.number().default(600_000),
+  CLAUDE_TIMEOUT_MS: z.coerce.number().default(1_200_000),
   CLAUDE_PERMISSION_MODE: z
     .enum(["acceptEdits", "bypassPermissions", "default", "dontAsk", "auto", "plan"])
     .default("acceptEdits"),
@@ -43,6 +43,8 @@ const envSchema = z.object({
   CORS_ORIGIN: z.string().default("*"),
   UPLOAD_DIR: z.string().default("./data/uploads"),
   UPLOAD_MAX_BYTES: z.coerce.number().default(300 * 1024),
+  /** TAPD 描述配图从远端下载时的体积上限（下载后会由插件压缩再上传） */
+  TAPD_IMAGE_MAX_BYTES: z.coerce.number().default(5 * 1024 * 1024),
   UPLOAD_MAX_COUNT: z.coerce.number().default(3),
   TAPD_API_BASE: z.string().url().default("https://api.tapd.cn"),
   TAPD_CLIENT_ID: z.string().optional(),

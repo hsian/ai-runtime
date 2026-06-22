@@ -11,6 +11,10 @@ import {
 } from "./api.js";
 import type { JobEvent, JobStatus, JobStatusType, TapdBatchSession, TapdBatchTask } from "./types.js";
 import {
+  appendTapdImageInstructions,
+  prepareTapdJobImages,
+} from "./tapdJobImages.js";
+import {
   markTapdTaskCompleted,
   saveTapdBatchSession,
   touchSession,
@@ -45,6 +49,7 @@ type UserGate = "execute" | "merge" | "cancel" | "reply";
 let serverUrl = "";
 let session: TapdBatchSession | null = null;
 let stopRequested = false;
+let batchCancelled = false;
 let loopRunning = false;
 let activeEventSource: EventSource | null = null;
 let userGateResolve: ((gate: UserGate) => void) | null = null;
@@ -92,39 +97,6 @@ async function resumeBatchLoopIfNeeded(triggerServerUrl?: string): Promise<void>
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-function dataUrlToBlob(dataUrl: string, typeHint?: string): Blob | null {
-  const match = /^data:([^;,]+)?(;base64)?,(.*)$/s.exec(dataUrl);
-  if (!match) return null;
-  const mime = typeHint || match[1] || "application/octet-stream";
-  const payload = match[3] ?? "";
-  const binary = match[2] ? atob(payload) : decodeURIComponent(payload);
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
-  return new Blob([bytes], { type: mime });
-}
-
-async function prepareJobImages(sourceHtml?: string): Promise<Blob[]> {
-  if (!sourceHtml?.trim() || !/<img\b/i.test(sourceHtml) || !serverUrl) return [];
-  try {
-    const res = await fetch(`${serverUrl.replace(/\/$/, "")}/api/tapd/images/from-html`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ html: sourceHtml }),
-    });
-    const data = (await res.json()) as { images?: { dataUrl: string; mime?: string }[] };
-    if (!res.ok) return [];
-    const blobs: Blob[] = [];
-    for (const item of data.images ?? []) {
-      const blob = dataUrlToBlob(item.dataUrl, item.mime);
-      if (blob) blobs.push(blob);
-      if (blobs.length >= 3) break;
-    }
-    return blobs;
-  } catch {
-    return [];
-  }
 }
 
 async function emitSession(next: TapdBatchSession | null): Promise<void> {
@@ -175,6 +147,61 @@ async function waitForJobStatus(
   throw new Error("任务超时（超过 1 小时）");
 }
 
+async function cancelActiveJobOnServer(jobId: string): Promise<void> {
+  await loadPersistedServerUrl();
+  if (!serverUrl) return;
+
+  try {
+    const job = await queryJobStatus(serverUrl, jobId);
+    if (job.status === "awaiting_merge") {
+      await discardMerge(serverUrl, jobId);
+      return;
+    }
+    if (job.status === "completed" || job.status === "failed" || job.status === "cancelled") {
+      return;
+    }
+    await cancelJob(serverUrl, jobId);
+  } catch {
+    // best-effort cleanup
+  }
+}
+
+async function cancelBatchSession(): Promise<void> {
+  batchCancelled = true;
+  stopRequested = true;
+  userGateResolve?.("cancel");
+  closeEventStream();
+
+  const activeJobId = session?.activeJobId;
+  if (activeJobId) {
+    await cancelActiveJobOnServer(activeJobId);
+  }
+
+  if (!session) return;
+
+  const currentTaskId = session.currentTaskId;
+  const next = touchSession({
+    ...session,
+    status: "cancelled",
+    pauseReason: "用户终止任务",
+    activeJobId: undefined,
+    planSummary: undefined,
+    currentTaskId: undefined,
+    tasks: session.tasks.map((task) => {
+      if (task.status === "running" || task.id === currentTaskId) {
+        return {
+          ...task,
+          status: "failed" as const,
+          error: "用户终止",
+          failedPhase: "已终止",
+        };
+      }
+      return task;
+    }),
+  });
+  await emitSession(next);
+}
+
 function waitForUserGate(expected: "execute" | "merge" | "reply"): Promise<UserGate> {
   userGateExpected = expected;
   return new Promise((resolve) => {
@@ -218,11 +245,25 @@ async function runSingleTask(
   await emitSession(next);
 
   if (!jobId) {
-    const images = await prepareJobImages(task.sourceHtml);
+    await loadPersistedServerUrl();
+    const prepared = await prepareTapdJobImages(serverUrl, task.sourceHtml, current.workspaceId);
+    if (prepared.downloadFailed) {
+      return touchSession({
+        ...updateTask(next, task.id, {
+          status: "failed",
+          error: "配图下载或处理失败",
+          failedPhase: "配图",
+        }),
+        status: "paused",
+        pauseReason: `${task.title}：描述中有 ${prepared.expectedInHtml} 张配图但下载失败。请重启服务端后重试；若仍失败，请在浏览器登录 tapd.cn 后再跑任务`,
+      });
+    }
+
+    const prompt = appendTapdImageInstructions(task.prompt, prepared.images.length);
     const plan = await submitPlan(serverUrl, {
-      prompt: task.prompt,
+      prompt,
       submittedBy: "tapd-batch",
-      images: images.length > 0 ? images : undefined,
+      images: prepared.images.length > 0 ? prepared.images : undefined,
     });
     jobId = plan.jobId;
     startedAt = Date.now();
@@ -260,6 +301,7 @@ async function runSingleTask(
 
       const inputGate = await waitForUserGate("reply");
       if (inputGate === "cancel") {
+        if (batchCancelled) return session ?? next;
         await cancelJob(serverUrl, jobId);
         return touchSession({
           ...updateTask(next, task.id, { status: "failed", error: "用户取消", failedPhase: "已取消" }),
@@ -297,6 +339,7 @@ async function runSingleTask(
 
     const gate = await waitForUserGate("execute");
     if (gate === "cancel") {
+      if (batchCancelled) return session ?? next;
       await cancelJob(serverUrl, jobId);
       return touchSession({
         ...updateTask(next, task.id, { status: "failed", error: "用户取消", failedPhase: "已取消" }),
@@ -372,6 +415,7 @@ async function runSingleTask(
 
     const gate = await waitForUserGate("merge");
     if (gate === "cancel") {
+      if (batchCancelled) return session ?? next;
       await discardMerge(serverUrl, jobId);
       return touchSession({
         ...updateTask(next, task.id, { status: "failed", error: "已放弃合并", failedPhase: "合并" }),
@@ -416,6 +460,7 @@ async function runBatchLoop(
   if (loopRunning) return;
   loopRunning = true;
   stopRequested = false;
+  batchCancelled = false;
 
   let current =
     options?.resume && session
@@ -438,6 +483,7 @@ async function runBatchLoop(
   try {
     for (let index = Math.max(0, startIndex); index < current.tasks.length; index += 1) {
       if (stopRequested) {
+        if (batchCancelled) return;
         current = touchSession({ ...current, status: "paused", pauseReason: "用户暂停" });
         await emitSession(current);
         return;
@@ -454,6 +500,7 @@ async function runBatchLoop(
       resumeActiveJob = false;
 
       current = await runSingleTask(current, task, resumeJobId);
+      if (batchCancelled) return;
       await emitSession(current);
 
       if (
@@ -475,12 +522,14 @@ async function runBatchLoop(
     });
     await emitSession(current);
   } catch (err) {
-    current = touchSession({
-      ...current,
-      status: "paused",
-      pauseReason: err instanceof Error ? err.message : "批次异常中断",
-    });
-    await emitSession(current);
+    if (!batchCancelled) {
+      current = touchSession({
+        ...current,
+        status: "paused",
+        pauseReason: err instanceof Error ? err.message : "任务异常中断",
+      });
+      await emitSession(current);
+    }
   } finally {
     loopRunning = false;
     closeEventStream();
@@ -706,11 +755,7 @@ export async function handleTapdBatchCommand(
       return { ok: true };
 
     case "TAPD_BATCH_CANCEL":
-      stopRequested = true;
-      userGateResolve?.("cancel");
-      if (session) {
-        await emitSession(touchSession({ ...session, status: "cancelled", pauseReason: "用户终止批次" }));
-      }
+      await cancelBatchSession();
       return { ok: true };
 
     case "TAPD_BATCH_CONFIRM_EXECUTE":

@@ -15,6 +15,7 @@ import {
   registerAgentProcess,
   unregisterAgentProcess,
 } from "./agentProcessRegistry.js";
+import { pickPlanOutput } from "./planSummaryResolver.js";
 
 export { killAgentForJob };
 
@@ -166,7 +167,7 @@ function runClaudeCommand(
         }
 
         const extracted = handleStreamJsonLine(trimmed, onEvent, seenTools);
-        if (extracted && !finalSummary) {
+        if (extracted) {
           streamedText += extracted;
         }
       }
@@ -215,7 +216,8 @@ function runClaudeCommand(
       }
 
       if (code === 0) {
-        resolve(finalSummary || streamedText.trim() || "Claude Code 已完成代码修改");
+        const output = pickPlanOutput(finalSummary, streamedText);
+        resolve(output || "Claude Code 已完成代码修改");
         return;
       }
 
@@ -242,8 +244,10 @@ export async function runClaudeAgent(
     confirmedPlan?: string;
   }
 ): Promise<AgentResult> {
-  const isPlan = options?.mode === "plan" || options?.permissionMode === "plan";
-  const permissionMode = options?.permissionMode ?? config.CLAUDE_PERMISSION_MODE;
+  const isPlan = options?.mode === "plan";
+  const permissionMode = isPlan
+    ? "dontAsk"
+    : (options?.permissionMode ?? config.CLAUDE_PERMISSION_MODE);
   const systemPrompt =
     options?.systemPrompt ?? (isPlan ? PLAN_SYSTEM_PROMPT : SYSTEM_PROMPT);
   const userPrompt = isPlan

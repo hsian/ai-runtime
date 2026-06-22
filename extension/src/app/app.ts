@@ -478,6 +478,20 @@ function renderPlanResultFromSummary(jobId: string, summary: string, editable = 
   flushPlanResultBubble(jobId, summary, editable);
 }
 
+async function hydratePlanSummaryFromServer(jobId: string): Promise<void> {
+  const config = await loadConfig();
+  if (!config.serverUrl) return;
+  try {
+    const job = await queryJobStatus(config.serverUrl, jobId);
+    if (job.planSummary?.trim()) {
+      planOutputBuffer = job.planSummary;
+      planOutputJobId = jobId;
+    }
+  } catch {
+    // keep buffered stream text as fallback
+  }
+}
+
 async function syncMissedJobEvents(serverUrl: string, jobId: string): Promise<void> {
   const events = await fetchJobEvents(serverUrl, jobId);
   for (const event of events) {
@@ -1109,11 +1123,13 @@ function handleJobEvent(event: JobEvent, options?: { skipPersist?: boolean }): v
     case "stage":
       appendStageBubble(event);
       if (event.phase === "plan_done") {
-        flushPlanResultBubble(event.jobId, undefined, true);
-        currentJobStatus = "awaiting_confirm";
-        upsertConfirmCard(event.jobId, "awaiting_confirm");
-        setConnectionStatus("等待确认执行");
-        updateSubmitButton();
+        void hydratePlanSummaryFromServer(event.jobId).finally(() => {
+          flushPlanResultBubble(event.jobId, undefined, true);
+          currentJobStatus = "awaiting_confirm";
+          upsertConfirmCard(event.jobId, "awaiting_confirm");
+          setConnectionStatus("等待确认执行");
+          updateSubmitButton();
+        });
       } else if (event.phase === "plan_need_more") {
         flushPlanResultBubble(event.jobId);
         currentJobStatus = "awaiting_input";

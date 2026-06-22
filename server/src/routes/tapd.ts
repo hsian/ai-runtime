@@ -8,7 +8,10 @@ import {
   listIterations,
   parseTapdUrl,
 } from "../services/tapd/tapdClient.js";
-import { countImagesInHtml, downloadImagesFromHtml } from "../services/tapd/tapdDescriptionImages.js";
+import {
+  countImagesInHtml,
+  downloadImagesFromHtml,
+} from "../services/tapd/tapdDescriptionImages.js";
 
 export const tapdRouter = Router();
 
@@ -82,13 +85,26 @@ tapdRouter.get("/iterations/:iterationId/items", async (req, res) => {
 tapdRouter.post("/images/from-html", async (req, res) => {
   if (tapdNotConfigured(req, res)) return;
   const html = typeof req.body?.html === "string" ? req.body.html : "";
+  const workspaceId =
+    typeof req.body?.workspaceId === "string" ? req.body.workspaceId : getTapdConfig().workspaceId;
   if (!html.trim()) {
     res.status(400).json({ error: "缺少 html 正文" });
     return;
   }
   try {
-    const images = await downloadImagesFromHtml(html);
-    res.json({ count: images.length, images });
+    const report = await downloadImagesFromHtml(html, workspaceId);
+    res.json({
+      count: report.images.length,
+      expected: report.expected,
+      images: report.images,
+      failedUrls: report.failedUrls,
+      warning:
+        report.expected > 0 && report.images.length === 0
+          ? "描述中有配图但全部下载失败（已尝试 TAPD 官方图片 API）"
+          : report.failedUrls.length > 0
+            ? `仅成功 ${report.images.length}/${report.expected} 张配图`
+            : undefined,
+    });
   } catch (err) {
     res.status(502).json({ error: err instanceof Error ? err.message : "下载配图失败" });
   }

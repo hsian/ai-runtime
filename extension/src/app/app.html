@@ -18,7 +18,7 @@
           <div class="header-actions">
             <button id="refreshPageBtn" class="icon-btn" type="button" title="刷新">⟳</button>
             <button id="settingsBtn" class="icon-btn" type="button" title="设置">⚙</button>
-            <button id="tapdBatchBtn" class="icon-btn" type="button" title="TAPD 批次">T</button>
+            <button id="tapdBatchBtn" class="icon-btn" type="button" title="TAPD 任务">T</button>
           </div>
         </header>
 
@@ -86,10 +86,10 @@
         <header class="batch-header">
           <button class="batch-back" id="backToCodingBtn" type="button">← 编码模式</button>
           <div class="batch-header-main">
-            <h1>TAPD 批次</h1>
+            <h1>TAPD 任务</h1>
             <p class="batch-status" id="batchStatus">就绪</p>
           </div>
-          <button id="batchRefreshBtn" class="batch-icon-btn" type="button" title="刷新">⟳</button>
+          <button id="batchRefreshBtn" class="icon-btn" type="button" title="刷新">⟳</button>
         </header>
 
         <main class="batch-main">
@@ -125,7 +125,7 @@
 
           <section class="batch-card" id="queueSection" hidden>
             <div class="batch-card-head">
-              <h2>③ 批次队列</h2>
+              <h2>③ 任务队列</h2>
             </div>
             <div id="queueList" class="batch-queue-list"></div>
           </section>
@@ -139,14 +139,26 @@
         </main>
 
         <footer class="batch-footer">
-          <button id="startBatchBtn" class="batch-primary" type="button" disabled>开始批次</button>
+          <button id="startBatchBtn" class="batch-primary" type="button" disabled>开始任务</button>
           <button id="confirmMergeBtn" class="batch-primary" type="button" hidden>合并到 test</button>
           <button id="discardMergeBtn" class="batch-secondary" type="button" hidden>放弃合并</button>
           <button id="pauseBatchBtn" class="batch-secondary" type="button" hidden>暂停</button>
           <button id="retryBatchBtn" class="batch-secondary" type="button" hidden>重试当前</button>
           <button id="skipBatchBtn" class="batch-secondary" type="button" hidden>跳过并继续</button>
-          <button id="cancelBatchBtn" class="batch-danger" type="button" hidden>终止批次</button>
+          <button id="cancelBatchBtn" class="batch-danger" type="button" hidden>终止任务</button>
         </footer>
+      </div>
+    </div>
+
+    <div id="tapdResetConfirmModal" class="page-confirm-modal" hidden>
+      <div class="page-confirm-backdrop" id="tapdResetConfirmBackdrop"></div>
+      <div class="page-confirm-dialog" role="dialog" aria-labelledby="tapdResetConfirmHeading">
+        <h2 id="tapdResetConfirmHeading" class="page-confirm-heading">确认刷新</h2>
+        <p class="page-confirm-lead">将终止进行中的任务并清空当前页面状态，回到初始界面。</p>
+        <div class="page-confirm-actions">
+          <button id="tapdResetConfirmCancel" class="secondary" type="button">取消</button>
+          <button id="tapdResetConfirmOk" class="primary" type="button">确认刷新</button>
+        </div>
       </div>
     </div>
 

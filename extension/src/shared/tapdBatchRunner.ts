@@ -4,10 +4,9 @@ import {
   queryJobStatus,
   submitPlan,
 } from "./api.js";
-import { fetchTapdDescriptionImages } from "./tapdApi.js";
-import { compressImageForUpload } from "./imageCompress.js";
 import type { JobStatus, JobStatusType, TapdBatchSession, TapdBatchTask } from "./types.js";
 import { markTapdTaskCompleted, touchSession } from "./tapdBatchStore.js";
+import { appendTapdImageInstructions, prepareTapdJobImages } from "./tapdJobImages.js";
 
 const POLL_MS = 2500;
 const JOB_TIMEOUT_MS = 60 * 60 * 1000;
@@ -54,7 +53,7 @@ async function waitForJob(
 ): Promise<JobStatus> {
   while (Date.now() - startedAt < JOB_TIMEOUT_MS) {
     if (shouldStop()) {
-      throw new Error("批次已暂停");
+      throw new Error("任务已暂停");
     }
     const job = await queryJobStatus(serverUrl, jobId);
     if (isTerminal(job.status)) return job;
@@ -66,33 +65,29 @@ async function waitForJob(
   throw new Error("任务超时（超过 1 小时）");
 }
 
-async function prepareJobImages(serverUrl: string, sourceHtml?: string): Promise<Blob[]> {
-  if (!sourceHtml?.trim() || !/<img\b/i.test(sourceHtml)) return [];
-
-  const raw = await fetchTapdDescriptionImages(serverUrl, sourceHtml);
-  const compressed: Blob[] = [];
-  for (const blob of raw) {
-    if (compressed.length >= 3) break;
-    try {
-      compressed.push(await compressImageForUpload(blob));
-    } catch {
-      // skip failed image
-    }
-  }
-  return compressed;
-}
-
 async function driveJobToCompletion(
   serverUrl: string,
   prompt: string,
   sourceHtml: string | undefined,
+  workspaceId: string | undefined,
   shouldStop: () => boolean
 ): Promise<{ ok: true; jobId: string } | { ok: false; pause: BatchPauseReason; jobId?: string }> {
-  const images = await prepareJobImages(serverUrl, sourceHtml);
+  const prepared = await prepareTapdJobImages(serverUrl, sourceHtml, workspaceId);
+  if (prepared.downloadFailed) {
+    return {
+      ok: false,
+      pause: {
+        phase: "配图",
+        message: `描述中有 ${prepared.expectedInHtml} 张配图但下载或处理失败`,
+      },
+    };
+  }
+
+  const effectivePrompt = appendTapdImageInstructions(prompt, prepared.images.length);
   const plan = await submitPlan(serverUrl, {
-    prompt,
+    prompt: effectivePrompt,
     submittedBy: "tapd-batch",
-    images: images.length > 0 ? images : undefined,
+    images: prepared.images.length > 0 ? prepared.images : undefined,
   });
   const jobId = plan.jobId;
   const startedAt = Date.now();
@@ -101,7 +96,7 @@ async function driveJobToCompletion(
 
   while (!isTerminal(job.status)) {
     if (shouldStop()) {
-      return { ok: false, pause: { phase: "用户暂停", message: "批次已手动暂停", jobId }, jobId };
+      return { ok: false, pause: { phase: "用户暂停", message: "任务已手动暂停", jobId }, jobId };
     }
 
     if (job.status === "awaiting_input") {
@@ -228,6 +223,7 @@ export async function runTapdBatch(
       serverUrl,
       task.prompt,
       task.sourceHtml,
+      current.workspaceId,
       callbacks.shouldStop
     );
 

@@ -245,6 +245,37 @@ export async function getTask(
   return tasks[0] ?? null;
 }
 
+interface TapdAttachmentDownload {
+  download_url?: string;
+  content_type?: string;
+}
+
+/** TAPD 富文本配图：用官方 API 换取临时下载链接（直接 fetch 图片地址会 403） */
+export async function getTapdImageDownloadUrl(
+  workspaceId: string,
+  imagePath: string,
+  cfg: TapdConfig = getTapdConfig()
+): Promise<string | null> {
+  const body = await tapdRequest<{ Attachment?: TapdAttachmentDownload }>(cfg, "/files/get_image", {
+    workspace_id: workspaceId,
+    image_path: imagePath,
+  });
+  return body.data?.Attachment?.download_url?.trim() || null;
+}
+
+/** TAPD 附件预览图：用附件 id 换取临时下载链接 */
+export async function getTapdAttachmentDownloadUrl(
+  workspaceId: string,
+  attachmentId: string,
+  cfg: TapdConfig = getTapdConfig()
+): Promise<string | null> {
+  const body = await tapdRequest<{ Attachment?: TapdAttachmentDownload }>(cfg, "/attachments/down", {
+    workspace_id: workspaceId,
+    id: attachmentId,
+  });
+  return body.data?.Attachment?.download_url?.trim() || null;
+}
+
 export function parseTapdUrl(url: string): {
   workspaceId?: string;
   iterationId?: string;

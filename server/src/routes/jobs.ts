@@ -9,6 +9,7 @@ import { finalizeJobAttachments, jobImagesUpload, multerErrorMessage, stageAttac
 import { isMultipartSubmit, parseJobSubmitBody } from "../middleware/parseJobSubmit.js";
 import { confirmJobMerge, discardJobMerge } from "../services/jobMergeService.js";
 import type { JobRequest } from "../types.js";
+import { resolvePlanSummary } from "../services/agent/planSummaryResolver.js";
 
 async function revertPlanWorkspaceChanges(jobId: string, reason: string): Promise<void> {
   const reverted = await gitService.discardUncommittedChanges();
@@ -56,6 +57,7 @@ async function runPlan(jobId: string): Promise<void> {
       });
     }
 
+    const planStartedAt = new Date();
     const result = await runAgent(
       repoPath,
       job.prompt,
@@ -78,7 +80,7 @@ async function runPlan(jobId: string): Promise<void> {
           });
         }
       },
-      { permissionMode: "plan", mode: "plan", jobId, attachments: stagedAttachments }
+      { mode: "plan", jobId, attachments: stagedAttachments }
     );
 
     await revertPlanWorkspaceChanges(jobId, "Plan 结束后检测到意外文件改动");
@@ -86,9 +88,11 @@ async function runPlan(jobId: string): Promise<void> {
     const current = getJob(jobId);
     if (!current || current.status === "cancelled") return;
 
+    const planSummary = resolvePlanSummary(result.summary, repoPath, planStartedAt);
+
     updateJob(jobId, {
       status: "awaiting_confirm",
-      planSummary: result.summary,
+      planSummary,
       message: "Plan 完成：请在插件端确认是否执行修改",
     });
 
@@ -340,17 +344,39 @@ jobsRouter.post("/:jobId/cancel", async (req, res) => {
     jobQueue.dequeue(jobId);
   }
 
-  const reverted = await gitService.discardUncommittedChanges();
+  try {
+    if (job.branch) {
+      await gitService.discardFeatureBranch(job.branch);
+    } else {
+      const currentBranch = await gitService.getCurrentBranch();
+      if (currentBranch.startsWith("plugin-fix/")) {
+        await gitService.discardFeatureBranch(currentBranch);
+      } else {
+        const reverted = await gitService.discardUncommittedChanges();
+        await gitService.restoreBaseBranch();
+        if (reverted.length > 0) {
+          appendJobEvent(jobId, {
+            type: "stage",
+            phase: "plan_cleanup",
+            text: `取消时已还原 ${reverted.length} 个文件的意外改动`,
+          });
+        }
+      }
+    }
+  } catch (err) {
+    console.warn(
+      "[AI Runtime] 取消任务时清理 Git 工作区失败:",
+      err instanceof Error ? err.message : String(err)
+    );
+    try {
+      await gitService.discardUncommittedChanges();
+      await gitService.restoreBaseBranch();
+    } catch {
+      // ignore secondary cleanup errors
+    }
+  }
 
   appendJobEvent(jobId, { type: "cancelled", message: "任务已取消", text: "任务已取消" });
-
-  if (reverted.length > 0) {
-    appendJobEvent(jobId, {
-      type: "stage",
-      phase: "plan_cleanup",
-      text: `取消时已还原 ${reverted.length} 个文件的意外改动`,
-    });
-  }
 
   res.json({ ok: true });
 });
