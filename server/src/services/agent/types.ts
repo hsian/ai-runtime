@@ -5,8 +5,9 @@ export interface AgentResult {
 }
 
 export interface AgentStreamEvent {
-  type: "agent_text" | "agent_tool";
+  type: "agent_text" | "agent_tool" | "agent_status";
   delta?: string;
+  statusText?: string;
   toolAction?: "start" | "done";
   toolName?: string;
   toolDetail?: string;

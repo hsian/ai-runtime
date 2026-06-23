@@ -65,6 +65,13 @@ async function runPlan(jobId: string): Promise<void> {
       (event) => {
         if (event.type === "agent_text" && event.delta) {
           appendJobEvent(jobId, { type: "agent_text", delta: event.delta });
+        } else if (event.type === "agent_status" && event.statusText) {
+          updateJob(jobId, { message: event.statusText });
+          appendJobEvent(jobId, {
+            type: "agent_status",
+            statusText: event.statusText,
+            text: event.statusText,
+          });
         } else if (event.type === "agent_tool" && event.toolName) {
           const isWriteTool = /^(Edit|Write|MultiEdit|NotebookEdit|Bash)$/i.test(event.toolName);
           appendJobEvent(jobId, {

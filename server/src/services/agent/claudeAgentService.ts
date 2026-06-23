@@ -54,7 +54,47 @@ function extractTextFromAssistantMessage(message: unknown): string {
     .join("");
 }
 
-function handleStreamJsonLine(line: string, onEvent: AgentEventHandler | undefined, seenTools: Set<string>): string {
+interface StreamParseState {
+  seenTools: Set<string>;
+  lastStatusAt: number;
+  lastStatusText: string;
+}
+
+function emitStatus(
+  state: StreamParseState,
+  onEvent: AgentEventHandler | undefined,
+  statusText: string,
+  throttleMs = 8_000
+): void {
+  const now = Date.now();
+  if (state.lastStatusText === statusText && now - state.lastStatusAt < throttleMs) return;
+  state.lastStatusText = statusText;
+  state.lastStatusAt = now;
+  onEvent?.({ type: "agent_status", statusText });
+}
+
+function describeStreamLine(line: string): string {
+  try {
+    const parsed = JSON.parse(line) as Record<string, unknown>;
+    const type = String(parsed.type ?? "unknown");
+    if (type === "system") {
+      const subtype = String(parsed.subtype ?? "");
+      const status = String(parsed.status ?? "");
+      return [type, subtype, status].filter(Boolean).join(":");
+    }
+    if (type === "stream_event" && parsed.event && typeof parsed.event === "object") {
+      const event = parsed.event as Record<string, unknown>;
+      const eventType = String(event.type ?? "unknown");
+      const delta = event.delta as { type?: string } | undefined;
+      return delta?.type ? `${type}:${eventType}:${delta.type}` : `${type}:${eventType}`;
+    }
+    return type;
+  } catch {
+    return line.slice(0, 120);
+  }
+}
+
+function handleStreamJsonLine(line: string, onEvent: AgentEventHandler | undefined, state: StreamParseState): string {
   let parsed: Record<string, unknown>;
   try {
     parsed = JSON.parse(line) as Record<string, unknown>;
@@ -64,22 +104,32 @@ function handleStreamJsonLine(line: string, onEvent: AgentEventHandler | undefin
 
   const type = String(parsed.type ?? "");
 
+  if (type === "system" && parsed.status === "requesting") {
+    emitStatus(state, onEvent, "Claude 正在请求模型响应...");
+  }
+
   if (type === "stream_event" && parsed.event && typeof parsed.event === "object") {
     const event = parsed.event as Record<string, unknown>;
     const eventType = String(event.type ?? "");
 
     if (eventType === "content_block_start") {
       const block = event.content_block as { type?: string; name?: string } | undefined;
+      if (block?.type === "thinking") {
+        emitStatus(state, onEvent, "Claude 正在思考...");
+      }
       if (block?.type === "tool_use" && block.name) {
         const key = `start:${block.name}`;
-        if (!seenTools.has(key)) {
-          seenTools.add(key);
+        if (!state.seenTools.has(key)) {
+          state.seenTools.add(key);
           onEvent?.({ type: "agent_tool", toolAction: "start", toolName: block.name });
         }
       }
     }
 
-    const delta = event.delta as { type?: string; text?: string } | undefined;
+    const delta = event.delta as { type?: string; text?: string; thinking?: string } | undefined;
+    if (delta?.type === "thinking_delta" && delta.thinking) {
+      emitStatus(state, onEvent, "Claude 正在思考...");
+    }
     if (delta?.type === "text_delta" && delta.text) {
       onEvent?.({ type: "agent_text", delta: delta.text });
       return delta.text;
@@ -94,8 +144,8 @@ function handleStreamJsonLine(line: string, onEvent: AgentEventHandler | undefin
         const b = block as { type?: string; name?: string; input?: unknown };
         if (b.type === "tool_use" && b.name) {
           const key = `use:${b.name}:${JSON.stringify(b.input ?? "")}`;
-          if (!seenTools.has(key)) {
-            seenTools.add(key);
+          if (!state.seenTools.has(key)) {
+            state.seenTools.add(key);
             onEvent?.({
               type: "agent_tool",
               toolAction: "start",
@@ -144,10 +194,17 @@ function runClaudeCommand(
     let buffer = "";
     let streamedText = "";
     let finalSummary = "";
-    const seenTools = new Set<string>();
+    const parseState: StreamParseState = {
+      seenTools: new Set<string>(),
+      lastStatusAt: 0,
+      lastStatusText: "",
+    };
     let stderr = "";
+    let lastActivityAt = Date.now();
+    let lastEventLabel = "process started";
 
     child.stdout.on("data", (chunk: Buffer) => {
+      lastActivityAt = Date.now();
       buffer += chunk.toString();
       const lines = buffer.split("\n");
       buffer = lines.pop() ?? "";
@@ -155,6 +212,7 @@ function runClaudeCommand(
       for (const line of lines) {
         const trimmed = line.trim();
         if (!trimmed) continue;
+        lastEventLabel = describeStreamLine(trimmed);
 
         try {
           const parsed = JSON.parse(trimmed) as Record<string, unknown>;
@@ -166,7 +224,7 @@ function runClaudeCommand(
           // ignore malformed line
         }
 
-        const extracted = handleStreamJsonLine(trimmed, onEvent, seenTools);
+        const extracted = handleStreamJsonLine(trimmed, onEvent, parseState);
         if (extracted) {
           streamedText += extracted;
         }
@@ -174,13 +232,19 @@ function runClaudeCommand(
     });
 
     child.stderr.on("data", (chunk: Buffer) => {
+      lastActivityAt = Date.now();
+      lastEventLabel = "stderr";
       stderr += chunk.toString();
     });
 
     const timer = setTimeout(() => {
       aborted = true;
       killChildProcess(child);
-      reject(new Error(`Claude Code 执行超时（${timeoutMs}ms）`));
+      const idleSeconds = Math.round((Date.now() - lastActivityAt) / 1000);
+      const stderrTail = stderr.trim().slice(-300);
+      const detail = `最后活动 ${idleSeconds}s 前，最后事件: ${lastEventLabel}`;
+      const stderrDetail = stderrTail ? `，stderr: ${stderrTail}` : "";
+      reject(new Error(`Claude Code 执行超时（${timeoutMs}ms，${detail}${stderrDetail}）`));
     }, timeoutMs);
 
     child.on("error", (err) => {
@@ -203,6 +267,7 @@ function runClaudeCommand(
 
       const tail = buffer.trim();
       if (tail) {
+        lastEventLabel = describeStreamLine(tail);
         try {
           const parsed = JSON.parse(tail) as Record<string, unknown>;
           if (parsed.type === "result") {
@@ -212,7 +277,7 @@ function runClaudeCommand(
         } catch {
           // ignore
         }
-        handleStreamJsonLine(tail, onEvent, seenTools);
+        handleStreamJsonLine(tail, onEvent, parseState);
       }
 
       if (code === 0) {

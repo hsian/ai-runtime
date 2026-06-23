@@ -94,6 +94,7 @@
 
 .batch-card-actions {
   display: flex;
+  flex: 0 0 auto;
   gap: 8px;
 }
 
@@ -132,6 +133,7 @@
   background: none;
   color: #4f46e5;
   font-size: 12px;
+  white-space: nowrap;
   cursor: pointer;
 }
 

@@ -54,11 +54,21 @@ export interface JobEvent {
   id: string;
   jobId: string;
   timestamp: string;
-  type: "user" | "queue" | "stage" | "agent_text" | "agent_tool" | "done" | "cancelled" | "error";
+  type:
+    | "user"
+    | "queue"
+    | "stage"
+    | "agent_text"
+    | "agent_tool"
+    | "agent_status"
+    | "done"
+    | "cancelled"
+    | "error";
   text?: string;
   pageUrl?: string;
   phase?: string;
   delta?: string;
+  statusText?: string;
   toolAction?: "start" | "done";
   toolName?: string;
   toolDetail?: string;

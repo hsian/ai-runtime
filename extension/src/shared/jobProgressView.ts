@@ -163,6 +163,13 @@ export class JobProgressView {
           this.container.appendChild(node);
         }
         break;
+      case "agent_status":
+        if (event.statusText ?? event.text) {
+          const node = this.ensure(`agent-status-${event.jobId}`, "msg msg-tool");
+          node.textContent = event.statusText ?? event.text ?? "";
+          this.options.onStatus?.(event.statusText ?? event.text ?? "");
+        }
+        break;
       case "done": {
         const node = document.createElement("div");
         node.className = "msg msg-done";

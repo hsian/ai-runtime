@@ -23,6 +23,16 @@ function emitAgentEvent(jobId: string, event: AgentStreamEvent): void {
     return;
   }
 
+  if (event.type === "agent_status" && event.statusText) {
+    appendJobEvent(jobId, {
+      type: "agent_status",
+      statusText: event.statusText,
+      text: event.statusText,
+    });
+    updateJob(jobId, { message: event.statusText });
+    return;
+  }
+
   if (event.type === "agent_tool" && event.toolName) {
     appendJobEvent(jobId, {
       type: "agent_tool",

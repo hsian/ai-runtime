@@ -50,6 +50,7 @@ interface PendingAttachment {
 }
 
 const AGENT_STREAM_KEY = "agent-stream";
+const AGENT_STATUS_KEY = "agent-status";
 const PLAN_RESULT_KEY = "plan-result";
 const QUEUE_CARD_KEY = "queue-card";
 const CONFIRM_CARD_KEY = "confirm-card";
@@ -928,6 +929,15 @@ function appendAgentDelta(delta: string, jobId?: string): void {
   bubble!.textContent += delta;
 }
 
+function upsertAgentStatus(event: JobEvent): void {
+  const text = event.statusText ?? event.text;
+  if (!text) return;
+
+  const node = ensureMessageElement(`${AGENT_STATUS_KEY}-${event.jobId}`, "msg msg-tool");
+  node.innerHTML = `<div class="tool-line">${escapeHtml(text)}</div>`;
+  setConnectionStatus(text);
+}
+
 function appendToolLine(event: JobEvent): void {
   const node = document.createElement("div");
   node.className = "msg msg-tool";
@@ -1174,6 +1184,9 @@ function handleJobEvent(event: JobEvent, options?: { skipPersist?: boolean }): v
       break;
     case "agent_text":
       if (event.delta) appendAgentDelta(event.delta, event.jobId);
+      break;
+    case "agent_status":
+      upsertAgentStatus(event);
       break;
     case "agent_tool":
       appendToolLine(event);

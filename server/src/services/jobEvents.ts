@@ -6,6 +6,7 @@ export type JobEventType =
   | "stage"
   | "agent_text"
   | "agent_tool"
+  | "agent_status"
   | "done"
   | "cancelled"
   | "error";
@@ -25,6 +26,7 @@ export interface JobEvent {
   pageUrl?: string;
   phase?: string;
   delta?: string;
+  statusText?: string;
   toolAction?: "start" | "done";
   toolName?: string;
   toolDetail?: string;
