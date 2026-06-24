@@ -128,9 +128,15 @@ export async function discardMerge(serverUrl: string, jobId: string): Promise<{ 
   return { ok: Boolean(data.ok) };
 }
 
-export async function mergeJob(serverUrl: string, jobId: string): Promise<SubmitResponse> {
+export async function mergeJob(
+  serverUrl: string,
+  jobId: string,
+  options?: { createMergeRequest?: boolean }
+): Promise<SubmitResponse> {
   const res = await fetch(`${normalizeServerUrl(serverUrl)}/api/jobs/${encodeURIComponent(jobId)}/merge`, {
     method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(options?.createMergeRequest ? { createMergeRequest: true } : {}),
   });
   const data = (await res.json()) as SubmitResponse & { error?: string };
   if (!res.ok) {

@@ -35,6 +35,7 @@ export interface JobEvent {
   waiting?: QueueItemSummary[];
   branch?: string;
   commitSha?: string;
+  mergeRequestUrl?: string;
   message?: string;
   attachmentCount?: number;
 }

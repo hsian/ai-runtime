@@ -35,6 +35,7 @@ let session: TapdBatchSession | null = null;
 let loopRunning = false;
 let progressView: JobProgressView | null = null;
 let activeProgressJobId: string | null = null;
+let createMergeRequestOnMerge = false;
 
 const SELECTED_ITERATION_KEY = "tapdBatchSelectedIterationId";
 
@@ -158,6 +159,7 @@ function ensureProgressView(): JobProgressView {
           void syncStateFromBackground();
         });
       },
+      createMergeRequestOnMerge,
     });
   }
   return progressView;
@@ -366,6 +368,7 @@ function updateFooter(): void {
   const active = hasActiveBatchSession(session);
 
   confirmMergeBtn.hidden = true;
+  confirmMergeBtn.textContent = createMergeRequestOnMerge ? "提交 Merge Request" : "合并到 test";
   discardMergeBtn.hidden = true;
   pauseBtn.hidden = true;
   retryBtn.hidden = true;
@@ -693,7 +696,7 @@ function bindEvents(options?: TapdBatchPanelOptions): void {
           return;
         }
         progressView?.renderMergeCard(jobId, "running");
-        setStatus("正在合并到 test…");
+        setStatus(createMergeRequestOnMerge ? "正在提交 Merge Request…" : "正在合并到 test…");
       }
     );
   });
@@ -759,6 +762,7 @@ function bindEvents(options?: TapdBatchPanelOptions): void {
 async function initPanel(options?: TapdBatchPanelOptions): Promise<void> {
   const config = await loadConfig();
   serverUrl = config.serverUrl;
+  createMergeRequestOnMerge = config.createMergeRequestOnMerge;
   setupTapdResetConfirmModal();
   bindEvents(options);
   await loadIterations();

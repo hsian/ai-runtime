@@ -28,6 +28,7 @@ export interface JobProgressViewOptions {
   onCancelJob?: (jobId: string) => void;
   onConfirmMerge?: (jobId: string) => void;
   onDiscardMerge?: (jobId: string) => void;
+  createMergeRequestOnMerge?: boolean;
 }
 
 export class JobProgressView {
@@ -105,6 +106,7 @@ export class JobProgressView {
       onDiscard: (id) => {
         this.options.onDiscardMerge?.(id);
       },
+      createMergeRequestOnMerge: this.options.createMergeRequestOnMerge,
     });
     this.scrollToBottom();
   }
@@ -138,8 +140,12 @@ export class JobProgressView {
           if (event.jobId) this.renderMergeCard(event.jobId, "awaiting_merge");
         } else if (event.phase === "plan") {
           this.options.onStatus?.("Plan 分析中");
-        } else if (event.phase && ["pull", "branch", "agent", "commit", "merge"].includes(event.phase)) {
-          this.options.onStatus?.(event.phase === "merge" ? "正在合并到 test" : "执行中");
+        } else if (event.phase === "merge") {
+          this.options.onStatus?.("正在合并到 test");
+        } else if (event.phase === "merge_request") {
+          this.options.onStatus?.("正在提交 Merge Request");
+        } else if (event.phase && ["pull", "branch", "agent", "commit"].includes(event.phase)) {
+          this.options.onStatus?.("执行中");
         }
         break;
       case "agent_text":

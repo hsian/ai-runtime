@@ -21,6 +21,7 @@ import {
   loadTapdBatchSession,
 } from "./tapdBatchStore.js";
 import { TAPD_BATCH_JOB_EVENT, TAPD_BATCH_JOB_LOG, TAPD_BATCH_STATE } from "./tapdBatchMessages.js";
+import { loadConfig } from "./config.js";
 
 const POLL_MS = 2000;
 const JOB_TIMEOUT_MS = 60 * 60 * 1000;
@@ -74,6 +75,10 @@ async function loadPersistedServerUrl(): Promise<string> {
     serverUrl = value.replace(/\/$/, "");
   }
   return serverUrl;
+}
+
+async function shouldCreateMergeRequestOnMerge(): Promise<boolean> {
+  return (await loadConfig()).createMergeRequestOnMerge;
 }
 
 function isResumableSession(next: TapdBatchSession | null): boolean {
@@ -426,7 +431,9 @@ async function runSingleTask(
 
     next = touchSession({ ...next, status: "running" });
     await emitSession(next);
-    await mergeJob(serverUrl, jobId);
+    await mergeJob(serverUrl, jobId, {
+      createMergeRequest: await shouldCreateMergeRequestOnMerge(),
+    });
     job = await waitForJobStatus(jobId, ["completed", "failed", "cancelled"], startedAt);
   }
 
@@ -686,7 +693,9 @@ async function directConfirmMerge(): Promise<{ ok: boolean; error?: string }> {
   await emitSession(next);
 
   try {
-    await mergeJob(serverUrl, jobId);
+    await mergeJob(serverUrl, jobId, {
+      createMergeRequest: await shouldCreateMergeRequestOnMerge(),
+    });
     const job = await waitForJobStatus(jobId, ["completed", "failed", "cancelled"], Date.now());
     if (job.status === "completed") {
       await markTapdTaskCompleted(task.tapdTaskId);

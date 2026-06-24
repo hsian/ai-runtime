@@ -56,6 +56,65 @@ export async function confirmJobMerge(jobId: string): Promise<void> {
   }
 }
 
+export async function createJobMergeRequest(jobId: string): Promise<void> {
+  const job = getJob(jobId);
+  if (!job) throw new Error("任务不存在");
+  if (job.status !== "awaiting_merge") {
+    throw new Error(`当前状态不可提交 Merge Request: ${job.status}`);
+  }
+  if (!job.branch) {
+    throw new Error("缺少待提交分支");
+  }
+
+  const defaultBranch = config.GIT_DEFAULT_BRANCH;
+  updateJob(jobId, { status: "running", message: "正在提交 Merge Request..." });
+  appendJobEvent(jobId, {
+    type: "stage",
+    phase: "merge_request",
+    text: `正在推送 ${job.branch} 并提交 Merge Request 到 ${defaultBranch}...`,
+  });
+
+  try {
+    await gitService.pushFeatureBranch(job.branch);
+    const title = `fix(plugin): ${job.prompt.slice(0, 80)}`;
+    const description = `${job.message ?? "代码修改已完成"}\n\nJob: ${jobId}`;
+    const mergeRequest = await gitService.createMergeRequest({
+      sourceBranch: job.branch,
+      title,
+      description,
+    });
+    const doneMessage = `${job.message ?? "修改已完成"}\n\n已提交 Merge Request: ${mergeRequest.url}`;
+
+    updateJob(jobId, {
+      status: "completed",
+      message: doneMessage,
+      mergeRequestUrl: mergeRequest.url,
+    });
+    appendJobEvent(jobId, {
+      type: "done",
+      text: doneMessage,
+      message: doneMessage,
+      branch: job.branch,
+      commitSha: job.commitSha,
+      mergeRequestUrl: mergeRequest.url,
+    });
+  } catch (err) {
+    const error = err instanceof Error ? err.message : String(err);
+    updateJob(jobId, { status: "failed", error, message: "提交 Merge Request 失败" });
+    appendJobEvent(jobId, { type: "error", message: error, text: `提交 Merge Request 失败: ${error}` });
+    throw err;
+  } finally {
+    try {
+      await gitService.restoreBaseBranch();
+    } catch (err) {
+      console.warn(
+        "[AI Runtime] 提交 Merge Request 后未能切回基线分支:",
+        err instanceof Error ? err.message : String(err)
+      );
+    }
+  }
+}
+
 export async function discardJobMerge(jobId: string): Promise<void> {
   const job = getJob(jobId);
   if (!job) throw new Error("任务不存在");

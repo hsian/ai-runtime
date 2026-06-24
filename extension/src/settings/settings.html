@@ -24,6 +24,14 @@
         <p class="settings-note">
           内网 AI Runtime 服务地址。Chrome 不建议使用 6000 端口，推荐 6080、8080。
         </p>
+
+        <label class="checkbox" for="createMergeRequestOnMerge">
+          <input type="checkbox" id="createMergeRequestOnMerge" />
+          <span>确认合并时提交 Merge Request（不直接合并 test）</span>
+        </label>
+        <p class="settings-note">
+          默认关闭，保持现有的直接合并到 test 并推送；开启后会推送 feature 分支并创建 Merge Request。
+        </p>
       </section>
 
       <section class="actions">

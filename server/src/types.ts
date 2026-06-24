@@ -47,6 +47,7 @@ export interface Job {
   planSummary?: string;
   branch?: string;
   commitSha?: string;
+  mergeRequestUrl?: string;
   error?: string;
   createdAt: string;
   updatedAt: string;

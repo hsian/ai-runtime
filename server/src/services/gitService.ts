@@ -3,6 +3,38 @@ import { resolve } from "path";
 import { simpleGit, type SimpleGit } from "simple-git";
 import { config, getAuthenticatedRepoUrl } from "../config.js";
 
+interface MergeRequestPayload {
+  sourceBranch: string;
+  title: string;
+  description: string;
+}
+
+interface MergeRequestResult {
+  url: string;
+}
+
+function getRepoPathFromUrl(repoUrl: string): { url: URL; path: string } {
+  const url = new URL(repoUrl);
+  const path = decodeURIComponent(url.pathname.replace(/^\/+/, "").replace(/\.git$/, ""));
+  if (!path) {
+    throw new Error("无法从 GIT_REPO_URL 解析仓库路径");
+  }
+  return { url, path };
+}
+
+async function readErrorResponse(res: Response): Promise<string> {
+  const text = await res.text().catch(() => "");
+  if (!text) return `${res.status} ${res.statusText}`;
+  try {
+    const parsed = JSON.parse(text) as { message?: unknown; error?: unknown };
+    const message = parsed.message ?? parsed.error;
+    if (typeof message === "string") return message;
+  } catch {
+    // Fall back to raw body below.
+  }
+  return text;
+}
+
 export class GitService {
   private repoPath: string;
   private git: SimpleGit | null = null;
@@ -71,6 +103,64 @@ export class GitService {
     }
 
     return result.commit;
+  }
+
+  async pushFeatureBranch(branchName: string): Promise<void> {
+    const git = await this.getGit();
+    await git.push("origin", branchName, { "--set-upstream": null });
+  }
+
+  async createMergeRequest(payload: MergeRequestPayload): Promise<MergeRequestResult> {
+    const { url, path } = getRepoPathFromUrl(config.GIT_REPO_URL);
+
+    if (url.hostname.includes("github")) {
+      const [owner, repo] = path.split("/");
+      if (!owner || !repo) {
+        throw new Error("GitHub 仓库地址格式无效，无法创建 Pull Request");
+      }
+      const res = await fetch(`https://api.github.com/repos/${owner}/${repo}/pulls`, {
+        method: "POST",
+        headers: {
+          "Accept": "application/vnd.github+json",
+          "Authorization": `Bearer ${config.GIT_ACCESS_TOKEN}`,
+          "Content-Type": "application/json",
+          "User-Agent": "ai-runtime",
+        },
+        body: JSON.stringify({
+          title: payload.title,
+          head: payload.sourceBranch,
+          base: config.GIT_DEFAULT_BRANCH,
+          body: payload.description,
+        }),
+      });
+      const data = (await res.clone().json().catch(() => null)) as { html_url?: string; message?: string } | null;
+      if (!res.ok || !data?.html_url) {
+        throw new Error(`创建 Pull Request 失败: ${data?.message ?? (await readErrorResponse(res))}`);
+      }
+      return { url: data.html_url };
+    }
+
+    const apiUrl = `${url.origin}/api/v4/projects/${encodeURIComponent(path)}/merge_requests`;
+    const res = await fetch(apiUrl, {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${config.GIT_ACCESS_TOKEN}`,
+        "Content-Type": "application/json",
+        "PRIVATE-TOKEN": config.GIT_ACCESS_TOKEN,
+      },
+      body: JSON.stringify({
+        source_branch: payload.sourceBranch,
+        target_branch: config.GIT_DEFAULT_BRANCH,
+        title: payload.title,
+        description: payload.description,
+      }),
+    });
+    const data = (await res.clone().json().catch(() => null)) as { web_url?: string; message?: unknown } | null;
+    if (!res.ok || !data?.web_url) {
+      const message = data?.message ? JSON.stringify(data.message) : await readErrorResponse(res);
+      throw new Error(`创建 Merge Request 失败: ${message}`);
+    }
+    return { url: data.web_url };
   }
 
   async mergeIntoDefaultBranch(branchName: string, mergeMessage: string): Promise<string> {

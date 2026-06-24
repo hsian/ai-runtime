@@ -64,6 +64,7 @@ let lastEventAt = Date.now();
 let recoverAttemptAt = 0;
 let recoveryStopped = false;
 let recoveryFailureCount = 0;
+let recoveryTimer: ReturnType<typeof setTimeout> | null = null;
 const MAX_RECOVERY_FAILURES = 3;
 const RECOVER_QUIET_MS = 12_000;
 const RECOVER_RETRY_GAP_MS = 8_000;
@@ -76,6 +77,7 @@ let lastLocalUserBubble:
 const pendingAttachments: PendingAttachment[] = [];
 let planOutputBuffer = "";
 let planOutputJobId: string | null = null;
+let createMergeRequestOnMerge = false;
 
 function resetPlanOutputBuffer(jobId: string | null = null): void {
   planOutputBuffer = "";
@@ -220,10 +222,18 @@ function resetJobRecovery(): void {
   recoveryStopped = false;
   recoveryFailureCount = 0;
   recoverAttemptAt = 0;
+  if (recoveryTimer) {
+    clearTimeout(recoveryTimer);
+    recoveryTimer = null;
+  }
 }
 
 function stopJobRecovery(): void {
   recoveryStopped = true;
+  if (recoveryTimer) {
+    clearTimeout(recoveryTimer);
+    recoveryTimer = null;
+  }
   activeStream?.close();
   activeStream = null;
 }
@@ -350,6 +360,22 @@ function isStreamRecoverableStatus(status: JobStatusType): boolean {
 
 function isStaticRecoverableStatus(status: JobStatusType): boolean {
   return status === "awaiting_confirm" || status === "awaiting_input" || status === "awaiting_merge";
+}
+
+function scheduleJobRecovery(serverUrl: string, jobId: string, delayMs: number): void {
+  if (
+    recoveryStopped ||
+    activeJobId !== jobId ||
+    isTerminalStatus(currentJobStatus)
+  ) {
+    return;
+  }
+
+  if (recoveryTimer) return;
+  recoveryTimer = setTimeout(() => {
+    recoveryTimer = null;
+    void recoverJobConnection(serverUrl, jobId);
+  }, Math.max(0, delayMs));
 }
 
 function isServerRestartedJob(job: JobStatus): boolean {
@@ -541,7 +567,11 @@ async function recoverJobConnection(serverUrl: string, jobId: string): Promise<v
     return;
   }
 
-  if (Date.now() - recoverAttemptAt < RECOVER_RETRY_GAP_MS) return;
+  const retryInMs = RECOVER_RETRY_GAP_MS - (Date.now() - recoverAttemptAt);
+  if (retryInMs > 0) {
+    scheduleJobRecovery(serverUrl, jobId, retryInMs);
+    return;
+  }
   recoverAttemptAt = Date.now();
 
   try {
@@ -602,6 +632,7 @@ async function recoverJobConnection(serverUrl: string, jobId: string): Promise<v
     }
 
     setConnectionStatus(`连接中断，正在重试（${recoveryFailureCount}/${MAX_RECOVERY_FAILURES}）…`);
+    scheduleJobRecovery(serverUrl, jobId, RECOVER_RETRY_GAP_MS);
   }
 }
 
@@ -813,9 +844,9 @@ function mergeCardStatusLabel(status: JobStatusType): string {
     case "awaiting_merge":
       return "";
     case "running":
-      return "正在合并到 test...";
+      return createMergeRequestOnMerge ? "正在提交 Merge Request..." : "正在合并到 test...";
     case "completed":
-      return "已合并到 test";
+      return createMergeRequestOnMerge ? "已提交 Merge Request" : "已合并到 test";
     case "cancelled":
       return "已放弃合并";
     case "failed":
@@ -829,12 +860,22 @@ function upsertMergeConfirmCard(jobId: string, status: JobStatusType = currentJo
   const node = ensureMessageElement(`${MERGE_CARD_KEY}-${jobId}`, "msg msg-queue");
   const readonly = status !== "awaiting_merge";
   const statusLabel = mergeCardStatusLabel(status);
+  const confirmTitle = createMergeRequestOnMerge
+    ? "修改已完成：是否提交 Merge Request？"
+    : "修改已完成：是否合并到 test？";
+  const actionTitle = createMergeRequestOnMerge
+    ? "修改已完成：是否提交 Merge Request？"
+    : "修改已完成：是否合并到 test 并提交？";
+  const actionLabel = createMergeRequestOnMerge ? "提交 Merge Request" : "合并到 test";
+  const hint = createMergeRequestOnMerge
+    ? "提交后会推送 feature 分支并创建 Merge Request，test 代码不做直接改动"
+    : "放弃后将切回 test 分支，test 代码不做任何改动";
 
   if (readonly) {
     node.innerHTML = `
       <div class="msg-meta">合并确认</div>
       <div class="queue-card">
-        <div class="queue-title">修改已完成：是否合并到 test？</div>
+        <div class="queue-title">${confirmTitle}</div>
         <div class="confirm-status">${escapeHtml(statusLabel)}</div>
       </div>
     `;
@@ -845,12 +886,12 @@ function upsertMergeConfirmCard(jobId: string, status: JobStatusType = currentJo
   node.innerHTML = `
     <div class="msg-meta">等待确认合并</div>
     <div class="queue-card">
-      <div class="queue-title">修改已完成：是否合并到 test 并提交？</div>
+      <div class="queue-title">${actionTitle}</div>
       <div class="confirm-actions">
-        <button class="primary" data-action="merge">合并到 test</button>
+        <button class="primary" data-action="merge">${actionLabel}</button>
         <button class="secondary" data-action="discard">放弃</button>
       </div>
-      <div class="hint" style="margin-top:8px;">放弃后将切回 test 分支，test 代码不做任何改动</div>
+      <div class="hint" style="margin-top:8px;">${hint}</div>
     </div>
   `;
   moveMessageToBottom(`${MERGE_CARD_KEY}-${jobId}`);
@@ -861,11 +902,12 @@ function upsertMergeConfirmCard(jobId: string, status: JobStatusType = currentJo
     mergeBtn.onclick = async () => {
       const config = await loadConfig();
       if (!config.serverUrl) return;
+      createMergeRequestOnMerge = config.createMergeRequestOnMerge;
       try {
         mergeBtn.disabled = true;
         discardBtn!.disabled = true;
-        setConnectionStatus("已确认合并，正在处理...");
-        await mergeJob(config.serverUrl, jobId);
+        setConnectionStatus(createMergeRequestOnMerge ? "已确认提交 Merge Request，正在处理..." : "已确认合并，正在处理...");
+        await mergeJob(config.serverUrl, jobId, { createMergeRequest: createMergeRequestOnMerge });
         currentJobStatus = "running";
         upsertMergeConfirmCard(jobId, "running");
       } catch (err) {
@@ -1170,6 +1212,11 @@ function handleJobEvent(event: JobEvent, options?: { skipPersist?: boolean }): v
           setConnectionStatus("执行中");
         }
         updateSubmitButton();
+      } else if (event.phase === "merge_request") {
+        currentJobStatus = "running";
+        upsertMergeConfirmCard(event.jobId, "running");
+        setConnectionStatus("正在提交 Merge Request");
+        updateSubmitButton();
       } else if (event.phase && ["pull", "branch", "agent", "commit"].includes(event.phase)) {
         currentJobStatus = "running";
         setConnectionStatus("执行中");
@@ -1277,6 +1324,14 @@ function connectJobStream(serverUrl: string, jobId: string, initialStatus?: JobS
         currentJobStatus !== "awaiting_merge"
       ) {
         void recoverJobConnection(serverUrl, jobId);
+      } else if (
+        activeJobId === jobId &&
+        !isTerminalStatus(currentJobStatus) &&
+        currentJobStatus !== "awaiting_confirm" &&
+        currentJobStatus !== "awaiting_input" &&
+        currentJobStatus !== "awaiting_merge"
+      ) {
+        scheduleJobRecovery(serverUrl, jobId, RECOVER_QUIET_MS - quietMs);
       }
     },
     onClose: () => {
@@ -1499,6 +1554,7 @@ function switchAppView(view: "coding" | "batch"): void {
 
 async function init(): Promise<void> {
   const config = await loadConfig();
+  createMergeRequestOnMerge = config.createMergeRequestOnMerge;
 
   await refreshPagePreview();
 
@@ -1531,6 +1587,7 @@ async function init(): Promise<void> {
   window.addEventListener("focus", () => {
     void refreshPagePreview();
     void loadConfig().then((cfg) => {
+      createMergeRequestOnMerge = cfg.createMergeRequestOnMerge;
       if (cfg.serverUrl) void tryFlushPendingServerCancel(cfg.serverUrl);
     });
   });

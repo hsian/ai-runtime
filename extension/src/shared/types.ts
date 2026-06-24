@@ -18,6 +18,7 @@ export interface SubmitResponse {
   status: string;
   message: string;
   jobsAhead?: number;
+  mergeRequestUrl?: string;
 }
 
 export type JobStatusType =
@@ -38,6 +39,7 @@ export interface JobStatus {
   jobsAhead?: number;
   branch?: string;
   commitSha?: string;
+  mergeRequestUrl?: string;
   error?: string;
   planSummary?: string;
   createdAt: string;
@@ -77,12 +79,14 @@ export interface JobEvent {
   waiting?: QueueItemSummary[];
   branch?: string;
   commitSha?: string;
+  mergeRequestUrl?: string;
   message?: string;
   attachmentCount?: number;
 }
 
 export interface StorageConfig {
   serverUrl: string;
+  createMergeRequestOnMerge: boolean;
 }
 
 export interface CodingTask {

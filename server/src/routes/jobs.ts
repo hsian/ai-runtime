@@ -7,7 +7,7 @@ import { runAgent, killAgentForJob, AgentAbortedError } from "../services/agent/
 import { config } from "../config.js";
 import { finalizeJobAttachments, jobImagesUpload, multerErrorMessage, stageAttachmentsForAgent } from "../services/uploadService.js";
 import { isMultipartSubmit, parseJobSubmitBody } from "../middleware/parseJobSubmit.js";
-import { confirmJobMerge, discardJobMerge } from "../services/jobMergeService.js";
+import { confirmJobMerge, createJobMergeRequest, discardJobMerge } from "../services/jobMergeService.js";
 import type { JobRequest } from "../types.js";
 import { resolvePlanSummary } from "../services/agent/planSummaryResolver.js";
 
@@ -401,16 +401,20 @@ jobsRouter.post("/:jobId/merge", (req, res) => {
     return;
   }
 
+  const body = req.body as { createMergeRequest?: unknown } | undefined;
+  const createMergeRequest = body?.createMergeRequest === true;
+
   res.status(202).json({
     jobId,
     status: "running",
-    message: "已确认合并，正在处理...",
+    message: createMergeRequest ? "已确认提交 Merge Request，正在处理..." : "已确认合并，正在处理...",
   });
 
-  confirmJobMerge(jobId).catch((err) => {
+  const action = createMergeRequest ? createJobMergeRequest(jobId) : confirmJobMerge(jobId);
+  action.catch((err) => {
     const latest = getJob(jobId);
     if (latest?.status === "failed") return;
-    console.error(`[AI Runtime] 合并任务 ${jobId} 失败:`, err);
+    console.error(`[AI Runtime] ${createMergeRequest ? "提交 Merge Request" : "合并"}任务 ${jobId} 失败:`, err);
   });
 });
 

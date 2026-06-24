@@ -143,12 +143,12 @@ export function mountPlanConfirmCard(
   });
 }
 
-function mergeCardStatusLabel(status: JobStatusType): string {
+function mergeCardStatusLabel(status: JobStatusType, useMergeRequest = false): string {
   switch (status) {
     case "running":
-      return "正在合并到 test...";
+      return useMergeRequest ? "正在提交 Merge Request..." : "正在合并到 test...";
     case "completed":
-      return "已合并到 test";
+      return useMergeRequest ? "已提交 Merge Request" : "已合并到 test";
     case "cancelled":
       return "已放弃合并";
     default:
@@ -159,6 +159,7 @@ function mergeCardStatusLabel(status: JobStatusType): string {
 export interface MergeConfirmCardHandlers {
   onMerge: (jobId: string) => void | Promise<void>;
   onDiscard: (jobId: string) => void | Promise<void>;
+  createMergeRequestOnMerge?: boolean;
 }
 
 export function mountMergeConfirmCard(
@@ -168,13 +169,24 @@ export function mountMergeConfirmCard(
   handlers: MergeConfirmCardHandlers
 ): void {
   const interactive = status === "awaiting_merge";
+  const useMergeRequest = handlers.createMergeRequestOnMerge === true;
+  const title = useMergeRequest
+    ? "修改已完成：是否提交 Merge Request？"
+    : "修改已完成：是否合并到 test？";
+  const actionTitle = useMergeRequest
+    ? "修改已完成：是否提交 Merge Request？"
+    : "修改已完成：是否合并到 test 并提交？";
+  const actionLabel = useMergeRequest ? "提交 Merge Request" : "合并到 test";
+  const hint = useMergeRequest
+    ? "提交后会推送 feature 分支并创建 Merge Request，test 代码不做直接改动"
+    : "放弃后将切回 test 分支，test 代码不做任何改动";
 
   if (!interactive) {
     node.innerHTML = `
       <div class="msg-meta">合并确认</div>
       <div class="queue-card">
-        <div class="queue-title">修改已完成：是否合并到 test？</div>
-        <div class="confirm-status">${escapeHtml(mergeCardStatusLabel(status))}</div>
+        <div class="queue-title">${title}</div>
+        <div class="confirm-status">${escapeHtml(mergeCardStatusLabel(status, useMergeRequest))}</div>
       </div>
     `;
     return;
@@ -183,12 +195,12 @@ export function mountMergeConfirmCard(
   node.innerHTML = `
     <div class="msg-meta">等待确认合并</div>
     <div class="queue-card">
-      <div class="queue-title">修改已完成：是否合并到 test 并提交？</div>
+      <div class="queue-title">${actionTitle}</div>
       <div class="confirm-actions">
-        <button class="primary" data-action="merge">合并到 test</button>
+        <button class="primary" data-action="merge">${actionLabel}</button>
         <button class="secondary" data-action="discard">放弃</button>
       </div>
-      <div class="hint" style="margin-top:8px;">放弃后将切回 test 分支，test 代码不做任何改动</div>
+      <div class="hint" style="margin-top:8px;">${hint}</div>
     </div>
   `;
 
