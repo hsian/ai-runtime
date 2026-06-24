@@ -87,6 +87,7 @@ export interface JobEvent {
 export interface StorageConfig {
   serverUrl: string;
   createMergeRequestOnMerge: boolean;
+  tapdBatchSilentMode: boolean;
 }
 
 export interface CodingTask {

@@ -6,6 +6,8 @@ async function init(): Promise<void> {
   (document.getElementById("serverUrl") as HTMLInputElement).value = config.serverUrl;
   (document.getElementById("createMergeRequestOnMerge") as HTMLInputElement).checked =
     config.createMergeRequestOnMerge;
+  (document.getElementById("tapdBatchSilentMode") as HTMLInputElement).checked =
+    config.tapdBatchSilentMode;
 
   document.getElementById("backLink")!.setAttribute("href", chrome.runtime.getURL("app.html"));
 
@@ -14,6 +16,8 @@ async function init(): Promise<void> {
     const createMergeRequestOnMerge = (
       document.getElementById("createMergeRequestOnMerge") as HTMLInputElement
     ).checked;
+    const tapdBatchSilentMode = (document.getElementById("tapdBatchSilentMode") as HTMLInputElement)
+      .checked;
     const result = document.getElementById("saveResult")!;
     const resultText = document.getElementById("saveResultText")!;
 
@@ -24,7 +28,7 @@ async function init(): Promise<void> {
       return;
     }
 
-    await saveConfig({ serverUrl, createMergeRequestOnMerge });
+    await saveConfig({ serverUrl, createMergeRequestOnMerge, tapdBatchSilentMode });
     result.classList.remove("hidden");
     resultText.textContent = "已保存";
     resultText.style.color = "#86efac";

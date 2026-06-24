@@ -81,6 +81,10 @@ async function shouldCreateMergeRequestOnMerge(): Promise<boolean> {
   return (await loadConfig()).createMergeRequestOnMerge;
 }
 
+async function shouldRunTapdBatchSilently(): Promise<boolean> {
+  return (await loadConfig()).tapdBatchSilentMode;
+}
+
 function isResumableSession(next: TapdBatchSession | null): boolean {
   return Boolean(next && RESUMABLE_SESSION_STATUSES.has(next.status));
 }
@@ -342,7 +346,8 @@ async function runSingleTask(
     });
     await emitSession(next);
 
-    const gate = await waitForUserGate("execute");
+    const silentMode = await shouldRunTapdBatchSilently();
+    const gate = silentMode ? "execute" : await waitForUserGate("execute");
     if (gate === "cancel") {
       if (batchCancelled) return session ?? next;
       await cancelJob(serverUrl, jobId);
@@ -368,7 +373,7 @@ async function runSingleTask(
       continue;
     }
 
-    const planSummary = (pendingPlanSummary || job.planSummary || "").trim();
+    const planSummary = (silentMode ? job.planSummary : pendingPlanSummary || job.planSummary || "").trim();
     pendingPlanSummary = "";
     if (!planSummary) {
       return touchSession({
@@ -418,7 +423,8 @@ async function runSingleTask(
     });
     await emitSession(next);
 
-    const gate = await waitForUserGate("merge");
+    const silentMode = await shouldRunTapdBatchSilently();
+    const gate = silentMode ? "merge" : await waitForUserGate("merge");
     if (gate === "cancel") {
       if (batchCancelled) return session ?? next;
       await discardMerge(serverUrl, jobId);
