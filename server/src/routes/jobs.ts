@@ -27,6 +27,7 @@ async function revertPlanWorkspaceChanges(jobId: string, reason: string): Promis
 async function runPlan(jobId: string): Promise<void> {
   const job = updateJob(jobId, { status: "planning", requiresConfirm: true, jobsAhead: undefined });
   if (!job) return;
+  let shouldCleanupWorkspace = false;
 
   const trimmed = job.prompt.trim();
   const looksLikeGreeting = /^(你好|您好|hi|hello|test|测试|在吗|在不在)\b/i.test(trimmed) || trimmed.length < 4;
@@ -44,11 +45,18 @@ async function runPlan(jobId: string): Promise<void> {
     return;
   }
 
-  appendJobEvent(jobId, { type: "stage", phase: "plan", text: "Plan 模式：正在分析改动方案（不创建分支、不改代码）..." });
-
   try {
+    const defaultBranch = config.GIT_DEFAULT_BRANCH;
+    const pullText = `Plan 模式：正在拉取 ${defaultBranch} 分支最新代码...`;
+    updateJob(jobId, { message: pullText });
+    appendJobEvent(jobId, { type: "stage", phase: "pull", text: pullText });
+    await gitService.prepareBaseBranch();
+
+    appendJobEvent(jobId, { type: "stage", phase: "plan", text: "Plan 模式：正在分析改动方案（不创建分支、不改代码）..." });
+
     const repoPath = gitService.getRepoPath();
     const stagedAttachments = await stageAttachmentsForAgent(job.attachments, repoPath, jobId);
+    shouldCleanupWorkspace = true;
     if (stagedAttachments?.length) {
       appendJobEvent(jobId, {
         type: "stage",
@@ -91,6 +99,7 @@ async function runPlan(jobId: string): Promise<void> {
     );
 
     await revertPlanWorkspaceChanges(jobId, "Plan 结束后检测到意外文件改动");
+    shouldCleanupWorkspace = false;
 
     const current = getJob(jobId);
     if (!current || current.status === "cancelled") return;
@@ -109,7 +118,9 @@ async function runPlan(jobId: string): Promise<void> {
       text: "Plan 完成：请确认是否执行修改",
     });
   } catch (err) {
-    await revertPlanWorkspaceChanges(jobId, "Plan 中断后还原工作区");
+    if (shouldCleanupWorkspace) {
+      await revertPlanWorkspaceChanges(jobId, "Plan 中断后还原工作区");
+    }
 
     const current = getJob(jobId);
     if (current?.status === "cancelled" || err instanceof AgentAbortedError) {

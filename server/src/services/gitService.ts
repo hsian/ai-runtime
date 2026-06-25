@@ -59,7 +59,7 @@ export class GitService {
     return this.git;
   }
 
-  /** 拉取远程并切到基线分支，仅在任务开始时调用 */
+  /** 拉取远程并切到基线分支，供 Plan 和执行阶段同步最新代码 */
   async prepareBaseBranch(): Promise<SimpleGit> {
     const git = await this.getGit();
     await git.fetch("origin");
