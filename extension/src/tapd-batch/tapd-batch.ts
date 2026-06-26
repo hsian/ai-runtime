@@ -295,9 +295,18 @@ function renderTaskPicker(): void {
     return;
   }
 
+  const executionOrderByIndex = new Map<number, number>();
+  let executionOrder = 0;
+  pickerRows.forEach((row, index) => {
+    if (!row.checked) return;
+    executionOrder += 1;
+    executionOrderByIndex.set(index, executionOrder);
+  });
+
   container.innerHTML = pickerRows
     .map((row, index) => {
       const badge = [
+        row.checked ? `<span class="batch-badge order">第 ${executionOrderByIndex.get(index)} 个执行</span>` : "",
         row.previouslyCompleted ? `<span class="batch-badge done">曾执行</span>` : "",
         (row.task.imageCount ?? 0) > 0
           ? `<span class="batch-badge">${row.task.imageCount} 张配图</span>`
@@ -305,13 +314,27 @@ function renderTaskPicker(): void {
       ].join("");
       const owner = row.task.owner ? ` · ${escapeHtml(row.task.owner)}` : "";
       const status = row.task.status ? ` · ${escapeHtml(row.task.status)}` : "";
+      const moveUpDisabled = busy || index === 0 ? "disabled" : "";
+      const moveDownDisabled = busy || index === pickerRows.length - 1 ? "disabled" : "";
       return `
-        <div class="batch-task-item${row.previouslyCompleted ? " is-done" : ""}">
+        <div class="batch-task-item${row.previouslyCompleted ? " is-done" : ""}" data-tapd-task-id="${escapeHtml(row.task.id)}">
           <div class="batch-task-head">
             <input type="checkbox" data-picker-index="${index}" ${row.checked ? "checked" : ""} ${busy ? "disabled" : ""} />
             <div class="batch-task-meta">
               <div class="batch-task-title">${escapeHtml(row.task.name)}${badge}</div>
               <div class="batch-task-sub">#${escapeHtml(row.task.id)}${owner}${status}</div>
+            </div>
+            <div class="batch-task-order-controls" aria-label="调整执行顺序">
+              <button class="batch-order-btn" type="button" data-move-index="${index}" data-move-direction="-1" title="上移" aria-label="上移任务" ${moveUpDisabled}>
+                <svg class="batch-order-icon" width="12" height="12" viewBox="0 0 16 16" aria-hidden="true">
+                  <path d="M4 10l4-4 4 4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+                </svg>
+              </button>
+              <button class="batch-order-btn" type="button" data-move-index="${index}" data-move-direction="1" title="下移" aria-label="下移任务" ${moveDownDisabled}>
+                <svg class="batch-order-icon" width="12" height="12" viewBox="0 0 16 16" aria-hidden="true">
+                  <path d="M4 6l4 4 4-4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+                </svg>
+              </button>
             </div>
           </div>
           <textarea class="batch-prompt" data-prompt-index="${index}" ${busy ? "disabled" : ""} rows="4">${escapeHtml(row.prompt)}</textarea>
@@ -319,6 +342,77 @@ function renderTaskPicker(): void {
       `;
     })
     .join("");
+}
+
+function getTaskPickerRects(): Map<string, DOMRect> {
+  const rects = new Map<string, DOMRect>();
+  el<HTMLElement>("taskPickerList")
+    .querySelectorAll<HTMLElement>(".batch-task-item[data-tapd-task-id]")
+    .forEach((node) => {
+      const taskId = node.dataset.tapdTaskId;
+      if (taskId) rects.set(taskId, node.getBoundingClientRect());
+    });
+  return rects;
+}
+
+function animateTaskPickerReorder(previousRects: Map<string, DOMRect>): void {
+  if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+
+  const movedNodes: HTMLElement[] = [];
+  el<HTMLElement>("taskPickerList")
+    .querySelectorAll<HTMLElement>(".batch-task-item[data-tapd-task-id]")
+    .forEach((node) => {
+      const taskId = node.dataset.tapdTaskId;
+      const previousRect = taskId ? previousRects.get(taskId) : undefined;
+      if (!previousRect) return;
+
+      const nextRect = node.getBoundingClientRect();
+      const deltaX = previousRect.left - nextRect.left;
+      const deltaY = previousRect.top - nextRect.top;
+      if (deltaX === 0 && deltaY === 0) return;
+
+      node.style.transition = "none";
+      node.style.transform = `translate(${deltaX}px, ${deltaY}px)`;
+      movedNodes.push(node);
+    });
+
+  if (movedNodes.length === 0) return;
+
+  requestAnimationFrame(() => {
+    movedNodes.forEach((node) => {
+      node.style.transition = "transform 180ms ease";
+      node.style.transform = "";
+      node.addEventListener(
+        "transitionend",
+        () => {
+          node.style.transition = "";
+        },
+        { once: true }
+      );
+    });
+  });
+}
+
+function movePickerRow(index: number, direction: -1 | 1): void {
+  if (isBatchBusy()) return;
+  const nextIndex = index + direction;
+  if (
+    !Number.isInteger(index) ||
+    index < 0 ||
+    nextIndex < 0 ||
+    index >= pickerRows.length ||
+    nextIndex >= pickerRows.length
+  ) {
+    return;
+  }
+
+  const previousRects = getTaskPickerRects();
+  const nextRows = [...pickerRows];
+  [nextRows[index], nextRows[nextIndex]] = [nextRows[nextIndex], nextRows[index]];
+  pickerRows = nextRows;
+  renderTaskPicker();
+  updateFooter();
+  animateTaskPickerReorder(previousRects);
 }
 
 function renderQueue(): void {
@@ -649,7 +743,19 @@ function bindEvents(options?: TapdBatchPanelOptions): void {
     const row = pickerRows[Number(index)];
     if (!row) return;
     row.checked = target.checked;
+    renderTaskPicker();
     updateFooter();
+  });
+
+  el<HTMLElement>("taskPickerList").addEventListener("click", (event) => {
+    const target = event.target as HTMLElement;
+    const button = target.closest<HTMLButtonElement>("button[data-move-index]");
+    if (!button) return;
+
+    event.preventDefault();
+    const index = Number(button.getAttribute("data-move-index"));
+    const direction = button.getAttribute("data-move-direction") === "-1" ? -1 : 1;
+    movePickerRow(index, direction);
   });
 
   el<HTMLElement>("taskPickerList").addEventListener("input", (event) => {

@@ -159,6 +159,7 @@
   border-radius: 6px;
   padding: 8px;
   background: #fafafa;
+  will-change: transform;
 }
 
 .batch-task-item.is-done {
@@ -178,6 +179,43 @@
 .batch-task-meta {
   flex: 1;
   min-width: 0;
+}
+
+.batch-task-order-controls {
+  display: flex;
+  flex: 0 0 auto;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.batch-order-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 22px;
+  padding: 0;
+  border: 1px solid #d1d5db;
+  border-radius: 5px;
+  background: #fff;
+  color: #4b5563;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.batch-order-icon {
+  display: block;
+}
+
+.batch-order-btn:hover:not(:disabled) {
+  background: #eef2ff;
+  border-color: #c7d2fe;
+  color: #4338ca;
+}
+
+.batch-order-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
 }
 
 .batch-task-title {
@@ -205,6 +243,11 @@
 .batch-badge.done {
   background: #d1fae5;
   color: #065f46;
+}
+
+.batch-badge.order {
+  background: #dbeafe;
+  color: #1d4ed8;
 }
 
 .batch-prompt {
