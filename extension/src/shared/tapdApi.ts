@@ -53,6 +53,37 @@ export async function fetchTapdIterationTasks(
   };
 }
 
+export async function fetchTapdIterationBugs(
+  serverUrl: string,
+  iterationId: string,
+  prefix = TAPD_TASK_PREFIX
+): Promise<{
+  workspaceId: string;
+  iterationId: string;
+  bugs: TapdTaskItem[];
+}> {
+  const url = new URL(
+    `${normalizeServerUrl(serverUrl)}/api/tapd/iterations/${encodeURIComponent(iterationId)}/bugs`
+  );
+  if (prefix) url.searchParams.set("prefix", prefix);
+
+  const res = await fetch(url);
+  const data = (await res.json()) as {
+    workspaceId?: string;
+    iterationId?: string;
+    bugs?: TapdTaskItem[];
+    error?: string;
+  };
+  if (!res.ok) {
+    throw new Error(data.error ?? `获取缺陷失败: ${res.status}`);
+  }
+  return {
+    workspaceId: data.workspaceId ?? "",
+    iterationId: data.iterationId ?? iterationId,
+    bugs: Array.isArray(data.bugs) ? data.bugs : [],
+  };
+}
+
 export function htmlToPlainPromptText(html: string): string {
   let imageIndex = 0;
   const withoutImgs = html.replace(/<img\b[^>]*>/gi, () => {
@@ -88,10 +119,8 @@ export function buildTaskPrompt(task: TapdTaskItem, editedPrompt?: string): stri
 
 【配图说明 — 必须遵守】
 任务描述中的「如图N」「图N」「[配图N]」均指第 N 张配图，与随任务上传的附件「图N」路径一一对应（如图2 = 图2 = 配图2）。
-分析某段需求时，若文字提到「如图N」，必须先 Read 对应编号的附件图片，再写该段方案。
-- 弹窗、抽屉、表单的布局、字段、文案以对应截图为准，只实现截图里出现的内容
-- 禁止臆造截图未出现的模块、按钮、表格列
-- 若文字描述与截图冲突，以截图为准
+Plan 阶段分析某段需求时，若文字提到「如图N」，必须先 Read 对应编号的附件图片，再写该段方案。
+执行修改阶段优先按已确认方案实现；仅当方案未覆盖截图细节、或实现该段需求必须核对 UI 时，再 Read 对应编号的附件图片。
 （描述中含 ${imageCount} 张配图，按 HTML 出现顺序编号为配图1…配图${imageCount}）`;
       }
       return plain;

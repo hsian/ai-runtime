@@ -111,7 +111,7 @@ function sleep(ms: number): Promise<void> {
 async function emitSession(next: TapdBatchSession | null): Promise<void> {
   session = next;
   await saveTapdBatchSession(next);
-  chrome.runtime.sendMessage({ type: TAPD_BATCH_STATE, session: next }).catch(() => {});
+  chrome.runtime.sendMessage({ type: TAPD_BATCH_STATE, session: next, loopRunning }).catch(() => {});
 }
 
 async function clearJobLog(jobId: string): Promise<void> {
@@ -546,6 +546,9 @@ async function runBatchLoop(
   } finally {
     loopRunning = false;
     closeEventStream();
+    if (session?.status === "cancelled") {
+      chrome.runtime.sendMessage({ type: TAPD_BATCH_STATE, session, loopRunning }).catch(() => {});
+    }
   }
 }
 

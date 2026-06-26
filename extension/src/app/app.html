@@ -99,7 +99,7 @@
 
         <main class="batch-main">
           <p class="batch-hint">
-            从 TAPD API 拉取迭代任务（标题以 <strong>AI</strong> 开头），勾选后串行执行。流程与编码模式一致：Plan → 手动确认 → 执行 → 手动合并。
+            从 TAPD API 拉取当前迭代中标题以 <strong>AI</strong> 开头的任务或缺陷，勾选后串行执行。流程与编码模式一致：Plan → 手动确认 → 执行 → 手动合并。
           </p>
 
           <section class="batch-card">
@@ -112,25 +112,28 @@
                 <option value="">加载中…</option>
               </select>
             </label>
-            <button id="loadTasksBtn" class="batch-secondary" type="button">加载 AI 任务</button>
+            <div class="batch-load-actions">
+              <button id="loadTasksBtn" class="batch-secondary" type="button">加载 AI 任务</button>
+              <button id="loadBugsBtn" class="batch-secondary" type="button">加载 AI BUG</button>
+            </div>
           </section>
 
           <section class="batch-card">
             <div class="batch-card-head">
-              <h2>② 勾选任务</h2>
+              <h2>② 勾选任务 / BUG</h2>
               <div class="batch-card-actions">
                 <button id="selectPendingBtn" class="batch-link-btn" type="button">全选未完成</button>
                 <button id="clearSelectionBtn" class="batch-link-btn" type="button">清空勾选</button>
               </div>
             </div>
             <div id="taskPickerList" class="batch-task-list">
-              <p class="batch-empty">请先选择迭代并加载任务</p>
+              <p class="batch-empty">请先选择迭代并加载任务或 BUG</p>
             </div>
           </section>
 
           <section class="batch-card" id="queueSection" hidden>
             <div class="batch-card-head">
-              <h2>③ 任务队列</h2>
+              <h2>③ 执行队列</h2>
             </div>
             <div id="queueList" class="batch-queue-list"></div>
           </section>
@@ -144,7 +147,7 @@
         </main>
 
         <footer class="batch-footer">
-          <button id="startBatchBtn" class="batch-primary" type="button" disabled>开始任务</button>
+          <button id="startBatchBtn" class="batch-primary" type="button" disabled>开始执行</button>
           <button id="confirmMergeBtn" class="batch-primary" type="button" hidden>合并到 test</button>
           <button id="discardMergeBtn" class="batch-secondary" type="button" hidden>放弃合并</button>
           <button id="pauseBatchBtn" class="batch-secondary" type="button" hidden>暂停</button>

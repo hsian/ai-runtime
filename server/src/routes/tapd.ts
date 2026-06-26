@@ -4,6 +4,7 @@ import {
   getIterationWorkItems,
   getStory,
   getTask,
+  listIterationBugs,
   listIterationTasks,
   listIterations,
   parseTapdUrl,
@@ -67,6 +68,29 @@ tapdRouter.get("/iterations/:iterationId/tasks", async (req, res) => {
     res.json({ workspaceId, iterationId: req.params.iterationId, prefix: prefix ?? null, tasks: enriched });
   } catch (err) {
     res.status(502).json({ error: err instanceof Error ? err.message : "获取任务列表失败" });
+  }
+});
+
+tapdRouter.get("/iterations/:iterationId/bugs", async (req, res) => {
+  if (tapdNotConfigured(req, res)) return;
+  try {
+    const workspaceId =
+      typeof req.query.workspaceId === "string" ? req.query.workspaceId : getTapdConfig().workspaceId;
+    const prefix = typeof req.query.prefix === "string" ? req.query.prefix : undefined;
+    const bugs = await listIterationBugs(req.params.iterationId, { workspaceId, prefix });
+    const enriched = bugs.map((bug) => ({
+      id: bug.id,
+      name: bug.title ?? bug.name ?? `缺陷 ${bug.id}`,
+      description: bug.description,
+      status: bug.status,
+      owner: bug.current_owner ?? bug.owner,
+      priority_label: bug.priority_label ?? bug.priority,
+      iteration_id: bug.iteration_id,
+      imageCount: countImagesInHtml(bug.description ?? ""),
+    }));
+    res.json({ workspaceId, iterationId: req.params.iterationId, prefix: prefix ?? null, bugs: enriched });
+  } catch (err) {
+    res.status(502).json({ error: err instanceof Error ? err.message : "获取缺陷列表失败" });
   }
 });
 

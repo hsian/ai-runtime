@@ -5,6 +5,7 @@ import { formatErrorMessage, fetchJobEvents, queryJobStatus } from "../shared/ap
 import { JobProgressView } from "../shared/jobProgressView.js";
 import {
   buildTaskPrompt,
+  fetchTapdIterationBugs,
   fetchTapdIterationTasks,
   fetchTapdIterations,
   TAPD_TASK_PREFIX,
@@ -19,7 +20,10 @@ import {
 } from "../shared/tapdBatchStore.js";
 import type { JobEvent, TapdBatchSession, TapdBatchTask, TapdIteration, TapdTaskItem } from "../shared/types.js";
 
+type PickerKind = "task" | "bug";
+
 interface PickerRow {
+  kind: PickerKind;
   task: TapdTaskItem;
   prompt: string;
   sourceHtml: string;
@@ -30,7 +34,12 @@ interface PickerRow {
 let serverUrl = "";
 let workspaceId = "";
 let iterations: TapdIteration[] = [];
-let pickerRows: PickerRow[] = [];
+let activePickerKind: PickerKind = "task";
+const pickerRowsByKind: Record<PickerKind, PickerRow[]> = {
+  task: [],
+  bug: [],
+};
+let pickerRows: PickerRow[] = pickerRowsByKind.task;
 let session: TapdBatchSession | null = null;
 let loopRunning = false;
 let progressView: JobProgressView | null = null;
@@ -56,6 +65,30 @@ function el<T extends HTMLElement>(id: string): T {
 
 function setStatus(text: string): void {
   el<HTMLElement>("batchStatus").textContent = text;
+}
+
+function pickerKindLabel(kind: PickerKind = activePickerKind): string {
+  return kind === "bug" ? "BUG" : "任务";
+}
+
+function completedKeyFor(kind: PickerKind, id: string): string {
+  return kind === "bug" ? `bug:${id}` : id;
+}
+
+function setActivePickerRows(rows: PickerRow[]): void {
+  pickerRowsByKind[activePickerKind] = rows;
+  pickerRows = rows;
+}
+
+function switchPickerKind(kind: PickerKind): void {
+  activePickerKind = kind;
+  pickerRows = pickerRowsByKind[kind];
+}
+
+function clearPickerRows(): void {
+  pickerRowsByKind.task = [];
+  pickerRowsByKind.bug = [];
+  pickerRows = pickerRowsByKind[activePickerKind];
 }
 
 function escapeHtml(value: string): string {
@@ -291,7 +324,7 @@ function renderTaskPicker(): void {
   const container = el<HTMLElement>("taskPickerList");
   const busy = isBatchBusy();
   if (pickerRows.length === 0) {
-    container.innerHTML = `<p class="batch-empty">当前迭代没有以 ${TAPD_TASK_PREFIX} 开头的任务</p>`;
+    container.innerHTML = `<p class="batch-empty">当前迭代没有以 ${TAPD_TASK_PREFIX} 开头的${pickerKindLabel()}</p>`;
     return;
   }
 
@@ -409,7 +442,7 @@ function movePickerRow(index: number, direction: -1 | 1): void {
   const previousRects = getTaskPickerRects();
   const nextRows = [...pickerRows];
   [nextRows[index], nextRows[nextIndex]] = [nextRows[nextIndex], nextRows[index]];
-  pickerRows = nextRows;
+  setActivePickerRows(nextRows);
   renderTaskPicker();
   updateFooter();
   animateTaskPickerReorder(previousRects);
@@ -456,10 +489,12 @@ function updateFooter(): void {
   const skipBtn = el<HTMLButtonElement>("skipBatchBtn");
   const cancelBtn = el<HTMLButtonElement>("cancelBatchBtn");
   const loadBtn = el<HTMLButtonElement>("loadTasksBtn");
+  const loadBugsBtn = el<HTMLButtonElement>("loadBugsBtn");
 
   const checkedCount = pickerRows.filter((row) => row.checked).length;
   const status = session?.status;
   const active = hasActiveBatchSession(session);
+  const terminalBatch = status === "cancelled" || status === "completed";
 
   confirmMergeBtn.hidden = true;
   confirmMergeBtn.textContent = createMergeRequestOnMerge ? "提交 Merge Request" : "合并到 test";
@@ -471,14 +506,16 @@ function updateFooter(): void {
   startBtn.hidden = false;
 
   if (!active) {
-    startBtn.textContent = "开始任务";
+    startBtn.textContent = "开始执行";
     startBtn.disabled = loopRunning || checkedCount === 0;
-    loadBtn.disabled = loopRunning;
+    loadBtn.disabled = loopRunning && !terminalBatch;
+    loadBugsBtn.disabled = loopRunning && !terminalBatch;
     return;
   }
 
   cancelBtn.hidden = false;
   loadBtn.disabled = true;
+  loadBugsBtn.disabled = true;
   startBtn.hidden = true;
 
   switch (status) {
@@ -498,7 +535,7 @@ function updateFooter(): void {
       break;
     default:
       startBtn.hidden = false;
-      startBtn.textContent = "开始任务";
+      startBtn.textContent = "开始执行";
       startBtn.disabled = true;
       break;
   }
@@ -517,7 +554,7 @@ function buildSessionFromSelection(): TapdBatchSession | null {
   const now = new Date().toISOString();
   const tasks = selected.map(({ row }, order) =>
     createBatchTask({
-      tapdTaskId: row.task.id,
+      tapdTaskId: completedKeyFor(row.kind, row.task.id),
       title: row.task.name,
       prompt: row.prompt.trim() || buildTaskPrompt(row.task),
       sourceHtml: row.sourceHtml || row.task.description,
@@ -599,35 +636,48 @@ async function loadIterations(selectSaved = true): Promise<void> {
   }
 }
 
-async function loadTasks(): Promise<void> {
+async function loadTapdItems(kind: PickerKind): Promise<void> {
   const iterationId = el<HTMLSelectElement>("iterationSelect").value;
   if (!iterationId || !serverUrl) return;
 
   await chrome.storage.local.set({ [SELECTED_ITERATION_KEY]: iterationId });
-  setStatus("正在加载任务…");
+  switchPickerKind(kind);
+  renderTaskPicker();
+  setStatus(`正在加载${pickerKindLabel(kind)}…`);
 
   try {
     const completedIds = await listCompletedTapdTaskIds();
-    const result = await fetchTapdIterationTasks(serverUrl, iterationId);
-    pickerRows = result.tasks.map((task) => ({
+    const items = kind === "bug"
+      ? (await fetchTapdIterationBugs(serverUrl, iterationId)).bugs
+      : (await fetchTapdIterationTasks(serverUrl, iterationId)).tasks;
+    setActivePickerRows(items.map((task) => ({
+      kind,
       task,
       prompt: buildTaskPrompt(task),
       sourceHtml: task.description ?? "",
-      checked: !completedIds.has(task.id),
-      previouslyCompleted: completedIds.has(task.id),
-    }));
+      checked: !completedIds.has(completedKeyFor(kind, task.id)),
+      previouslyCompleted: completedIds.has(completedKeyFor(kind, task.id)),
+    })));
     renderTaskPicker();
-    setStatus(`已加载 ${pickerRows.length} 个以 ${TAPD_TASK_PREFIX} 开头的任务`);
+    setStatus(`已加载 ${pickerRows.length} 个以 ${TAPD_TASK_PREFIX} 开头的${pickerKindLabel(kind)}`);
     updateFooter();
   } catch (err) {
     setStatus(formatErrorMessage(serverUrl, err));
   }
 }
 
+async function loadTasks(): Promise<void> {
+  await loadTapdItems("task");
+}
+
+async function loadBugs(): Promise<void> {
+  await loadTapdItems("bug");
+}
+
 async function startBatch(): Promise<void> {
   const nextSession = buildSessionFromSelection();
   if (!nextSession) {
-    setStatus("请至少勾选一个任务");
+    setStatus(`请至少勾选一个${pickerKindLabel()}`);
     return;
   }
 
@@ -694,7 +744,7 @@ async function resetTapdTaskPanel(): Promise<void> {
 
   session = null;
   loopRunning = false;
-  pickerRows = [];
+  clearPickerRows();
   iterations = [];
   workspaceId = "";
 
@@ -703,7 +753,7 @@ async function resetTapdTaskPanel(): Promise<void> {
 
   el<HTMLElement>("queueSection").hidden = true;
   el<HTMLElement>("progressSection").hidden = true;
-  el<HTMLElement>("taskPickerList").innerHTML = `<p class="batch-empty">请先选择迭代并加载任务</p>`;
+  el<HTMLElement>("taskPickerList").innerHTML = `<p class="batch-empty">请先选择迭代并加载任务或 BUG</p>`;
 
   await Promise.all([
     saveTapdBatchSession(null),
@@ -730,8 +780,10 @@ function bindEvents(options?: TapdBatchPanelOptions): void {
     void handleRefreshClick();
   });
   el<HTMLButtonElement>("loadTasksBtn").addEventListener("click", () => void loadTasks());
+  el<HTMLButtonElement>("loadBugsBtn").addEventListener("click", () => void loadBugs());
   el<HTMLSelectElement>("iterationSelect").addEventListener("change", () => {
-    pickerRows = [];
+    clearPickerRows();
+    switchPickerKind("task");
     renderTaskPicker();
     void loadTasks();
   });
@@ -768,13 +820,13 @@ function bindEvents(options?: TapdBatchPanelOptions): void {
   });
 
   el<HTMLButtonElement>("selectPendingBtn").addEventListener("click", () => {
-    pickerRows = pickerRows.map((row) => ({ ...row, checked: !row.previouslyCompleted }));
+    setActivePickerRows(pickerRows.map((row) => ({ ...row, checked: !row.previouslyCompleted })));
     renderTaskPicker();
     updateFooter();
   });
 
   el<HTMLButtonElement>("clearSelectionBtn").addEventListener("click", () => {
-    pickerRows = pickerRows.map((row) => ({ ...row, checked: false }));
+    setActivePickerRows(pickerRows.map((row) => ({ ...row, checked: false })));
     renderTaskPicker();
     updateFooter();
   });
@@ -823,8 +875,15 @@ function bindEvents(options?: TapdBatchPanelOptions): void {
 
   chrome.runtime.onMessage.addListener((message) => {
     if (message?.type === TAPD_BATCH_STATE) {
+      if (typeof message.loopRunning === "boolean") {
+        loopRunning = message.loopRunning;
+      }
       applySession(message.session as TapdBatchSession | null);
       renderTaskPicker();
+      if (typeof message.loopRunning === "boolean") {
+        updateFooter();
+        return;
+      }
       void sendTapdBatchCommand<{ loopRunning: boolean }>({ type: "TAPD_BATCH_GET_STATE" }).then((data) => {
         loopRunning = Boolean(data.loopRunning);
         updateFooter();

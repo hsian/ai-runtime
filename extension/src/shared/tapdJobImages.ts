@@ -30,7 +30,13 @@ function sniffImageMime(bytes: Uint8Array): string | null {
   ) {
     return "image/png";
   }
-  if (bytes.length >= 12 && bytes.subarray(0, 4).toString("ascii") === "RIFF") {
+  if (
+    bytes.length >= 12 &&
+    bytes[0] === 0x52 &&
+    bytes[1] === 0x49 &&
+    bytes[2] === 0x46 &&
+    bytes[3] === 0x46
+  ) {
     return "image/webp";
   }
   if (bytes.length >= 4 && bytes[0] === 0x47 && bytes[1] === 0x49 && bytes[2] === 0x46) {
@@ -188,10 +194,8 @@ export const TAPD_IMAGE_PROMPT_SUFFIX = `
 
 【配图说明 — 必须遵守】
 任务描述中的「如图N」「图N」「[配图N]」均指第 N 张配图，与随任务上传的附件「图N」路径一一对应（如图2 = 图2 = 配图2）。
-分析某段需求时，若文字提到「如图N」，必须先 Read 对应编号的附件图片，再写该段方案。
-- 弹窗、抽屉、表单的布局、字段、文案以对应截图为准，只实现截图里出现的内容
-- 禁止臆造截图未出现的模块、按钮、表格列
-- 若文字描述与截图冲突，以截图为准`;
+Plan 阶段分析某段需求时，若文字提到「如图N」，必须先 Read 对应编号的附件图片，再写该段方案。
+执行修改阶段优先按已确认方案实现；仅当方案未覆盖截图细节、或实现该段需求必须核对 UI 时，再 Read 对应编号的附件图片。`;
 
 export function appendTapdImageInstructions(prompt: string, imageCount: number): string {
   const trimmed = prompt.trim();

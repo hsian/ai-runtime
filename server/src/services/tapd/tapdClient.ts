@@ -35,6 +35,19 @@ export interface TapdTask {
   iteration_id?: string;
 }
 
+export interface TapdBug {
+  id: string;
+  title?: string;
+  name?: string;
+  description?: string;
+  status?: string;
+  owner?: string;
+  current_owner?: string;
+  priority_label?: string;
+  priority?: string;
+  iteration_id?: string;
+}
+
 export interface TapdIteration {
   id: string;
   name: string;
@@ -161,6 +174,23 @@ export async function listIterationTasks(
   const prefix = options?.prefix?.trim();
   if (!prefix) return tasks;
   return tasks.filter((task) => (task.name ?? "").startsWith(prefix));
+}
+
+export async function listIterationBugs(
+  iterationId: string,
+  options?: { workspaceId?: string; prefix?: string },
+  cfg: TapdConfig = getTapdConfig()
+): Promise<TapdBug[]> {
+  const wsId = options?.workspaceId ?? cfg.workspaceId;
+  const bugs = await fetchAllPages<TapdBug>(
+    cfg,
+    "/bugs",
+    { workspace_id: wsId, iteration_id: iterationId },
+    "Bug"
+  );
+  const prefix = options?.prefix?.trim();
+  if (!prefix) return bugs;
+  return bugs.filter((bug) => (bug.title ?? bug.name ?? "").startsWith(prefix));
 }
 
 export async function getIterationWorkItems(
