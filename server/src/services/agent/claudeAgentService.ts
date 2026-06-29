@@ -43,17 +43,6 @@ function killChildProcess(child: ChildProcess): void {
   child.kill("SIGTERM");
 }
 
-function extractTextFromAssistantMessage(message: unknown): string {
-  if (!message || typeof message !== "object") return "";
-  const content = (message as { content?: unknown }).content;
-  if (!Array.isArray(content)) return "";
-
-  return content
-    .filter((block) => block && typeof block === "object" && (block as { type?: string }).type === "text")
-    .map((block) => String((block as { text?: string }).text ?? ""))
-    .join("");
-}
-
 interface StreamParseState {
   seenTools: Set<string>;
   lastStatusAt: number;
@@ -156,16 +145,11 @@ function handleStreamJsonLine(line: string, onEvent: AgentEventHandler | undefin
         }
       }
     }
-    return extractTextFromAssistantMessage(parsed.message);
+    return "";
   }
 
   if (type === "result") {
-    const result = parsed.result;
-    if (typeof result === "string" && result.trim()) {
-      return result.trim();
-    }
-    const text = extractTextFromAssistantMessage(parsed);
-    if (text.trim()) return text.trim();
+    return "";
   }
 
   return "";
