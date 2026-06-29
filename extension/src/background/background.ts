@@ -78,8 +78,8 @@ async function getAnchorBrowserWindow(): Promise<chrome.windows.Window | undefin
 async function getScreenCenterPopupBounds(
   anchor: chrome.windows.Window | undefined
 ): Promise<{ left: number; top: number; width: number; height: number }> {
-  const width = 750;
-  const height = 600;
+  const width = 1030;
+  const height = 680;
 
   const displays = await chrome.system.display.getInfo();
   let display = displays.find((d) => d.isPrimary) ?? displays[0];

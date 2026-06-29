@@ -832,7 +832,6 @@ function setupWorkbenchResize(): void {
   };
 
   resizer.addEventListener("pointerdown", (event) => {
-    if (window.matchMedia("(max-width: 920px)").matches) return;
     event.preventDefault();
     resizer.setPointerCapture(event.pointerId);
     document.body.classList.add("batch-resizing");
