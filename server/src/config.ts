@@ -40,6 +40,11 @@ const envSchema = z.object({
     .string()
     .transform((v) => v === "true")
     .default("true"),
+  PREVIEW_DEV_ENABLED: z
+    .string()
+    .transform((v) => v === "true")
+    .default("true"),
+  PREVIEW_DEV_TIMEOUT_MS: z.coerce.number().default(30_000),
   CORS_ORIGIN: z.string().default("*"),
   UPLOAD_DIR: z.string().default("./data/uploads"),
   UPLOAD_MAX_BYTES: z.coerce.number().default(300 * 1024),

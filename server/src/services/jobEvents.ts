@@ -36,6 +36,8 @@ export interface JobEvent {
   branch?: string;
   commitSha?: string;
   mergeRequestUrl?: string;
+  previewUrl?: string;
+  previewMessage?: string;
   message?: string;
   attachmentCount?: number;
 }

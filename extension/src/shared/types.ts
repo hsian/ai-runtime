@@ -40,6 +40,9 @@ export interface JobStatus {
   branch?: string;
   commitSha?: string;
   mergeRequestUrl?: string;
+  previewUrl?: string;
+  previewFilter?: string;
+  previewMessage?: string;
   error?: string;
   planSummary?: string;
   createdAt: string;
@@ -80,6 +83,8 @@ export interface JobEvent {
   branch?: string;
   commitSha?: string;
   mergeRequestUrl?: string;
+  previewUrl?: string;
+  previewMessage?: string;
   message?: string;
   attachmentCount?: number;
 }
@@ -162,6 +167,8 @@ export interface TapdBatchSession {
   currentTaskId?: string;
   activeJobId?: string;
   planSummary?: string;
+  previewUrl?: string;
+  previewMessage?: string;
   pauseReason?: string;
   createdAt: string;
   updatedAt: string;

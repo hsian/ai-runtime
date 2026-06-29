@@ -196,6 +196,15 @@ export class GitService {
     return log.latest?.hash ?? "";
   }
 
+  async listChangedFilesAgainstDefault(branchName: string): Promise<string[]> {
+    const git = await this.getGit();
+    const output = await git.diff(["--name-only", `${config.GIT_DEFAULT_BRANCH}...${branchName}`]);
+    return output
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean);
+  }
+
   async restoreBaseBranch(): Promise<void> {
     const git = await this.getGit();
     const current = await this.getCurrentBranch();

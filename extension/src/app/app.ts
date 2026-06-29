@@ -75,6 +75,8 @@ let lastLocalUserBubble:
   | { localId: string; text: string; pageUrl?: string; createdAtMs: number; imageUrls?: string[] }
   | null = null;
 const pendingAttachments: PendingAttachment[] = [];
+const previewUrls = new Map<string, string>();
+const previewMessages = new Map<string, string>();
 let planOutputBuffer = "";
 let planOutputJobId: string | null = null;
 let createMergeRequestOnMerge = false;
@@ -540,7 +542,7 @@ function applyServerJobState(job: JobStatus): void {
   }
 
   if (job.status === "awaiting_merge") {
-    upsertMergeConfirmCard(job.jobId, "awaiting_merge");
+    upsertMergeConfirmCard(job.jobId, "awaiting_merge", job.previewUrl, job.previewMessage);
     setConnectionStatus("等待确认合并");
     updateSubmitButton();
     return;
@@ -771,7 +773,7 @@ function appendStageBubble(event: JobEvent): void {
   node.dataset.key = event.id;
   node.innerHTML = `
     <div class="msg-meta">${formatTime(event.timestamp)}</div>
-    <div class="stage-text">${escapeHtml(event.text ?? "")}</div>
+    <div class="stage-text">${linkifyText(event.text ?? "")}</div>
   `;
   el<HTMLElement>("chatMessages").appendChild(node);
 }
@@ -856,7 +858,14 @@ function mergeCardStatusLabel(status: JobStatusType): string {
   }
 }
 
-function upsertMergeConfirmCard(jobId: string, status: JobStatusType = currentJobStatus ?? "awaiting_merge"): void {
+function upsertMergeConfirmCard(
+  jobId: string,
+  status: JobStatusType = currentJobStatus ?? "awaiting_merge",
+  previewUrl?: string,
+  previewMessage?: string
+): void {
+  if (previewUrl) previewUrls.set(jobId, previewUrl);
+  if (previewMessage) previewMessages.set(jobId, previewMessage);
   const node = ensureMessageElement(`${MERGE_CARD_KEY}-${jobId}`, "msg msg-queue");
   const readonly = status !== "awaiting_merge";
   const statusLabel = mergeCardStatusLabel(status);
@@ -870,12 +879,19 @@ function upsertMergeConfirmCard(jobId: string, status: JobStatusType = currentJo
   const hint = createMergeRequestOnMerge
     ? "提交后会推送 feature 分支并创建 Merge Request，test 代码不做直接改动"
     : "放弃后将切回 test 分支，test 代码不做任何改动";
+  const effectivePreviewUrl = previewUrls.get(jobId);
+  const previewHtml = effectivePreviewUrl
+    ? `<div class="hint" style="margin-top:8px;">预览地址：<a href="${escapeHtml(effectivePreviewUrl)}" target="_blank" rel="noreferrer">${escapeHtml(effectivePreviewUrl)}</a></div>`
+    : previewMessages.get(jobId)
+      ? `<div class="hint" style="margin-top:8px;">预览状态：${escapeHtml(previewMessages.get(jobId)!)}</div>`
+      : "";
 
   if (readonly) {
     node.innerHTML = `
       <div class="msg-meta">合并确认</div>
       <div class="queue-card">
         <div class="queue-title">${confirmTitle}</div>
+        ${previewHtml}
         <div class="confirm-status">${escapeHtml(statusLabel)}</div>
       </div>
     `;
@@ -891,6 +907,7 @@ function upsertMergeConfirmCard(jobId: string, status: JobStatusType = currentJo
         <button class="primary" data-action="merge">${actionLabel}</button>
         <button class="secondary" data-action="discard">放弃</button>
       </div>
+      ${previewHtml}
       <div class="hint" style="margin-top:8px;">${hint}</div>
     </div>
   `;
@@ -1044,6 +1061,15 @@ function escapeHtml(text: string): string {
     .replace(/"/g, "&quot;");
 }
 
+function linkifyText(text: string): string {
+  const escaped = escapeHtml(text);
+  return escaped.replace(/https?:\/\/[^\s<]+/g, (url) => {
+    const href = url.replace(/[),.;]+$/, "");
+    const suffix = url.slice(href.length);
+    return `<a href="${href}" target="_blank" rel="noreferrer">${href}</a>${suffix}`;
+  });
+}
+
 function renderAttachmentStrip(): void {
   const strip = el<HTMLElement>("attachmentStrip");
   if (pendingAttachments.length === 0) {
@@ -1162,6 +1188,8 @@ function handleJobEvent(event: JobEvent, options?: { skipPersist?: boolean }): v
   if (seenEventIds.has(event.id)) return;
   seenEventIds.add(event.id);
   lastEventAt = Date.now();
+  if (event.previewUrl) previewUrls.set(event.jobId, event.previewUrl);
+  if (event.previewMessage) previewMessages.set(event.jobId, event.previewMessage);
 
   switch (event.type) {
     case "user":
@@ -1196,7 +1224,7 @@ function handleJobEvent(event: JobEvent, options?: { skipPersist?: boolean }): v
         updateSubmitButton();
       } else if (event.phase === "execute_ready") {
         currentJobStatus = "awaiting_merge";
-        upsertMergeConfirmCard(event.jobId, "awaiting_merge");
+        upsertMergeConfirmCard(event.jobId, "awaiting_merge", event.previewUrl, event.previewMessage);
         setConnectionStatus("等待确认合并");
         updateSubmitButton();
       } else if (event.phase === "merge") {

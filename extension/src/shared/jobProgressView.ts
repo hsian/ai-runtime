@@ -13,6 +13,15 @@ function escapeHtml(value: string): string {
     .replace(/"/g, "&quot;");
 }
 
+function linkifyText(value: string): string {
+  const escaped = escapeHtml(value);
+  return escaped.replace(/https?:\/\/[^\s<]+/g, (url) => {
+    const href = url.replace(/[),.;]+$/, "");
+    const suffix = url.slice(href.length);
+    return `<a href="${href}" target="_blank" rel="noreferrer">${href}</a>${suffix}`;
+  });
+}
+
 function formatTime(iso: string): string {
   try {
     return new Date(iso).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
@@ -34,6 +43,8 @@ export interface JobProgressViewOptions {
 export class JobProgressView {
   private planBuffers = new Map<string, string>();
   private agentBuffers = new Map<string, string>();
+  private previewUrls = new Map<string, string>();
+  private previewMessages = new Map<string, string>();
   private seenEventIds = new Set<string>();
 
   constructor(
@@ -45,6 +56,8 @@ export class JobProgressView {
     this.container.innerHTML = "";
     this.planBuffers.clear();
     this.agentBuffers.clear();
+    this.previewUrls.clear();
+    this.previewMessages.clear();
     this.seenEventIds.clear();
   }
 
@@ -97,7 +110,9 @@ export class JobProgressView {
     this.scrollToBottom();
   }
 
-  renderMergeCard(jobId: string, status: JobStatusType): void {
+  renderMergeCard(jobId: string, status: JobStatusType, previewUrl?: string, previewMessage?: string): void {
+    if (previewUrl) this.previewUrls.set(jobId, previewUrl);
+    if (previewMessage) this.previewMessages.set(jobId, previewMessage);
     const node = this.ensure(`${MERGE_KEY}-${jobId}`, "msg msg-queue");
     mountMergeConfirmCard(node, jobId, status, {
       onMerge: (id) => {
@@ -107,6 +122,8 @@ export class JobProgressView {
         this.options.onDiscardMerge?.(id);
       },
       createMergeRequestOnMerge: this.options.createMergeRequestOnMerge,
+      previewUrl: this.previewUrls.get(jobId),
+      previewMessage: this.previewMessages.get(jobId),
     });
     this.scrollToBottom();
   }
@@ -120,6 +137,8 @@ export class JobProgressView {
   handleEvent(event: JobEvent): void {
     if (this.seenEventIds.has(event.id)) return;
     this.seenEventIds.add(event.id);
+    if (event.previewUrl) this.previewUrls.set(event.jobId, event.previewUrl);
+    if (event.previewMessage) this.previewMessages.set(event.jobId, event.previewMessage);
 
     switch (event.type) {
       case "stage":
@@ -127,7 +146,7 @@ export class JobProgressView {
           const node = document.createElement("div");
           node.className = "msg msg-stage";
           node.dataset.key = event.id;
-          node.textContent = event.text;
+          node.innerHTML = linkifyText(event.text);
           this.container.appendChild(node);
         }
         if (event.phase === "plan_done") {
@@ -137,7 +156,7 @@ export class JobProgressView {
           if (event.jobId) this.renderConfirmCard(event.jobId, "awaiting_input");
         } else if (event.phase === "execute_ready") {
           this.options.onStatus?.("等待确认合并");
-          if (event.jobId) this.renderMergeCard(event.jobId, "awaiting_merge");
+          if (event.jobId) this.renderMergeCard(event.jobId, "awaiting_merge", event.previewUrl, event.previewMessage);
         } else if (event.phase === "plan") {
           this.options.onStatus?.("Plan 分析中");
         } else if (event.phase === "merge") {
@@ -213,6 +232,8 @@ export class JobProgressView {
     jobId?: string;
     planSummary?: string;
     status: JobStatusType | "waiting_confirm" | "waiting_merge" | "waiting_input";
+    previewUrl?: string;
+    previewMessage?: string;
   }): void {
     if (!input.jobId) return;
     if (input.planSummary) {
@@ -225,7 +246,7 @@ export class JobProgressView {
       this.renderConfirmCard(input.jobId, "awaiting_input");
       this.options.onStatus?.("需要补充信息");
     } else if (input.status === "waiting_merge") {
-      this.renderMergeCard(input.jobId, "awaiting_merge");
+      this.renderMergeCard(input.jobId, "awaiting_merge", input.previewUrl, input.previewMessage);
       this.options.onStatus?.("等待确认合并");
     }
   }

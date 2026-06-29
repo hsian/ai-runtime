@@ -6,6 +6,7 @@ import { looksLikeClarification } from "./agent/types.js";
 import { buildCommitMessage, formatGitError } from "./commitMessage.js";
 import { appendJobEvent } from "./jobEvents.js";
 import { stageAttachmentsForAgent } from "./uploadService.js";
+import { startJobPreview } from "./devPreviewService.js";
 import type { AgentStreamEvent } from "./agent/types.js";
 
 function isNoChangesError(err: unknown): boolean {
@@ -170,16 +171,57 @@ export async function processJob(jobId: string): Promise<void> {
     if (job.requiresConfirm) {
       const defaultBranch = config.GIT_DEFAULT_BRANCH;
       const pendingMessage = result.summary || "代码修改已完成";
+      let previewUrl: string | undefined;
+      let previewFilter: string | undefined;
+      let previewNotice = "预览未启动";
+
+      try {
+        const changedFiles = await gitService.listChangedFilesAgainstDefault(branchName);
+        emitStage(jobId, "preview", "正在启动本地预览，启动成功后可先确认效果再决定是否合并...");
+        const preview = await startJobPreview({
+          jobId,
+          repoPath,
+          changedFiles,
+        });
+        previewUrl = preview?.url;
+        previewFilter = preview?.filter;
+        previewNotice = preview
+          ? `预览地址：${preview.url}`
+          : "未能从本次改动推断可启动的 app，跳过本地预览";
+        appendJobEvent(jobId, {
+          type: "stage",
+          phase: "preview",
+          text: preview
+            ? `本地预览已启动（${preview.filter}）`
+            : "未能从本次改动推断可启动的 app，跳过本地预览",
+          previewUrl,
+          previewMessage: previewNotice,
+        });
+      } catch (err) {
+        previewNotice = `本地预览启动失败：${err instanceof Error ? err.message : String(err)}`;
+        appendJobEvent(jobId, {
+          type: "stage",
+          phase: "preview",
+          text: `${previewNotice}，不影响继续确认合并`,
+          previewMessage: previewNotice,
+        });
+      }
+
       updateJob(jobId, {
         status: "awaiting_merge",
         branch: branchName,
         commitSha,
         message: pendingMessage,
+        previewUrl,
+        previewFilter,
+        previewMessage: previewNotice,
       });
       appendJobEvent(jobId, {
         type: "stage",
         phase: "execute_ready",
         text: `代码修改已提交到 ${branchName}，请确认是否合并到 ${defaultBranch}`,
+        previewUrl,
+        previewMessage: previewNotice,
       });
       return;
     }
@@ -225,7 +267,10 @@ export async function processJob(jobId: string): Promise<void> {
     });
   } finally {
     try {
-      await gitService.restoreBaseBranch();
+      const latest = getJob(jobId);
+      if (latest?.status !== "awaiting_merge" || !latest.previewUrl) {
+        await gitService.restoreBaseBranch();
+      }
     } catch (err) {
       console.warn(
         "[AI Runtime] 任务结束后未能切回基线分支:",

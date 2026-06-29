@@ -160,6 +160,8 @@ export interface MergeConfirmCardHandlers {
   onMerge: (jobId: string) => void | Promise<void>;
   onDiscard: (jobId: string) => void | Promise<void>;
   createMergeRequestOnMerge?: boolean;
+  previewUrl?: string;
+  previewMessage?: string;
 }
 
 export function mountMergeConfirmCard(
@@ -180,12 +182,18 @@ export function mountMergeConfirmCard(
   const hint = useMergeRequest
     ? "提交后会推送 feature 分支并创建 Merge Request，test 代码不做直接改动"
     : "放弃后将切回 test 分支，test 代码不做任何改动";
+  const previewHtml = handlers.previewUrl
+    ? `<div class="hint" style="margin-top:8px;">预览地址：<a href="${escapeHtml(handlers.previewUrl)}" target="_blank" rel="noreferrer">${escapeHtml(handlers.previewUrl)}</a></div>`
+    : handlers.previewMessage
+      ? `<div class="hint" style="margin-top:8px;">预览状态：${escapeHtml(handlers.previewMessage)}</div>`
+    : "";
 
   if (!interactive) {
     node.innerHTML = `
       <div class="msg-meta">合并确认</div>
       <div class="queue-card">
         <div class="queue-title">${title}</div>
+        ${previewHtml}
         <div class="confirm-status">${escapeHtml(mergeCardStatusLabel(status, useMergeRequest))}</div>
       </div>
     `;
@@ -200,6 +208,7 @@ export function mountMergeConfirmCard(
         <button class="primary" data-action="merge">${actionLabel}</button>
         <button class="secondary" data-action="discard">放弃</button>
       </div>
+      ${previewHtml}
       <div class="hint" style="margin-top:8px;">${hint}</div>
     </div>
   `;

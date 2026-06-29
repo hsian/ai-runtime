@@ -230,7 +230,13 @@ function scrollProgressToBottom(): void {
   log.scrollTop = log.scrollHeight;
 }
 
-function ensureGateCards(jobId: string, status?: TapdBatchSession["status"], planSummary?: string): void {
+function ensureGateCards(
+  jobId: string,
+  status?: TapdBatchSession["status"],
+  planSummary?: string,
+  previewUrl?: string,
+  previewMessage?: string
+): void {
   if (!status) return;
   const view = ensureProgressView();
   el<HTMLElement>("progressSection").hidden = false;
@@ -243,7 +249,7 @@ function ensureGateCards(jobId: string, status?: TapdBatchSession["status"], pla
     if (planSummary) view.renderPlan(jobId, planSummary, false);
     view.renderConfirmCard(jobId, "awaiting_input");
   } else if (status === "waiting_merge") {
-    view.renderMergeCard(jobId, "awaiting_merge");
+    view.renderMergeCard(jobId, "awaiting_merge", previewUrl, previewMessage);
   }
   scrollProgressToBottom();
 }
@@ -283,13 +289,15 @@ async function replayJobProgress(jobId: string, planSummary?: string, status?: T
       jobId,
       planSummary,
       status: progressStatus ?? "running",
+      previewUrl: session?.previewUrl,
+      previewMessage: session?.previewMessage,
     });
   } else if (
     status === "waiting_confirm" ||
     status === "waiting_input" ||
     status === "waiting_merge"
   ) {
-    ensureGateCards(jobId, status, planSummary);
+    ensureGateCards(jobId, status, planSummary, session?.previewUrl, session?.previewMessage);
   }
   scrollProgressToBottom();
 }
@@ -1029,7 +1037,7 @@ function bindEvents(options?: TapdBatchPanelOptions): void {
         ensureProgressView().renderConfirmCard(event.jobId, "awaiting_input");
       }
       if (event.phase === "execute_ready" && event.jobId) {
-        ensureProgressView().renderMergeCard(event.jobId, "awaiting_merge");
+        ensureProgressView().renderMergeCard(event.jobId, "awaiting_merge", event.previewUrl, event.previewMessage);
         scrollProgressToBottom();
         updateFooter();
       }

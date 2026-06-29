@@ -48,6 +48,9 @@ export interface Job {
   branch?: string;
   commitSha?: string;
   mergeRequestUrl?: string;
+  previewUrl?: string;
+  previewFilter?: string;
+  previewMessage?: string;
   error?: string;
   createdAt: string;
   updatedAt: string;

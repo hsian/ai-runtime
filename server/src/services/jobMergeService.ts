@@ -2,6 +2,7 @@ import { config } from "../config.js";
 import { getJob, updateJob } from "./jobStore.js";
 import { gitService } from "./gitService.js";
 import { appendJobEvent } from "./jobEvents.js";
+import { stopJobPreview } from "./devPreviewService.js";
 
 export async function confirmJobMerge(jobId: string): Promise<void> {
   const job = getJob(jobId);
@@ -22,6 +23,7 @@ export async function confirmJobMerge(jobId: string): Promise<void> {
   });
 
   try {
+    await stopJobPreview(jobId);
     const mergeMessage = `merge(plugin): ${job.prompt}\n\nJob: ${jobId}`;
     const mergeSha = await gitService.mergeIntoDefaultBranch(job.branch, mergeMessage);
     const doneMessage = `${job.message ?? "修改已完成"}\n\n已合并到 ${defaultBranch}`;
@@ -75,6 +77,7 @@ export async function createJobMergeRequest(jobId: string): Promise<void> {
   });
 
   try {
+    await stopJobPreview(jobId);
     await gitService.pushFeatureBranch(job.branch);
     const title = `fix(plugin): ${job.prompt.slice(0, 80)}`;
     const description = `${job.message ?? "代码修改已完成"}\n\nJob: ${jobId}`;
@@ -123,6 +126,7 @@ export async function discardJobMerge(jobId: string): Promise<void> {
   }
 
   try {
+    await stopJobPreview(jobId);
     if (job.branch) {
       await gitService.discardFeatureBranch(job.branch);
     } else {

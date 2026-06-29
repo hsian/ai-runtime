@@ -419,6 +419,8 @@ async function runSingleTask(
       ...next,
       status: "waiting_merge",
       activeJobId: jobId,
+      previewUrl: job.previewUrl,
+      previewMessage: job.previewMessage,
       pauseReason: undefined,
     });
     await emitSession(next);
@@ -452,6 +454,8 @@ async function runSingleTask(
       }),
       activeJobId: undefined,
       planSummary: undefined,
+      previewUrl: undefined,
+      previewMessage: undefined,
     });
   }
 
