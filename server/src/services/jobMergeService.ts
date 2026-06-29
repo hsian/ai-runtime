@@ -7,7 +7,7 @@ import { stopJobPreview } from "./devPreviewService.js";
 export async function confirmJobMerge(jobId: string): Promise<void> {
   const job = getJob(jobId);
   if (!job) throw new Error("任务不存在");
-  if (job.status !== "awaiting_merge") {
+  if (job.status !== "awaiting_merge" && job.status !== "pending") {
     throw new Error(`当前状态不可合并: ${job.status}`);
   }
   if (!job.branch) {
@@ -61,7 +61,7 @@ export async function confirmJobMerge(jobId: string): Promise<void> {
 export async function createJobMergeRequest(jobId: string): Promise<void> {
   const job = getJob(jobId);
   if (!job) throw new Error("任务不存在");
-  if (job.status !== "awaiting_merge") {
+  if (job.status !== "awaiting_merge" && job.status !== "pending") {
     throw new Error(`当前状态不可提交 Merge Request: ${job.status}`);
   }
   if (!job.branch) {
@@ -121,7 +121,7 @@ export async function createJobMergeRequest(jobId: string): Promise<void> {
 export async function discardJobMerge(jobId: string): Promise<void> {
   const job = getJob(jobId);
   if (!job) throw new Error("任务不存在");
-  if (job.status !== "awaiting_merge") {
+  if (job.status !== "awaiting_merge" && job.status !== "pending") {
     throw new Error(`当前状态不可放弃合并: ${job.status}`);
   }
 

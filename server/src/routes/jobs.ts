@@ -130,6 +130,18 @@ async function runPlan(jobId: string): Promise<void> {
   }
 }
 
+async function runQueuedPlan(jobId: string): Promise<void> {
+  try {
+    await runPlan(jobId);
+  } catch (err) {
+    const latest = getJob(jobId);
+    if (latest?.status === "cancelled" || err instanceof AgentAbortedError) return;
+
+    updateJob(jobId, { status: "failed", error: String(err), message: "Plan 执行失败" });
+    appendJobEvent(jobId, { type: "error", message: String(err), text: "Plan 执行失败" });
+  }
+}
+
 function handleJobImagesUpload(
   req: import("express").Request,
   res: import("express").Response,
@@ -228,18 +240,15 @@ jobsRouter.post("/plan", handleJobImagesUpload, (req, res) => {
   updateJob(job.jobId, { requiresConfirm: true, status: "planning" });
   emitUserSubmitEvents(job.jobId, data);
 
-  runPlan(job.jobId).catch((err) => {
-    const latest = getJob(job.jobId);
-    if (latest?.status === "cancelled" || err instanceof AgentAbortedError) return;
-
-    updateJob(job.jobId, { status: "failed", error: String(err), message: "Plan 执行失败" });
-    appendJobEvent(job.jobId, { type: "error", message: String(err), text: "Plan 执行失败" });
-  });
+  const jobsAhead = jobQueue.enqueue(job.jobId, runQueuedPlan);
 
   res.status(202).json({
     jobId: job.jobId,
     status: "planning",
-    message: "已进入 Plan 分析（不改代码），完成后可确认执行",
+    message: jobsAhead > 0
+      ? `Plan 已加入队列，前面还有 ${jobsAhead} 个任务`
+      : "已进入 Plan 分析（不改代码），完成后可确认执行",
+    jobsAhead,
   });
 });
 
@@ -283,21 +292,18 @@ ${reply}`;
   appendJobEvent(jobId, {
     type: "stage",
     phase: "plan",
-    text: "根据补充说明继续分析方案...",
+    text: "根据补充说明加入 Plan 队列...",
   });
 
-  runPlan(jobId).catch((err) => {
-    const latest = getJob(jobId);
-    if (latest?.status === "cancelled" || err instanceof AgentAbortedError) return;
-
-    updateJob(jobId, { status: "failed", error: String(err), message: "Plan 执行失败" });
-    appendJobEvent(jobId, { type: "error", message: String(err), text: "Plan 执行失败" });
-  });
+  const jobsAhead = jobQueue.enqueue(jobId, runQueuedPlan);
 
   res.status(202).json({
     jobId,
     status: "planning",
-    message: "已收到补充说明，正在继续 Plan 分析",
+    message: jobsAhead > 0
+      ? `已收到补充说明，Plan 已加入队列，前面还有 ${jobsAhead} 个任务`
+      : "已收到补充说明，正在继续 Plan 分析",
+    jobsAhead,
   });
 });
 
@@ -353,19 +359,22 @@ jobsRouter.post("/:jobId/cancel", async (req, res) => {
   }
 
   updateJob(jobId, { status: "cancelled", message: "任务已取消" });
+  const removedFromQueue = jobQueue.dequeue(jobId);
+
+  if (removedFromQueue) {
+    appendJobEvent(jobId, { type: "cancelled", message: "任务已取消", text: "任务已取消" });
+    res.json({ ok: true });
+    return;
+  }
 
   if (job.status === "planning" || job.status === "running") {
     killAgentForJob(jobId);
   }
 
-  if (job.status === "pending") {
-    jobQueue.dequeue(jobId);
-  }
-
   try {
     if (job.branch) {
       await gitService.discardFeatureBranch(job.branch);
-    } else {
+    } else if (job.status === "planning" || job.status === "running") {
       const currentBranch = await gitService.getCurrentBranch();
       if (currentBranch.startsWith("plugin-fix/")) {
         await gitService.discardFeatureBranch(currentBranch);
@@ -415,17 +424,28 @@ jobsRouter.post("/:jobId/merge", (req, res) => {
   const body = req.body as { createMergeRequest?: unknown } | undefined;
   const createMergeRequest = body?.createMergeRequest === true;
 
-  res.status(202).json({
-    jobId,
-    status: "running",
-    message: createMergeRequest ? "已确认提交 Merge Request，正在处理..." : "已确认合并，正在处理...",
+  updateJob(jobId, {
+    status: "pending",
+    message: createMergeRequest ? "已确认提交 Merge Request，等待排队..." : "已确认合并，等待排队...",
   });
 
-  const action = createMergeRequest ? createJobMergeRequest(jobId) : confirmJobMerge(jobId);
-  action.catch((err) => {
-    const latest = getJob(jobId);
-    if (latest?.status === "failed") return;
-    console.error(`[AI Runtime] ${createMergeRequest ? "提交 Merge Request" : "合并"}任务 ${jobId} 失败:`, err);
+  const jobsAhead = jobQueue.enqueue(jobId, async (queuedJobId) => {
+    if (createMergeRequest) {
+      await createJobMergeRequest(queuedJobId);
+    } else {
+      await confirmJobMerge(queuedJobId);
+    }
+  });
+
+  res.status(202).json({
+    jobId,
+    status: "pending",
+    message: jobsAhead > 0
+      ? `已加入队列，前面还有 ${jobsAhead} 个任务`
+      : createMergeRequest
+        ? "已确认提交 Merge Request，即将处理..."
+        : "已确认合并，即将处理...",
+    jobsAhead,
   });
 });
 
@@ -442,12 +462,23 @@ jobsRouter.post("/:jobId/discard-merge", async (req, res) => {
     return;
   }
 
-  try {
-    await discardJobMerge(jobId);
-    res.json({ ok: true, status: "cancelled" });
-  } catch (err) {
-    res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
-  }
+  updateJob(jobId, { status: "pending", message: "已确认放弃合并，等待排队..." });
+  const jobsAhead = jobQueue.enqueue(jobId, async (queuedJobId) => {
+    try {
+      await discardJobMerge(queuedJobId);
+    } catch (err) {
+      const error = err instanceof Error ? err.message : String(err);
+      updateJob(queuedJobId, { status: "failed", error, message: "放弃合并失败" });
+      appendJobEvent(queuedJobId, { type: "error", message: error, text: `放弃合并失败: ${error}` });
+      throw err;
+    }
+  });
+  res.status(202).json({
+    ok: true,
+    status: "pending",
+    message: jobsAhead > 0 ? `已加入队列，前面还有 ${jobsAhead} 个任务` : "已确认放弃合并，即将处理...",
+    jobsAhead,
+  });
 });
 
 jobsRouter.get("/:jobId/events", (req, res) => {
@@ -481,7 +512,7 @@ jobsRouter.get("/:jobId/stream", (req, res) => {
     writeEvent(event);
   }
 
-  if (job.status === "pending") {
+  if (jobQueue.getJobsAhead(jobId) != null) {
     jobQueue.broadcastQueue(jobId);
   }
 
