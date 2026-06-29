@@ -14,32 +14,41 @@
         <p class="subtitle">不常修改的配置项</p>
       </header>
 
-      <section class="form">
-        <label for="serverUrl">服务端地址</label>
-        <input
-          type="url"
-          id="serverUrl"
-          placeholder="http://192.168.x.x:6080"
-        />
-        <p class="settings-note">
-          内网 AI Runtime 服务地址。Chrome 不建议使用 6000 端口，推荐 6080、8080。
-        </p>
+      <section class="settings-card">
+        <div class="settings-group">
+          <h2>服务连接</h2>
+          <label for="serverUrl">服务端地址</label>
+          <input
+            type="url"
+            id="serverUrl"
+            placeholder="http://192.168.x.x:6080"
+          />
+          <p class="settings-note">
+            内网 AI Runtime 服务地址。Chrome 不建议使用 6000 端口，推荐 6080、8080。
+          </p>
+        </div>
 
-        <label class="checkbox" for="createMergeRequestOnMerge">
-          <input type="checkbox" id="createMergeRequestOnMerge" />
-          <span>确认合并时提交 Merge Request（不直接合并 test）</span>
-        </label>
-        <p class="settings-note">
-          默认关闭，保持现有的直接合并到 test 并推送；开启后会推送 feature 分支并创建 Merge Request。
-        </p>
+        <div class="settings-group">
+          <h2>合并策略</h2>
+          <label class="checkbox" for="createMergeRequestOnMerge">
+            <input type="checkbox" id="createMergeRequestOnMerge" />
+            <span>确认合并时提交 Merge Request（不直接合并 test）</span>
+          </label>
+          <p class="settings-note">
+            默认关闭，保持现有的直接合并到 test 并推送；开启后会推送 feature 分支并创建 Merge Request。
+          </p>
+        </div>
 
-        <label class="checkbox" for="tapdBatchSilentMode">
-          <input type="checkbox" id="tapdBatchSilentMode" />
-          <span>TAPD 批量任务静默模式</span>
-        </label>
-        <p class="settings-note">
-          默认关闭。开启后仅 TAPD 批量任务会在 Plan 生成后自动执行修改，并自动合并到 test 或提交 Merge Request，然后继续下一个任务。
-        </p>
+        <div class="settings-group">
+          <h2>TAPD 批量执行</h2>
+          <label class="checkbox" for="tapdBatchSilentMode">
+            <input type="checkbox" id="tapdBatchSilentMode" />
+            <span>TAPD 批量任务静默模式</span>
+          </label>
+          <p class="settings-note">
+            默认关闭。开启后仅 TAPD 批量任务会在 Plan 生成后自动执行修改，并自动合并到 test 或提交 Merge Request，然后继续下一个任务。
+          </p>
+        </div>
       </section>
 
       <section class="actions">
