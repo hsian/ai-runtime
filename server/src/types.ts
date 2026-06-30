@@ -51,6 +51,7 @@ export interface Job {
   previewUrl?: string;
   previewFilter?: string;
   previewMessage?: string;
+  previewHost?: string;
   error?: string;
   createdAt: string;
   updatedAt: string;

@@ -174,6 +174,11 @@ function createJobFromSubmit(
     : undefined;
 
   const job = createJob(parsed.data);
+  const previewHost = req.get("x-forwarded-host") ?? req.get("host");
+  if (previewHost) {
+    updateJob(job.jobId, { previewHost });
+    job.previewHost = previewHost;
+  }
   const attachments = finalizeJobAttachments(job.jobId, files);
   if (attachments.length > 0) {
     updateJob(job.jobId, { attachments });

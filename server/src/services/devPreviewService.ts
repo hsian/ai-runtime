@@ -1,15 +1,7 @@
-import { spawn, type ChildProcess } from "child_process";
 import { readFile } from "fs/promises";
 import { networkInterfaces } from "os";
 import { dirname, join, resolve } from "path";
 import { config } from "../config.js";
-
-interface PreviewProcess {
-  jobId: string;
-  child: ChildProcess;
-  filter: string;
-  url?: string;
-}
 
 interface DevPreviewResult {
   filter: string;
@@ -21,12 +13,6 @@ interface PreviewTarget {
   packageDir?: string;
 }
 
-let currentPreview: PreviewProcess | undefined;
-
-function pnpmCommand(): string {
-  return "pnpm";
-}
-
 function getLanHost(): string | undefined {
   const addresses = Object.values(networkInterfaces())
     .flatMap((items) => items ?? [])
@@ -36,27 +22,21 @@ function getLanHost(): string | undefined {
   return addresses.find((address) => address.startsWith("192.168.")) ?? addresses[0];
 }
 
-function normalizePreviewUrl(raw: string): string {
-  const cleaned = raw.replace(/0\.0\.0\.0|\[::\]/, "localhost").replace(/[),.;]+$/, "");
-  const lanHost = getLanHost();
-  if (!lanHost) return cleaned;
+function normalizePreviewHost(host?: string): string {
+  const fallback = getLanHost() ?? "localhost";
+  if (!host) return fallback;
+
+  const trimmed = host.trim();
+  if (!trimmed) return fallback;
 
   try {
-    const url = new URL(cleaned);
-    if (url.hostname === "localhost" || url.hostname === "127.0.0.1") {
-      url.hostname = lanHost;
-      return url.toString();
-    }
+    const parsed = new URL(trimmed.includes("://") ? trimmed : `http://${trimmed}`);
+    if (parsed.hostname === "localhost" || parsed.hostname === "127.0.0.1") return fallback;
+    return parsed.hostname;
   } catch {
-    // Keep the original string if it is not a valid URL.
+    const withoutPort = trimmed.replace(/:\d+$/, "");
+    return withoutPort === "localhost" || withoutPort === "127.0.0.1" ? fallback : withoutPort;
   }
-
-  return cleaned;
-}
-
-function findPreviewUrl(output: string): string | undefined {
-  const match = output.match(/https?:\/\/(?:localhost|127\.0\.0\.1|0\.0\.0\.0|\[::\])(?::\d+)(?:\/[^\s]*)?/i);
-  return match ? normalizePreviewUrl(match[0]) : undefined;
 }
 
 function inferWorkspacePathFilter(changedFile: string): string | undefined {
@@ -89,19 +69,6 @@ async function readDevPort(packageDir?: string): Promise<number | undefined> {
     return match ? Number(match[1]) : undefined;
   } catch {
     return undefined;
-  }
-}
-
-async function probeUrl(url: string): Promise<boolean> {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 1_000);
-  try {
-    await fetch(url, { signal: controller.signal });
-    return true;
-  } catch {
-    return false;
-  } finally {
-    clearTimeout(timeout);
   }
 }
 
@@ -150,110 +117,19 @@ async function inferTargetFromChangedFiles(repoPath: string, changedFiles: strin
   return byPath ? { filter: byPath[0], packageDir: byPath[1].packageDir } : undefined;
 }
 
-async function stopProcess(child: ChildProcess): Promise<void> {
-  if (child.killed || child.exitCode != null) return;
-
-  if (process.platform === "win32" && child.pid) {
-    await new Promise<void>((resolveStop) => {
-      const killer = spawn("taskkill", ["/PID", String(child.pid), "/T", "/F"], {
-        stdio: "ignore",
-      });
-      killer.on("exit", () => resolveStop());
-      killer.on("error", () => resolveStop());
-    });
-    return;
-  }
-
-  child.kill("SIGTERM");
-}
-
-export async function stopJobPreview(jobId?: string): Promise<void> {
-  if (!currentPreview) return;
-  if (jobId && currentPreview.jobId !== jobId) return;
-
-  const preview = currentPreview;
-  currentPreview = undefined;
-  await stopProcess(preview.child);
-}
-
-export async function startJobPreview(input: {
-  jobId: string;
+export async function resolveJobPreviewLink(input: {
   repoPath: string;
   changedFiles: string[];
+  previewHost?: string;
 }): Promise<DevPreviewResult | undefined> {
   if (!config.PREVIEW_DEV_ENABLED) return undefined;
 
   const target = await inferTargetFromChangedFiles(input.repoPath, input.changedFiles);
   if (!target) return undefined;
   const { filter } = target;
-  const expectedPort = await readDevPort(target.packageDir);
-  const expectedLocalUrl = expectedPort ? `http://localhost:${expectedPort}/` : undefined;
-  const expectedDisplayUrl = expectedLocalUrl ? normalizePreviewUrl(expectedLocalUrl) : undefined;
+  const port = await readDevPort(target.packageDir);
+  if (!port) return undefined;
 
-  await stopJobPreview();
-
-  const child = spawn(pnpmCommand(), ["--filter", filter, "run", "dev"], {
-    cwd: input.repoPath,
-    env: process.env,
-    shell: process.platform === "win32",
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-
-  currentPreview = { jobId: input.jobId, child, filter };
-
-  return await new Promise<DevPreviewResult>((resolvePreview, rejectPreview) => {
-    let output = "";
-    let settled = false;
-    let probe: ReturnType<typeof setInterval> | undefined;
-    const timeout = setTimeout(() => {
-      finishWithError(new Error(`预览服务启动超时，未检测到本地访问地址（filter: ${filter}）`));
-    }, config.PREVIEW_DEV_TIMEOUT_MS);
-
-    const finish = (url: string): void => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timeout);
-      if (probe) clearInterval(probe);
-      if (currentPreview?.child === child) {
-        currentPreview.url = url;
-      }
-      resolvePreview({ filter, url });
-    };
-
-    const finishWithError = (err: Error): void => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timeout);
-      if (probe) clearInterval(probe);
-      void stopJobPreview(input.jobId);
-      rejectPreview(err);
-    };
-
-    const onData = (chunk: Buffer): void => {
-      output += chunk.toString();
-      const url = findPreviewUrl(output);
-      if (url) finish(url);
-    };
-
-    child.stdout?.on("data", onData);
-    child.stderr?.on("data", onData);
-    if (expectedLocalUrl && expectedDisplayUrl) {
-      probe = setInterval(() => {
-        void probeUrl(expectedLocalUrl).then((ready) => {
-          if (ready) {
-            finish(expectedDisplayUrl);
-          }
-        });
-      }, 500);
-      child.on("exit", () => {
-        if (probe) clearInterval(probe);
-      });
-    }
-    child.on("error", (err) => finishWithError(err));
-    child.on("exit", (code) => {
-      if (!settled) {
-        finishWithError(new Error(`预览服务启动失败，进程退出码: ${code ?? "unknown"}`));
-      }
-    });
-  });
+  const host = normalizePreviewHost(input.previewHost);
+  return { filter, url: `http://${host}:${port}/` };
 }
