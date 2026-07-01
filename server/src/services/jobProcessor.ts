@@ -64,8 +64,12 @@ function finishJob(
     status: "completed" | "failed";
     message: string;
     error?: string;
+    sourceBranch?: string;
+    sourceCommitSha?: string;
     branch?: string;
     commitSha?: string;
+    mergedToDefaultBranch?: string;
+    mergedToDefaultAt?: string;
   }
 ): void {
   updateJob(jobId, patch);
@@ -144,6 +148,7 @@ export async function processJob(jobId: string): Promise<void> {
           status: "failed",
           error: "Claude Code 未执行修改，而是在等待澄清",
           message: result.summary,
+          sourceBranch: branchName,
           branch: branchName,
         });
         return;
@@ -152,6 +157,7 @@ export async function processJob(jobId: string): Promise<void> {
       finishJob(jobId, {
         status: "completed",
         message: result.summary || "未产生代码变更",
+        sourceBranch: branchName,
         branch: branchName,
       });
       return;
@@ -193,6 +199,8 @@ export async function processJob(jobId: string): Promise<void> {
 
       updateJob(jobId, {
         status: "awaiting_merge",
+        sourceBranch: branchName,
+        sourceCommitSha: commitSha,
         branch: branchName,
         commitSha,
         message: pendingMessage,
@@ -228,8 +236,12 @@ export async function processJob(jobId: string): Promise<void> {
     finishJob(jobId, {
       status: "completed",
       message: doneMessage,
+      sourceBranch: branchName,
+      sourceCommitSha: commitSha,
       branch: finalBranch,
       commitSha: mergeSha,
+      mergedToDefaultBranch: config.AUTO_MERGE_TO_DEFAULT_BRANCH ? defaultBranch : undefined,
+      mergedToDefaultAt: config.AUTO_MERGE_TO_DEFAULT_BRANCH ? new Date().toISOString() : undefined,
     });
   } catch (err) {
     if (isNoChangesError(err)) {
@@ -237,6 +249,7 @@ export async function processJob(jobId: string): Promise<void> {
         status: "failed",
         error: "未产生代码变更",
         message: "Claude Code 执行完成但没有修改任何文件",
+        sourceBranch: branchName,
         branch: branchName,
       });
       return;
@@ -247,6 +260,7 @@ export async function processJob(jobId: string): Promise<void> {
       status: "failed",
       error,
       message: "任务执行失败",
+      sourceBranch: branchName,
       branch: branchName,
     });
   } finally {

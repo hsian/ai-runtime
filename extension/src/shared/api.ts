@@ -145,6 +145,46 @@ export async function mergeJob(
   return data;
 }
 
+export async function listJobs(serverUrl: string): Promise<JobStatus[]> {
+  const res = await fetch(`${normalizeServerUrl(serverUrl)}/api/jobs`);
+  const data = (await res.json()) as { jobs?: JobStatus[]; error?: string };
+  if (!res.ok) {
+    throw new Error(data.error ?? `查询失败: ${res.status}`);
+  }
+  return Array.isArray(data.jobs) ? data.jobs : [];
+}
+
+export async function fetchReleaseBranches(serverUrl: string, jobId: string): Promise<string[]> {
+  const res = await fetch(
+    `${normalizeServerUrl(serverUrl)}/api/jobs/${encodeURIComponent(jobId)}/release-branches`
+  );
+  const data = (await res.json()) as { branches?: string[]; error?: string };
+  if (!res.ok) {
+    throw new Error(data.error ?? `查询分支失败: ${res.status}`);
+  }
+  return Array.isArray(data.branches) ? data.branches : [];
+}
+
+export async function mergeJobToReleaseBranch(
+  serverUrl: string,
+  jobId: string,
+  targetBranch: string
+): Promise<JobStatus> {
+  const res = await fetch(
+    `${normalizeServerUrl(serverUrl)}/api/jobs/${encodeURIComponent(jobId)}/release-merge`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ targetBranch }),
+    }
+  );
+  const data = (await res.json()) as { ok?: boolean; job?: JobStatus; error?: string };
+  if (!res.ok || !data.job) {
+    throw new Error(data.error ?? `合并失败: ${res.status}`);
+  }
+  return data.job;
+}
+
 export async function cancelJob(serverUrl: string, jobId: string): Promise<{ ok: boolean }> {
   const res = await fetch(`${normalizeServerUrl(serverUrl)}/api/jobs/${encodeURIComponent(jobId)}/cancel`, {
     method: "POST",

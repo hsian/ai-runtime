@@ -45,9 +45,16 @@ export interface Job {
   requiresConfirm?: boolean;
   /** plan 总结（用于展示和回溯） */
   planSummary?: string;
+  /** 本次改动所在的 feature 分支，完成后仍用于发版分支合并 */
+  sourceBranch?: string;
+  /** 本次任务实际产生的提交，用于发版分支 cherry-pick，避免带入 test 上其他提交 */
+  sourceCommitSha?: string;
   branch?: string;
   commitSha?: string;
   mergeRequestUrl?: string;
+  mergedToDefaultBranch?: string;
+  mergedToDefaultAt?: string;
+  releaseMerges?: ReleaseMergeRecord[];
   previewUrl?: string;
   previewFilter?: string;
   previewMessage?: string;
@@ -55,4 +62,13 @@ export interface Job {
   error?: string;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface ReleaseMergeRecord {
+  targetBranch: string;
+  commitSha?: string;
+  status: "completed" | "failed";
+  message?: string;
+  error?: string;
+  mergedAt: string;
 }

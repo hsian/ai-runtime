@@ -9,6 +9,7 @@ function normalizeTask(raw: unknown): CodingTask | null {
   if (typeof task.id !== "string") return null;
   return {
     id: task.id,
+    jobId: typeof task.jobId === "string" ? task.jobId : undefined,
     title: typeof task.title === "string" ? task.title : "",
     pageUrl:
       typeof task.pageUrl === "string"
@@ -74,7 +75,7 @@ export async function saveCodingPromptAsTask(input: {
   prompt: string;
   pageUrl?: string;
   pageTitle?: string;
-}): Promise<void> {
+}): Promise<CodingTask> {
   const task = createCodingTask({
     title: buildCodingTaskTitle(input.prompt, input.pageTitle),
     pageUrl: input.pageUrl ?? "",
@@ -82,6 +83,19 @@ export async function saveCodingPromptAsTask(input: {
     draftPrompt: input.prompt,
   });
   await saveCodingTask(task, { forceNew: true });
+  return task;
+}
+
+export async function attachJobToCodingTask(taskId: string, jobId: string): Promise<void> {
+  const tasks = await readTasks();
+  const index = tasks.findIndex((task) => task.id === taskId);
+  if (index < 0) return;
+  tasks[index] = {
+    ...tasks[index],
+    jobId,
+    updatedAt: new Date().toISOString(),
+  };
+  await chrome.storage.local.set({ [TASKS_KEY]: tasks });
 }
 
 export function createCodingTask(input: {

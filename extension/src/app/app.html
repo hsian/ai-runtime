@@ -207,6 +207,25 @@
         </div>
       </div>
     </div>
+
+    <div id="releaseMergeModal" class="page-confirm-modal" hidden>
+      <div class="page-confirm-backdrop" id="releaseMergeBackdrop"></div>
+      <div class="page-confirm-dialog" role="dialog" aria-labelledby="releaseMergeHeading">
+        <h2 id="releaseMergeHeading" class="page-confirm-heading">合并到其他分支</h2>
+        <p class="page-confirm-lead">选择要接收本次改动的远程分支：</p>
+        <div class="page-confirm-page">
+          <div id="releaseMergeTitle" class="page-confirm-title"></div>
+          <div id="releaseMergeSource" class="page-confirm-url"></div>
+        </div>
+        <label class="release-merge-label" for="releaseMergeBranch">目标分支</label>
+        <select id="releaseMergeBranch" class="release-merge-select"></select>
+        <p id="releaseMergeHint" class="page-confirm-hint"></p>
+        <div class="page-confirm-actions">
+          <button id="releaseMergeCancel" class="secondary" type="button">取消</button>
+          <button id="releaseMergeOk" class="primary" type="button">确认合并</button>
+        </div>
+      </div>
+    </div>
     <script type="module" src="./app.ts"></script>
   </body>
 </html>

@@ -7,7 +7,7 @@ import { runAgent, killAgentForJob, AgentAbortedError } from "../services/agent/
 import { config } from "../config.js";
 import { finalizeJobAttachments, jobImagesUpload, multerErrorMessage, stageAttachmentsForAgent } from "../services/uploadService.js";
 import { isMultipartSubmit, parseJobSubmitBody } from "../middleware/parseJobSubmit.js";
-import { confirmJobMerge, createJobMergeRequest, discardJobMerge } from "../services/jobMergeService.js";
+import { confirmJobMerge, createJobMergeRequest, discardJobMerge, mergeCompletedJobToBranch } from "../services/jobMergeService.js";
 import type { JobRequest } from "../types.js";
 import { resolvePlanSummary } from "../services/agent/planSummaryResolver.js";
 
@@ -484,6 +484,59 @@ jobsRouter.post("/:jobId/discard-merge", async (req, res) => {
     message: jobsAhead > 0 ? `已加入队列，前面还有 ${jobsAhead} 个任务` : "已确认放弃合并，即将处理...",
     jobsAhead,
   });
+});
+
+jobsRouter.get("/:jobId/release-branches", async (req, res) => {
+  const job = getJob(req.params.jobId);
+  if (!job) {
+    res.status(404).json({ error: "任务不存在" });
+    return;
+  }
+
+  try {
+    const branches = await gitService.listRemoteBranches();
+    const mergedBranches = new Set(
+      (job.releaseMerges ?? [])
+        .filter((record) => record.status === "completed")
+        .map((record) => record.targetBranch)
+    );
+    res.json({
+      branches: branches.filter(
+        (branch) =>
+          branch !== config.GIT_DEFAULT_BRANCH &&
+          branch !== job.sourceBranch &&
+          !mergedBranches.has(branch)
+      ),
+    });
+  } catch (err) {
+    res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
+  }
+});
+
+jobsRouter.post("/:jobId/release-merge", async (req, res) => {
+  const jobId = req.params.jobId;
+  const job = getJob(jobId);
+  if (!job) {
+    res.status(404).json({ error: "任务不存在" });
+    return;
+  }
+
+  const body = req.body as { targetBranch?: unknown } | undefined;
+  const targetBranch = typeof body?.targetBranch === "string" ? body.targetBranch.trim() : "";
+  if (!targetBranch) {
+    res.status(400).json({ error: "请选择目标分支" });
+    return;
+  }
+
+  try {
+    const { done } = jobQueue.enqueueAndWait(jobId, async (queuedJobId) => {
+      await mergeCompletedJobToBranch(queuedJobId, targetBranch);
+    });
+    await done;
+    res.json({ ok: true, job: getJob(jobId) });
+  } catch (err) {
+    res.status(400).json({ error: err instanceof Error ? err.message : String(err), job: getJob(jobId) });
+  }
 });
 
 jobsRouter.get("/:jobId/events", (req, res) => {

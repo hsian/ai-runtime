@@ -35,11 +35,17 @@ export type JobStatusType =
 export interface JobStatus {
   jobId: string;
   status: JobStatusType;
+  prompt?: string;
   message?: string;
   jobsAhead?: number;
   branch?: string;
+  sourceBranch?: string;
+  sourceCommitSha?: string;
   commitSha?: string;
   mergeRequestUrl?: string;
+  mergedToDefaultBranch?: string;
+  mergedToDefaultAt?: string;
+  releaseMerges?: ReleaseMergeRecord[];
   previewUrl?: string;
   previewFilter?: string;
   previewMessage?: string;
@@ -47,6 +53,15 @@ export interface JobStatus {
   planSummary?: string;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface ReleaseMergeRecord {
+  targetBranch: string;
+  commitSha?: string;
+  status: "completed" | "failed";
+  message?: string;
+  error?: string;
+  mergedAt: string;
 }
 
 export interface QueueItemSummary {
@@ -97,6 +112,7 @@ export interface StorageConfig {
 
 export interface CodingTask {
   id: string;
+  jobId?: string;
   title: string;
   pageUrl: string;
   rawContent: string;

@@ -1,9 +1,13 @@
 import { deleteCodingTask, listCodingTasks } from "../shared/codingTaskStore.js";
-import type { CodingTask } from "../shared/types.js";
+import { loadConfig } from "../shared/config.js";
+import { listJobs } from "../shared/api.js";
+import type { CodingTask, JobStatus } from "../shared/types.js";
 import "./task-picker.css";
 
 export interface CodingTaskPickerOptions {
   onSelect: (task: CodingTask) => void;
+  onReleaseMerge?: (job: JobStatus) => void | Promise<void>;
+  onStatus?: (text: string) => void;
 }
 
 const DRAWER_OPEN_KEY = "taskDrawerOpen";
@@ -34,10 +38,61 @@ function summarize(text: string, max = 72): string {
   return oneLine.length > max ? `${oneLine.slice(0, max)}…` : oneLine;
 }
 
+function isReleaseMergeCandidate(job: JobStatus): boolean {
+  return Boolean(
+    job.status === "completed" &&
+      job.sourceBranch &&
+      job.sourceCommitSha &&
+      job.mergedToDefaultBranch &&
+      job.branch === job.mergedToDefaultBranch
+  );
+}
+
+function latestReleaseMergeText(job: JobStatus): string {
+  const latest = job.releaseMerges?.slice().sort(
+    (a, b) => new Date(b.mergedAt).getTime() - new Date(a.mergedAt).getTime()
+  )[0];
+  if (!latest) return "待合并到发版分支";
+  if (latest.status === "completed") return `已合并到 ${latest.targetBranch}`;
+  return `合并到 ${latest.targetBranch} 失败`;
+}
+
+function findJobForTask(task: CodingTask, jobs: JobStatus[]): JobStatus | undefined {
+  if (task.jobId) {
+    const byId = jobs.find((job) => job.jobId === task.jobId);
+    if (byId) return byId;
+  }
+  const prompt = task.rawContent || task.draftPrompt;
+  return jobs.find((job) => job.status === "completed" && prompt && job.prompt === prompt);
+}
+
+function renderTaskJobMeta(job?: JobStatus): string {
+  if (!job) return "";
+  const branchText = job.sourceBranch
+    ? `<span class="task-picker-job-line">改动分支：${escapeHtml(summarize(job.sourceBranch, 48))}</span>`
+    : "";
+  const defaultText = job.mergedToDefaultBranch
+    ? `<span class="task-picker-job-line">已合并到：${escapeHtml(job.mergedToDefaultBranch)}</span>`
+    : "";
+  const releaseText = isReleaseMergeCandidate(job)
+    ? `<span class="task-picker-release-status">${escapeHtml(latestReleaseMergeText(job))}</span>`
+    : "";
+  return `${branchText}${defaultText}${releaseText}`;
+}
+
 async function renderTaskList(): Promise<void> {
   if (!listEl) return;
 
-  const tasks = await listCodingTasks();
+  const [tasks, config] = await Promise.all([listCodingTasks(), loadConfig()]);
+  let jobs: JobStatus[] = [];
+  if (config.serverUrl) {
+    try {
+      jobs = await listJobs(config.serverUrl);
+    } catch (err) {
+      console.warn("[AI Runtime] 加载任务历史中的服务端任务失败:", err);
+    }
+  }
+
   if (tasks.length === 0) {
     listEl.innerHTML = `<div class="task-picker-empty">暂无已保存的任务</div>`;
     return;
@@ -45,15 +100,25 @@ async function renderTaskList(): Promise<void> {
 
   listEl.innerHTML = tasks
     .map(
-      (task) => `
+      (task) => {
+        const job = findJobForTask(task, jobs);
+        const canReleaseMerge = job && isReleaseMergeCandidate(job);
+        return `
         <div class="task-picker-item" data-task-id="${escapeHtml(task.id)}">
           <button class="task-picker-select" type="button" data-task-id="${escapeHtml(task.id)}">
             <span class="task-picker-title">${escapeHtml(task.title)}</span>
             <span class="task-picker-summary">${escapeHtml(summarize(task.draftPrompt))}</span>
+            ${renderTaskJobMeta(job)}
           </button>
+          ${
+            canReleaseMerge
+              ? `<button class="task-picker-release" type="button" data-release-job-id="${escapeHtml(job.jobId)}">合并</button>`
+              : ""
+          }
           <button class="task-picker-delete" type="button" data-delete-id="${escapeHtml(task.id)}" title="删除">×</button>
         </div>
-      `
+      `;
+      }
     )
     .join("");
 }
@@ -159,6 +224,31 @@ export function initCodingTaskPicker(options: CodingTaskPickerOptions): void {
 
   listEl.addEventListener("click", (event) => {
     const target = event.target as HTMLElement;
+    const releaseJobId = target.closest<HTMLElement>("[data-release-job-id]")?.dataset.releaseJobId;
+    if (releaseJobId) {
+      event.stopPropagation();
+      void loadConfig().then(async (config) => {
+        try {
+          if (!config.serverUrl) {
+            options.onStatus?.("请先在设置中配置服务端地址");
+            return;
+          }
+          const jobs = await listJobs(config.serverUrl);
+          const job = jobs.find((item) => item.jobId === releaseJobId);
+          if (!job) {
+            options.onStatus?.("任务不存在或服务已重启");
+            return;
+          }
+          await options.onReleaseMerge?.(job);
+          await renderTaskList();
+        } catch (err) {
+          options.onStatus?.(err instanceof Error ? err.message : String(err));
+          return;
+        }
+      });
+      return;
+    }
+
     const deleteId = target.closest<HTMLElement>("[data-delete-id]")?.dataset.deleteId;
     if (deleteId) {
       event.stopPropagation();

@@ -150,7 +150,8 @@ label {
 
 textarea,
 input[type="url"],
-input[type="text"] {
+input[type="text"],
+select {
   width: 100%;
   padding: 8px 10px;
   border: 1px solid var(--color-border);
@@ -170,7 +171,8 @@ textarea {
 }
 
 textarea:focus,
-input:focus {
+input:focus,
+select:focus {
   outline: none;
   border-color: var(--color-primary);
   box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.14);
@@ -977,4 +979,15 @@ body.composer-resizing {
   flex: 1;
   padding: 9px 12px;
   font-size: 13px;
+}
+
+.release-merge-label {
+  margin: 2px 0 6px;
+  font-size: 11px;
+  color: var(--color-muted);
+}
+
+.release-merge-select {
+  margin-bottom: 10px;
+  background: var(--color-surface);
 }

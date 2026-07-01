@@ -216,6 +216,14 @@
   white-space: normal;
 }
 
+.task-picker-release-status {
+  display: block;
+  margin-top: 6px;
+  font-size: 11px;
+  color: #15803d;
+  line-height: 1.4;
+}
+
 .task-picker-delete {
   flex: 0 0 28px;
   width: 28px;
@@ -230,4 +238,29 @@
   color: #b91c1c;
   border-color: #fecaca;
   background: #fef2f2;
+}
+
+.release-job-summary {
+  cursor: default;
+}
+
+.release-job-summary:hover {
+  background: #fafafa;
+  border-color: #f0f0f0;
+}
+
+.task-picker-release {
+  flex: 0 0 52px;
+  width: 52px;
+  border: 1px solid #bfdbfe;
+  border-radius: 6px;
+  background: #eff6ff;
+  color: #1d4ed8;
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.task-picker-release:hover {
+  background: #dbeafe;
+  border-color: #93c5fd;
 }

@@ -35,6 +35,32 @@ async function readErrorResponse(res: Response): Promise<string> {
   return text;
 }
 
+function formatMergeError(err: unknown, sourceBranch: string, targetBranch: string): Error {
+  const message = err instanceof Error ? err.message : String(err);
+  const conflictMatch = message.match(/CONFLICTS:\s*(.+)$/s);
+  if (!conflictMatch) return err instanceof Error ? err : new Error(message);
+
+  const files = conflictMatch[1]
+    .split(",")
+    .map((item) => item.trim().replace(/:content$/, ""))
+    .filter(Boolean);
+  const fileText = files.length > 0 ? files.join(", ") : conflictMatch[1].trim();
+  return new Error(`合并冲突：${sourceBranch} 无法自动合并到 ${targetBranch}。冲突文件：${fileText}`);
+}
+
+function formatCherryPickError(err: unknown, commitSha: string, targetBranch: string): Error {
+  const message = err instanceof Error ? err.message : String(err);
+  const conflictMatch = message.match(/CONFLICTS:\s*(.+)$/s);
+  if (!conflictMatch) return err instanceof Error ? err : new Error(message);
+
+  const files = conflictMatch[1]
+    .split(",")
+    .map((item) => item.trim().replace(/:content$/, ""))
+    .filter(Boolean);
+  const fileText = files.length > 0 ? files.join(", ") : conflictMatch[1].trim();
+  return new Error(`合并冲突：提交 ${commitSha} 无法自动应用到 ${targetBranch}。冲突文件：${fileText}`);
+}
+
 export class GitService {
   private repoPath: string;
   private git: SimpleGit | null = null;
@@ -110,6 +136,16 @@ export class GitService {
     await git.push("origin", branchName, { "--set-upstream": null });
   }
 
+  async listRemoteBranches(): Promise<string[]> {
+    const git = await this.getGit();
+    await git.fetch("origin");
+    const branches = await git.branch(["-r"]);
+    return branches.all
+      .map((name) => name.replace(/^origin\//, "").trim())
+      .filter((name) => name && name !== "HEAD" && !name.includes(" -> "))
+      .sort((a, b) => a.localeCompare(b));
+  }
+
   async createMergeRequest(payload: MergeRequestPayload): Promise<MergeRequestResult> {
     const { url, path } = getRepoPathFromUrl(config.GIT_REPO_URL);
 
@@ -164,17 +200,20 @@ export class GitService {
   }
 
   async mergeIntoDefaultBranch(branchName: string, mergeMessage: string): Promise<string> {
+    return this.mergeIntoBranch(branchName, config.GIT_DEFAULT_BRANCH, mergeMessage);
+  }
+
+  async mergeIntoBranch(sourceBranch: string, targetBranch: string, mergeMessage: string): Promise<string> {
     const git = await this.getGit();
 
-    await git.checkout(config.GIT_DEFAULT_BRANCH);
-    await git.pull("origin", config.GIT_DEFAULT_BRANCH);
+    await this.checkoutRemoteBranch(targetBranch);
 
     const mergeArgs = [
       "--no-ff",
       "-m",
       mergeMessage,
       ...(config.GIT_SKIP_HOOKS ? ["--no-verify"] : []),
-      branchName,
+      sourceBranch,
     ];
 
     try {
@@ -185,15 +224,51 @@ export class GitService {
       } catch {
         // ignore abort errors
       }
-      throw err;
+      throw formatMergeError(err, sourceBranch, targetBranch);
     }
 
     if (config.AUTO_PUSH) {
-      await git.push("origin", config.GIT_DEFAULT_BRANCH);
+      await git.push("origin", targetBranch);
     }
 
     const log = await git.log({ maxCount: 1 });
     return log.latest?.hash ?? "";
+  }
+
+  async cherryPickCommitIntoBranch(commitSha: string, targetBranch: string): Promise<string> {
+    const git = await this.getGit();
+
+    await this.checkoutRemoteBranch(targetBranch);
+
+    try {
+      await git.raw(["cherry-pick", "-x", commitSha]);
+    } catch (err) {
+      try {
+        await git.raw(["cherry-pick", "--abort"]);
+      } catch {
+        // ignore abort errors
+      }
+      throw formatCherryPickError(err, commitSha, targetBranch);
+    }
+
+    if (config.AUTO_PUSH) {
+      await git.push("origin", targetBranch);
+    }
+
+    const log = await git.log({ maxCount: 1 });
+    return log.latest?.hash ?? "";
+  }
+
+  private async checkoutRemoteBranch(targetBranch: string): Promise<void> {
+    const git = await this.getGit();
+    await git.fetch("origin");
+    const localBranches = await git.branchLocal();
+    if (localBranches.all.includes(targetBranch)) {
+      await git.checkout(targetBranch);
+    } else {
+      await git.checkout(["-B", targetBranch, `origin/${targetBranch}`]);
+    }
+    await git.pull("origin", targetBranch);
   }
 
   async listChangedFilesAgainstDefault(branchName: string): Promise<string[]> {

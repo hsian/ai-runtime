@@ -13,7 +13,9 @@ import {
   discardMerge,
   executeJob,
   flushPendingServerCancel,
+  fetchReleaseBranches,
   mergeJob,
+  mergeJobToReleaseBranch,
   queryJobStatus,
   queryJobStatusWithRetry,
   replyToPlan,
@@ -29,7 +31,7 @@ import {
 } from "../shared/imageCompress.js";
 import { initCodingTaskPicker, refreshTaskDrawer } from "./codingTaskPicker.js";
 import { setupComposerResize } from "./composerResize.js";
-import { saveCodingPromptAsTask } from "../shared/codingTaskStore.js";
+import { attachJobToCodingTask, saveCodingPromptAsTask } from "../shared/codingTaskStore.js";
 import { mountPlanConfirmCard } from "../shared/planConfirmCard.js";
 import {
   appendCodingJobEvent,
@@ -1447,6 +1449,93 @@ function setupPageConfirmModal(): void {
   });
 }
 
+let releaseMergeResolver: ((targetBranch: string | null) => void) | null = null;
+
+function closeReleaseMergeModal(targetBranch: string | null): void {
+  const modal = document.getElementById("releaseMergeModal");
+  if (modal) modal.hidden = true;
+  const resolver = releaseMergeResolver;
+  releaseMergeResolver = null;
+  resolver?.(targetBranch);
+}
+
+async function showReleaseMergeModal(job: JobStatus, branches: string[]): Promise<string | null> {
+  return new Promise((resolve) => {
+    const modal = el<HTMLElement>("releaseMergeModal");
+    const titleEl = el<HTMLElement>("releaseMergeTitle");
+    const sourceEl = el<HTMLElement>("releaseMergeSource");
+    const selectEl = el<HTMLSelectElement>("releaseMergeBranch");
+    const hintEl = el<HTMLElement>("releaseMergeHint");
+    const okBtn = el<HTMLButtonElement>("releaseMergeOk");
+
+    releaseMergeResolver = resolve;
+    titleEl.textContent = job.message?.split("\n")[0]?.trim() || job.jobId;
+    sourceEl.textContent = job.sourceBranch ?? "";
+
+    selectEl.innerHTML = branches.length
+      ? branches.map((branch) => `<option value="${escapeHtml(branch)}">${escapeHtml(branch)}</option>`).join("")
+      : `<option value="">暂无可选分支</option>`;
+    selectEl.disabled = branches.length === 0;
+    okBtn.disabled = branches.length === 0;
+    hintEl.textContent = branches.length === 0
+      ? "没有可合并的远程分支，或可选分支已全部合并。"
+      : "将只合并本次改动分支，不会把 test 上其他提交一起带过去。";
+
+    modal.hidden = false;
+    if (branches.length > 0) {
+      selectEl.focus();
+    } else {
+      el<HTMLButtonElement>("releaseMergeCancel").focus();
+    }
+  });
+}
+
+function setupReleaseMergeModal(): void {
+  el<HTMLButtonElement>("releaseMergeOk").addEventListener("click", () => {
+    const branch = el<HTMLSelectElement>("releaseMergeBranch").value;
+    closeReleaseMergeModal(branch || null);
+  });
+  el<HTMLButtonElement>("releaseMergeCancel").addEventListener("click", () => {
+    closeReleaseMergeModal(null);
+  });
+  el<HTMLElement>("releaseMergeBackdrop").addEventListener("click", () => {
+    closeReleaseMergeModal(null);
+  });
+  document.addEventListener("keydown", (event) => {
+    if (event.key !== "Escape") return;
+    const modal = document.getElementById("releaseMergeModal");
+    if (modal && !modal.hidden) {
+      closeReleaseMergeModal(null);
+    }
+  });
+}
+
+async function handleReleaseMerge(job: JobStatus): Promise<void> {
+  const config = await loadConfig();
+  if (!config.serverUrl) {
+    setConnectionStatus("请先在设置中配置服务端地址");
+    return;
+  }
+
+  try {
+    setConnectionStatus("正在加载远程分支...");
+    const branches = await fetchReleaseBranches(config.serverUrl, job.jobId);
+    const targetBranch = await showReleaseMergeModal(job, branches);
+    if (!targetBranch) {
+      setConnectionStatus("已取消发版分支合并");
+      return;
+    }
+
+    setConnectionStatus(`正在合并到 ${targetBranch}...`);
+    await mergeJobToReleaseBranch(config.serverUrl, job.jobId, targetBranch);
+    setConnectionStatus(`已合并到 ${targetBranch}`);
+    refreshTaskDrawer();
+  } catch (err) {
+    setConnectionStatus(formatErrorMessage(config.serverUrl, err));
+    refreshTaskDrawer();
+  }
+}
+
 async function handleSubmit(): Promise<void> {
   // 任务进行中：发送按钮变为“取消”
   if (isCancellableStatus(currentJobStatus)) {
@@ -1482,11 +1571,12 @@ async function handleSubmit(): Promise<void> {
     return;
   }
 
-  void saveCodingPromptAsTask({
+  const savedTask = await saveCodingPromptAsTask({
     prompt,
     pageUrl: pageContext?.url,
     pageTitle: pageContext?.title,
-  }).then(() => refreshTaskDrawer());
+  });
+  refreshTaskDrawer();
 
   submitBtn.disabled = true;
   seenEventIds.clear();
@@ -1549,6 +1639,8 @@ async function handleSubmit(): Promise<void> {
     }
 
     el<HTMLTextAreaElement>("prompt").value = "";
+    await attachJobToCodingTask(savedTask.id, data.jobId);
+    refreshTaskDrawer();
     await initCodingJobSession(data.jobId, data.status as JobStatusType);
     await chrome.storage.local.set({ lastJobId: data.jobId });
     resetPlanOutputBuffer(data.jobId);
@@ -1597,6 +1689,8 @@ async function init(): Promise<void> {
       el<HTMLTextAreaElement>("prompt").value = task.draftPrompt;
       setConnectionStatus(`已载入任务：${task.title}`);
     },
+    onReleaseMerge: handleReleaseMerge,
+    onStatus: setConnectionStatus,
   });
   el<HTMLElement>("refreshPageBtn").addEventListener("click", refreshPagePreview);
   el<HTMLButtonElement>("submitBtn").addEventListener("click", handleSubmit);
@@ -1604,6 +1698,7 @@ async function init(): Promise<void> {
   setupComposerResize();
   setupChatContextMenu();
   setupPageConfirmModal();
+  setupReleaseMergeModal();
 
   el<HTMLTextAreaElement>("prompt").addEventListener("keydown", (e) => {
     if (e.key === "Enter" && !e.shiftKey) {

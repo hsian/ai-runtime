@@ -34,6 +34,26 @@ class JobQueue {
     return jobsAhead;
   }
 
+  enqueueAndWait(jobId: string, worker: JobQueueWorker): { jobsAhead: number; done: Promise<void> } {
+    let resolveDone!: () => void;
+    let rejectDone!: (reason: unknown) => void;
+    const done = new Promise<void>((resolve, reject) => {
+      resolveDone = resolve;
+      rejectDone = reject;
+    });
+
+    const jobsAhead = this.enqueue(jobId, async (queuedJobId) => {
+      try {
+        await worker(queuedJobId);
+        resolveDone();
+      } catch (err) {
+        rejectDone(err);
+      }
+    });
+
+    return { jobsAhead, done };
+  }
+
   /** 从等待队列移除（已在执行中的无法移除） */
   dequeue(jobId: string): boolean {
     const idx = this.waiting.findIndex((item) => item.jobId === jobId);

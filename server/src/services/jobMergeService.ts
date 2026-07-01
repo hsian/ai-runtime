@@ -2,6 +2,7 @@ import { config } from "../config.js";
 import { getJob, updateJob } from "./jobStore.js";
 import { gitService } from "./gitService.js";
 import { appendJobEvent } from "./jobEvents.js";
+import type { ReleaseMergeRecord } from "../types.js";
 
 export async function confirmJobMerge(jobId: string): Promise<void> {
   const job = getJob(jobId);
@@ -29,8 +30,12 @@ export async function confirmJobMerge(jobId: string): Promise<void> {
     updateJob(jobId, {
       status: "completed",
       message: doneMessage,
+      sourceBranch: job.sourceBranch ?? job.branch,
+      sourceCommitSha: job.sourceCommitSha ?? job.commitSha,
       branch: defaultBranch,
       commitSha: mergeSha,
+      mergedToDefaultBranch: defaultBranch,
+      mergedToDefaultAt: new Date().toISOString(),
     });
     appendJobEvent(jobId, {
       type: "done",
@@ -109,6 +114,96 @@ export async function createJobMergeRequest(jobId: string): Promise<void> {
     } catch (err) {
       console.warn(
         "[AI Runtime] 提交 Merge Request 后未能切回基线分支:",
+        err instanceof Error ? err.message : String(err)
+      );
+    }
+  }
+}
+
+export async function mergeCompletedJobToBranch(jobId: string, targetBranch: string): Promise<void> {
+  const job = getJob(jobId);
+  if (!job) throw new Error("任务不存在");
+  if (job.status !== "completed") {
+    throw new Error(`当前状态不可合并到其他分支: ${job.status}`);
+  }
+  if (job.mergedToDefaultBranch !== config.GIT_DEFAULT_BRANCH || job.branch !== config.GIT_DEFAULT_BRANCH) {
+    throw new Error(`任务尚未合并到 ${config.GIT_DEFAULT_BRANCH}`);
+  }
+  const sourceBranch = job.sourceBranch;
+  if (!sourceBranch) {
+    throw new Error("缺少本次改动分支，无法合并到其他分支");
+  }
+  const sourceCommitSha = job.sourceCommitSha;
+  if (!sourceCommitSha) {
+    throw new Error("缺少本次改动提交，无法合并到其他分支");
+  }
+  if (targetBranch === config.GIT_DEFAULT_BRANCH) {
+    throw new Error(`目标分支不能是 ${config.GIT_DEFAULT_BRANCH}`);
+  }
+  if (targetBranch === sourceBranch) {
+    throw new Error("目标分支不能是本次改动分支");
+  }
+
+  const existingRecords = job.releaseMerges ?? [];
+  if (existingRecords.some((record) => record.targetBranch === targetBranch && record.status === "completed")) {
+    throw new Error(`已合并到 ${targetBranch}`);
+  }
+
+  updateJob(jobId, { message: `正在合并本次改动到 ${targetBranch}...` });
+  appendJobEvent(jobId, {
+    type: "stage",
+    phase: "release_merge",
+    text: `正在将本次提交 ${sourceCommitSha} 应用到 ${targetBranch} 并推送...`,
+  });
+
+  try {
+    const mergeSha = await gitService.cherryPickCommitIntoBranch(sourceCommitSha, targetBranch);
+    const record: ReleaseMergeRecord = {
+      targetBranch,
+      commitSha: mergeSha,
+      status: "completed",
+      message: `已合并到 ${targetBranch}`,
+      mergedAt: new Date().toISOString(),
+    };
+    const nextMerges = [
+      ...existingRecords.filter((item) => item.targetBranch !== targetBranch),
+      record,
+    ];
+
+    updateJob(jobId, {
+      message: `${job.message ?? "修改已完成"}\n\n已合并到 ${targetBranch}`,
+      releaseMerges: nextMerges,
+    });
+    appendJobEvent(jobId, {
+      type: "stage",
+      phase: "release_merge_done",
+      text: `已合并到 ${targetBranch}`,
+      branch: targetBranch,
+      commitSha: mergeSha,
+    });
+  } catch (err) {
+    const error = err instanceof Error ? err.message : String(err);
+    const record: ReleaseMergeRecord = {
+      targetBranch,
+      status: "failed",
+      error,
+      mergedAt: new Date().toISOString(),
+    };
+    updateJob(jobId, {
+      message: `${job.message ?? "修改已完成"}\n\n合并到 ${targetBranch} 失败: ${error}`,
+      releaseMerges: [
+        ...existingRecords.filter((item) => item.targetBranch !== targetBranch),
+        record,
+      ],
+    });
+    appendJobEvent(jobId, { type: "error", message: error, text: `合并到 ${targetBranch} 失败: ${error}` });
+    throw err;
+  } finally {
+    try {
+      await gitService.restoreBaseBranch();
+    } catch (err) {
+      console.warn(
+        "[AI Runtime] 发版分支合并结束后未能切回基线分支:",
         err instanceof Error ? err.message : String(err)
       );
     }
