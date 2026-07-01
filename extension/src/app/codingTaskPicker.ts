@@ -7,6 +7,7 @@ import "./task-picker.css";
 export interface CodingTaskPickerOptions {
   onSelect: (task: CodingTask) => void;
   onReleaseMerge?: (job: JobStatus) => void | Promise<void>;
+  onRevertDefault?: (job: JobStatus) => void | Promise<void>;
   onStatus?: (text: string) => void;
 }
 
@@ -18,6 +19,7 @@ const MAX_DRAWER_WIDTH = 560;
 let listEl: HTMLElement | null = null;
 let shellEl: HTMLElement | null = null;
 let toggleBtn: HTMLButtonElement | null = null;
+let refreshBtn: HTMLButtonElement | null = null;
 let drawerEl: HTMLElement | null = null;
 let resizerEl: HTMLElement | null = null;
 let isOpen = false;
@@ -44,7 +46,18 @@ function isReleaseMergeCandidate(job: JobStatus): boolean {
       job.sourceBranch &&
       job.sourceCommitSha &&
       job.mergedToDefaultBranch &&
-      job.branch === job.mergedToDefaultBranch
+      job.branch === job.mergedToDefaultBranch &&
+      !job.revertedFromDefaultAt
+  );
+}
+
+function canRevertDefault(job?: JobStatus): boolean {
+  return Boolean(
+    job?.status === "completed" &&
+      job.mergedToDefaultBranch &&
+      job.branch === job.mergedToDefaultBranch &&
+      job.commitSha &&
+      !job.revertedFromDefaultAt
   );
 }
 
@@ -77,33 +90,41 @@ function renderTaskJobMeta(job?: JobStatus): string {
   const releaseText = isReleaseMergeCandidate(job)
     ? `<span class="task-picker-release-status">${escapeHtml(latestReleaseMergeText(job))}</span>`
     : "";
-  return `${branchText}${defaultText}${releaseText}`;
+  const revertText = job.revertedFromDefaultAt
+    ? `<span class="task-picker-release-status warning">test 已撤回</span>`
+    : job.revertError
+      ? `<span class="task-picker-release-status danger">test 撤回失败</span>`
+      : "";
+  return `${branchText}${defaultText}${releaseText}${revertText}`;
 }
 
 async function renderTaskList(): Promise<void> {
   if (!listEl) return;
+  refreshBtn && (refreshBtn.disabled = true);
 
-  const [tasks, config] = await Promise.all([listCodingTasks(), loadConfig()]);
-  let jobs: JobStatus[] = [];
-  if (config.serverUrl) {
-    try {
-      jobs = await listJobs(config.serverUrl);
-    } catch (err) {
-      console.warn("[AI Runtime] 加载任务历史中的服务端任务失败:", err);
+  try {
+    const [tasks, config] = await Promise.all([listCodingTasks(), loadConfig()]);
+    let jobs: JobStatus[] = [];
+    if (config.serverUrl) {
+      try {
+        jobs = await listJobs(config.serverUrl);
+      } catch (err) {
+        console.warn("[AI Runtime] 加载任务历史中的服务端任务失败:", err);
+      }
     }
-  }
 
-  if (tasks.length === 0) {
-    listEl.innerHTML = `<div class="task-picker-empty">暂无已保存的任务</div>`;
-    return;
-  }
+    if (tasks.length === 0) {
+      listEl.innerHTML = `<div class="task-picker-empty">暂无已保存的任务</div>`;
+      return;
+    }
 
-  listEl.innerHTML = tasks
-    .map(
-      (task) => {
-        const job = findJobForTask(task, jobs);
-        const canReleaseMerge = job && isReleaseMergeCandidate(job);
-        return `
+    listEl.innerHTML = tasks
+      .map(
+        (task) => {
+          const job = findJobForTask(task, jobs);
+          const canReleaseMerge = job && isReleaseMergeCandidate(job);
+          const canRevert = canRevertDefault(job);
+          return `
         <div class="task-picker-item" data-task-id="${escapeHtml(task.id)}">
           <button class="task-picker-select" type="button" data-task-id="${escapeHtml(task.id)}">
             <span class="task-picker-title">${escapeHtml(task.title)}</span>
@@ -115,12 +136,25 @@ async function renderTaskList(): Promise<void> {
               ? `<button class="task-picker-release" type="button" data-release-job-id="${escapeHtml(job.jobId)}">合并</button>`
               : ""
           }
-          <button class="task-picker-delete" type="button" data-delete-id="${escapeHtml(task.id)}" title="删除">×</button>
+          <div class="task-picker-more-wrap">
+            <button class="task-picker-more" type="button" data-menu-task-id="${escapeHtml(task.id)}" title="更多操作">⋯</button>
+            <div class="task-picker-menu" data-menu-for="${escapeHtml(task.id)}" hidden>
+              ${
+                canRevert && job
+                  ? `<button type="button" class="task-picker-menu-item danger" data-revert-job-id="${escapeHtml(job.jobId)}">撤回 test 提交</button>`
+                  : ""
+              }
+              <button type="button" class="task-picker-menu-item" data-delete-id="${escapeHtml(task.id)}">删除本地任务</button>
+            </div>
+          </div>
         </div>
       `;
-      }
-    )
-    .join("");
+        }
+      )
+      .join("");
+  } finally {
+    refreshBtn && (refreshBtn.disabled = false);
+  }
 }
 
 function clampWidth(value: number): number {
@@ -170,6 +204,7 @@ export function initCodingTaskPicker(options: CodingTaskPickerOptions): void {
   shellEl = document.getElementById("chatShell");
   listEl = document.getElementById("taskDrawerList");
   toggleBtn = document.getElementById("taskDrawerToggle") as HTMLButtonElement | null;
+  refreshBtn = document.getElementById("taskDrawerRefresh") as HTMLButtonElement | null;
   drawerEl = document.getElementById("taskDrawer");
   resizerEl = document.getElementById("taskDrawerResizer");
 
@@ -177,6 +212,11 @@ export function initCodingTaskPicker(options: CodingTaskPickerOptions): void {
 
   toggleBtn.addEventListener("click", () => {
     setDrawerOpen(!isOpen);
+  });
+
+  refreshBtn?.addEventListener("click", (event) => {
+    event.stopPropagation();
+    void renderTaskList();
   });
 
   resizerEl.addEventListener("pointerdown", (event) => {
@@ -224,6 +264,46 @@ export function initCodingTaskPicker(options: CodingTaskPickerOptions): void {
 
   listEl.addEventListener("click", (event) => {
     const target = event.target as HTMLElement;
+    const menuTaskId = target.closest<HTMLElement>("[data-menu-task-id]")?.dataset.menuTaskId;
+    if (menuTaskId) {
+      event.stopPropagation();
+      listEl!.querySelectorAll<HTMLElement>(".task-picker-menu").forEach((menu) => {
+        if (menu.dataset.menuFor === menuTaskId) {
+          menu.hidden = !menu.hidden;
+        } else {
+          menu.hidden = true;
+        }
+      });
+      return;
+    }
+
+    const revertJobId = target.closest<HTMLElement>("[data-revert-job-id]")?.dataset.revertJobId;
+    if (revertJobId) {
+      event.stopPropagation();
+      listEl.querySelectorAll<HTMLElement>(".task-picker-menu").forEach((menu) => {
+        menu.hidden = true;
+      });
+      void loadConfig().then(async (config) => {
+        try {
+          if (!config.serverUrl) {
+            options.onStatus?.("请先在设置中配置服务端地址");
+            return;
+          }
+          const jobs = await listJobs(config.serverUrl);
+          const job = jobs.find((item) => item.jobId === revertJobId);
+          if (!job) {
+            options.onStatus?.("任务不存在或服务已重启");
+            return;
+          }
+          await options.onRevertDefault?.(job);
+          await renderTaskList();
+        } catch (err) {
+          options.onStatus?.(err instanceof Error ? err.message : String(err));
+        }
+      });
+      return;
+    }
+
     const releaseJobId = target.closest<HTMLElement>("[data-release-job-id]")?.dataset.releaseJobId;
     if (releaseJobId) {
       event.stopPropagation();
@@ -252,6 +332,9 @@ export function initCodingTaskPicker(options: CodingTaskPickerOptions): void {
     const deleteId = target.closest<HTMLElement>("[data-delete-id]")?.dataset.deleteId;
     if (deleteId) {
       event.stopPropagation();
+      listEl.querySelectorAll<HTMLElement>(".task-picker-menu").forEach((menu) => {
+        menu.hidden = true;
+      });
       void deleteCodingTask(deleteId).then(() => renderTaskList());
       return;
     }
@@ -265,6 +348,14 @@ export function initCodingTaskPicker(options: CodingTaskPickerOptions): void {
         options.onSelect(task);
       }
     });
+  });
+
+  document.addEventListener("click", (event) => {
+    if (!listEl?.contains(event.target as Node)) {
+      listEl?.querySelectorAll<HTMLElement>(".task-picker-menu").forEach((menu) => {
+        menu.hidden = true;
+      });
+    }
   });
 
   void chrome.storage.local.get([DRAWER_OPEN_KEY]).then((stored) => {

@@ -54,6 +54,9 @@ export interface Job {
   mergeRequestUrl?: string;
   mergedToDefaultBranch?: string;
   mergedToDefaultAt?: string;
+  revertedFromDefaultAt?: string;
+  revertCommitSha?: string;
+  revertError?: string;
   releaseMerges?: ReleaseMergeRecord[];
   previewUrl?: string;
   previewFilter?: string;

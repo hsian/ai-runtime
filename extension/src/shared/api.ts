@@ -185,6 +185,21 @@ export async function mergeJobToReleaseBranch(
   return data.job;
 }
 
+export async function revertJobFromDefaultBranch(
+  serverUrl: string,
+  jobId: string
+): Promise<JobStatus> {
+  const res = await fetch(
+    `${normalizeServerUrl(serverUrl)}/api/jobs/${encodeURIComponent(jobId)}/revert-default`,
+    { method: "POST" }
+  );
+  const data = (await res.json()) as { ok?: boolean; job?: JobStatus; error?: string };
+  if (!res.ok || !data.job) {
+    throw new Error(data.error ?? `撤回失败: ${res.status}`);
+  }
+  return data.job;
+}
+
 export async function cancelJob(serverUrl: string, jobId: string): Promise<{ ok: boolean }> {
   const res = await fetch(`${normalizeServerUrl(serverUrl)}/api/jobs/${encodeURIComponent(jobId)}/cancel`, {
     method: "POST",
@@ -279,7 +294,7 @@ export function getNetworkErrorHint(serverUrl: string, err: unknown): string {
 export function formatErrorMessage(serverUrl: string, err: unknown): string {
   const msg = err instanceof Error ? err.message : String(err);
 
-  if (/当前状态不可|任务不存在|分析任务不存在|参数无效|不可执行|不可取消|不可合并|不可放弃合并|放弃合并/.test(msg)) {
+  if (/当前状态不可|任务不存在|分析任务不存在|参数无效|不可执行|不可取消|不可合并|不可放弃合并|放弃合并|撤回/.test(msg)) {
     return msg;
   }
 

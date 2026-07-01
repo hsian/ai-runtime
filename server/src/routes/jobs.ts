@@ -7,7 +7,7 @@ import { runAgent, killAgentForJob, AgentAbortedError } from "../services/agent/
 import { config } from "../config.js";
 import { finalizeJobAttachments, jobImagesUpload, multerErrorMessage, stageAttachmentsForAgent } from "../services/uploadService.js";
 import { isMultipartSubmit, parseJobSubmitBody } from "../middleware/parseJobSubmit.js";
-import { confirmJobMerge, createJobMergeRequest, discardJobMerge, mergeCompletedJobToBranch } from "../services/jobMergeService.js";
+import { confirmJobMerge, createJobMergeRequest, discardJobMerge, mergeCompletedJobToBranch, revertCompletedJobFromDefaultBranch } from "../services/jobMergeService.js";
 import type { JobRequest } from "../types.js";
 import { resolvePlanSummary } from "../services/agent/planSummaryResolver.js";
 
@@ -531,6 +531,25 @@ jobsRouter.post("/:jobId/release-merge", async (req, res) => {
   try {
     const { done } = jobQueue.enqueueAndWait(jobId, async (queuedJobId) => {
       await mergeCompletedJobToBranch(queuedJobId, targetBranch);
+    });
+    await done;
+    res.json({ ok: true, job: getJob(jobId) });
+  } catch (err) {
+    res.status(400).json({ error: err instanceof Error ? err.message : String(err), job: getJob(jobId) });
+  }
+});
+
+jobsRouter.post("/:jobId/revert-default", async (req, res) => {
+  const jobId = req.params.jobId;
+  const job = getJob(jobId);
+  if (!job) {
+    res.status(404).json({ error: "任务不存在" });
+    return;
+  }
+
+  try {
+    const { done } = jobQueue.enqueueAndWait(jobId, async (queuedJobId) => {
+      await revertCompletedJobFromDefaultBranch(queuedJobId);
     });
     await done;
     res.json({ ok: true, job: getJob(jobId) });

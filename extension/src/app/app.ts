@@ -16,6 +16,7 @@ import {
   fetchReleaseBranches,
   mergeJob,
   mergeJobToReleaseBranch,
+  revertJobFromDefaultBranch,
   queryJobStatus,
   queryJobStatusWithRetry,
   replyToPlan,
@@ -1247,6 +1248,8 @@ function handleJobEvent(event: JobEvent, options?: { skipPersist?: boolean }): v
         upsertMergeConfirmCard(event.jobId, "running");
         setConnectionStatus("正在提交 Merge Request");
         updateSubmitButton();
+      } else if (event.phase === "release_merge_done" || event.phase === "default_revert_done") {
+        refreshTaskDrawer();
       } else if (event.phase && ["pull", "branch", "agent", "commit"].includes(event.phase)) {
         currentJobStatus = "running";
         setConnectionStatus("执行中");
@@ -1277,6 +1280,7 @@ function handleJobEvent(event: JobEvent, options?: { skipPersist?: boolean }): v
       activeStream?.close();
       activeStream = null;
       updateSubmitButton();
+      refreshTaskDrawer();
       break;
     case "cancelled":
       resetPlanOutputBuffer(null);
@@ -1288,6 +1292,7 @@ function handleJobEvent(event: JobEvent, options?: { skipPersist?: boolean }): v
       activeStream?.close();
       activeStream = null;
       updateSubmitButton();
+      refreshTaskDrawer();
       break;
     case "error":
       resetPlanOutputBuffer(null);
@@ -1305,6 +1310,7 @@ function handleJobEvent(event: JobEvent, options?: { skipPersist?: boolean }): v
       activeStream?.close();
       activeStream = null;
       updateSubmitButton();
+      refreshTaskDrawer();
       break;
   }
 
@@ -1536,6 +1542,73 @@ async function handleReleaseMerge(job: JobStatus): Promise<void> {
   }
 }
 
+let revertDefaultResolver: ((confirmed: boolean) => void) | null = null;
+
+function closeRevertDefaultModal(confirmed: boolean): void {
+  const modal = document.getElementById("revertDefaultModal");
+  if (modal) modal.hidden = true;
+  const resolver = revertDefaultResolver;
+  revertDefaultResolver = null;
+  resolver?.(confirmed);
+}
+
+function showRevertDefaultModal(job: JobStatus): Promise<boolean> {
+  return new Promise((resolve) => {
+    const modal = el<HTMLElement>("revertDefaultModal");
+    const titleEl = el<HTMLElement>("revertDefaultTitle");
+    const commitEl = el<HTMLElement>("revertDefaultCommit");
+
+    revertDefaultResolver = resolve;
+    titleEl.textContent = job.message?.split("\n")[0]?.trim() || job.jobId;
+    commitEl.textContent = job.commitSha ?? "";
+    modal.hidden = false;
+    el<HTMLButtonElement>("revertDefaultCancel").focus();
+  });
+}
+
+function setupRevertDefaultModal(): void {
+  el<HTMLButtonElement>("revertDefaultOk").addEventListener("click", () => {
+    closeRevertDefaultModal(true);
+  });
+  el<HTMLButtonElement>("revertDefaultCancel").addEventListener("click", () => {
+    closeRevertDefaultModal(false);
+  });
+  el<HTMLElement>("revertDefaultBackdrop").addEventListener("click", () => {
+    closeRevertDefaultModal(false);
+  });
+  document.addEventListener("keydown", (event) => {
+    if (event.key !== "Escape") return;
+    const modal = document.getElementById("revertDefaultModal");
+    if (modal && !modal.hidden) {
+      closeRevertDefaultModal(false);
+    }
+  });
+}
+
+async function handleRevertDefault(job: JobStatus): Promise<void> {
+  const config = await loadConfig();
+  if (!config.serverUrl) {
+    setConnectionStatus("请先在设置中配置服务端地址");
+    return;
+  }
+
+  const confirmed = await showRevertDefaultModal(job);
+  if (!confirmed) {
+    setConnectionStatus("已取消撤回");
+    return;
+  }
+
+  try {
+    setConnectionStatus("正在撤回 test 提交...");
+    await revertJobFromDefaultBranch(config.serverUrl, job.jobId);
+    setConnectionStatus("test 已撤回本次改动");
+    refreshTaskDrawer();
+  } catch (err) {
+    setConnectionStatus(formatErrorMessage(config.serverUrl, err));
+    refreshTaskDrawer();
+  }
+}
+
 async function handleSubmit(): Promise<void> {
   // 任务进行中：发送按钮变为“取消”
   if (isCancellableStatus(currentJobStatus)) {
@@ -1690,6 +1763,7 @@ async function init(): Promise<void> {
       setConnectionStatus(`已载入任务：${task.title}`);
     },
     onReleaseMerge: handleReleaseMerge,
+    onRevertDefault: handleRevertDefault,
     onStatus: setConnectionStatus,
   });
   el<HTMLElement>("refreshPageBtn").addEventListener("click", refreshPagePreview);
@@ -1699,6 +1773,7 @@ async function init(): Promise<void> {
   setupChatContextMenu();
   setupPageConfirmModal();
   setupReleaseMergeModal();
+  setupRevertDefaultModal();
 
   el<HTMLTextAreaElement>("prompt").addEventListener("keydown", (e) => {
     if (e.key === "Enter" && !e.shiftKey) {

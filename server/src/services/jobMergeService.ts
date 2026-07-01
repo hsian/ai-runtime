@@ -210,6 +210,64 @@ export async function mergeCompletedJobToBranch(jobId: string, targetBranch: str
   }
 }
 
+export async function revertCompletedJobFromDefaultBranch(jobId: string): Promise<void> {
+  const job = getJob(jobId);
+  if (!job) throw new Error("任务不存在");
+  if (job.status !== "completed") {
+    throw new Error(`当前状态不可撤回: ${job.status}`);
+  }
+  if (job.mergedToDefaultBranch !== config.GIT_DEFAULT_BRANCH || job.branch !== config.GIT_DEFAULT_BRANCH) {
+    throw new Error(`任务尚未合并到 ${config.GIT_DEFAULT_BRANCH}`);
+  }
+  if (!job.commitSha) {
+    throw new Error("缺少 test 合并提交，无法撤回");
+  }
+  if (job.revertedFromDefaultAt) {
+    throw new Error(`${config.GIT_DEFAULT_BRANCH} 上的本次改动已撤回`);
+  }
+
+  updateJob(jobId, { message: `正在从 ${config.GIT_DEFAULT_BRANCH} 撤回本次改动...`, revertError: undefined });
+  appendJobEvent(jobId, {
+    type: "stage",
+    phase: "default_revert",
+    text: `正在从 ${config.GIT_DEFAULT_BRANCH} revert ${job.commitSha} 并推送...`,
+  });
+
+  try {
+    const revertSha = await gitService.revertCommitOnBranch(job.commitSha, config.GIT_DEFAULT_BRANCH);
+    updateJob(jobId, {
+      message: `${job.message ?? "修改已完成"}\n\n${config.GIT_DEFAULT_BRANCH} 已撤回`,
+      revertedFromDefaultAt: new Date().toISOString(),
+      revertCommitSha: revertSha,
+      revertError: undefined,
+    });
+    appendJobEvent(jobId, {
+      type: "stage",
+      phase: "default_revert_done",
+      text: `${config.GIT_DEFAULT_BRANCH} 已撤回本次改动`,
+      branch: config.GIT_DEFAULT_BRANCH,
+      commitSha: revertSha,
+    });
+  } catch (err) {
+    const error = err instanceof Error ? err.message : String(err);
+    updateJob(jobId, {
+      message: `${job.message ?? "修改已完成"}\n\n${config.GIT_DEFAULT_BRANCH} 撤回失败: ${error}`,
+      revertError: error,
+    });
+    appendJobEvent(jobId, { type: "error", message: error, text: `${config.GIT_DEFAULT_BRANCH} 撤回失败: ${error}` });
+    throw err;
+  } finally {
+    try {
+      await gitService.restoreBaseBranch();
+    } catch (err) {
+      console.warn(
+        "[AI Runtime] 撤回结束后未能切回基线分支:",
+        err instanceof Error ? err.message : String(err)
+      );
+    }
+  }
+}
+
 export async function discardJobMerge(jobId: string): Promise<void> {
   const job = getJob(jobId);
   if (!job) throw new Error("任务不存在");

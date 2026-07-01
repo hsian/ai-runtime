@@ -65,6 +65,7 @@
         <aside class="task-drawer" id="taskDrawer" aria-hidden="true">
           <div class="task-drawer-header">
             <h2 class="task-drawer-title">任务历史</h2>
+            <button id="taskDrawerRefresh" class="task-drawer-refresh" type="button" title="刷新任务历史">⟳</button>
           </div>
           <div class="task-drawer-body" id="taskDrawerList"></div>
         </aside>
@@ -223,6 +224,23 @@
         <div class="page-confirm-actions">
           <button id="releaseMergeCancel" class="secondary" type="button">取消</button>
           <button id="releaseMergeOk" class="primary" type="button">确认合并</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="revertDefaultModal" class="page-confirm-modal" hidden>
+      <div class="page-confirm-backdrop" id="revertDefaultBackdrop"></div>
+      <div class="page-confirm-dialog" role="dialog" aria-labelledby="revertDefaultHeading">
+        <h2 id="revertDefaultHeading" class="page-confirm-heading">确认撤回 test 提交</h2>
+        <p class="page-confirm-lead">将执行 git revert，只影响 test 分支，不会处理已合并到其他分支的代码。</p>
+        <div class="page-confirm-page">
+          <div id="revertDefaultTitle" class="page-confirm-title"></div>
+          <div id="revertDefaultCommit" class="page-confirm-url"></div>
+        </div>
+        <p class="page-confirm-hint">撤回会生成新的 revert 提交并推送到 test。</p>
+        <div class="page-confirm-actions">
+          <button id="revertDefaultCancel" class="secondary" type="button">取消</button>
+          <button id="revertDefaultOk" class="danger" type="button">确认撤回</button>
         </div>
       </div>
     </div>

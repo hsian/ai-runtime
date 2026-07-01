@@ -61,6 +61,19 @@ function formatCherryPickError(err: unknown, commitSha: string, targetBranch: st
   return new Error(`合并冲突：提交 ${commitSha} 无法自动应用到 ${targetBranch}。冲突文件：${fileText}`);
 }
 
+function formatRevertError(err: unknown, commitSha: string, targetBranch: string): Error {
+  const message = err instanceof Error ? err.message : String(err);
+  const conflictMatch = message.match(/CONFLICTS:\s*(.+)$/s);
+  if (!conflictMatch) return err instanceof Error ? err : new Error(message);
+
+  const files = conflictMatch[1]
+    .split(",")
+    .map((item) => item.trim().replace(/:content$/, ""))
+    .filter(Boolean);
+  const fileText = files.length > 0 ? files.join(", ") : conflictMatch[1].trim();
+  return new Error(`撤回冲突：提交 ${commitSha} 无法自动从 ${targetBranch} 撤回。冲突文件：${fileText}`);
+}
+
 export class GitService {
   private repoPath: string;
   private git: SimpleGit | null = null;
@@ -249,6 +262,35 @@ export class GitService {
         // ignore abort errors
       }
       throw formatCherryPickError(err, commitSha, targetBranch);
+    }
+
+    if (config.AUTO_PUSH) {
+      await git.push("origin", targetBranch);
+    }
+
+    const log = await git.log({ maxCount: 1 });
+    return log.latest?.hash ?? "";
+  }
+
+  async revertCommitOnBranch(commitSha: string, targetBranch: string): Promise<string> {
+    const git = await this.getGit();
+
+    await this.checkoutRemoteBranch(targetBranch);
+
+    try {
+      const parentsLine = (await git.raw(["rev-list", "--parents", "-n", "1", commitSha])).trim();
+      const parentCount = Math.max(0, parentsLine.split(/\s+/).length - 1);
+      const args = parentCount > 1
+        ? ["revert", "-m", "1", "--no-edit", commitSha]
+        : ["revert", "--no-edit", commitSha];
+      await git.raw(args);
+    } catch (err) {
+      try {
+        await git.raw(["revert", "--abort"]);
+      } catch {
+        // ignore abort errors
+      }
+      throw formatRevertError(err, commitSha, targetBranch);
     }
 
     if (config.AUTO_PUSH) {
