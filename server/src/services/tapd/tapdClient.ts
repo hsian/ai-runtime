@@ -48,6 +48,13 @@ export interface TapdBug {
   iteration_id?: string;
 }
 
+export interface TapdWorkspace {
+  id: string;
+  name?: string;
+  pretty_name?: string;
+  status?: string;
+}
+
 export interface TapdIteration {
   id: string;
   name: string;
@@ -95,6 +102,34 @@ async function tapdRequest<T>(
 
   const res = await fetch(url, {
     headers: { Authorization: `Bearer ${token}` },
+  });
+  const body = (await res.json()) as TapdApiEnvelope<T>;
+  if (!res.ok || body.status !== 1) {
+    throw new Error(body.info || `TAPD API 请求失败: ${res.status}`);
+  }
+  return body;
+}
+
+async function tapdPost<T>(
+  cfg: TapdConfig,
+  path: string,
+  params: Record<string, string | number | undefined>
+): Promise<TapdApiEnvelope<T>> {
+  const token = await getAccessToken(cfg);
+  const bodyParams = new URLSearchParams();
+  for (const [key, value] of Object.entries(params)) {
+    if (value !== undefined && value !== "") {
+      bodyParams.set(key, String(value));
+    }
+  }
+
+  const res = await fetch(new URL(path, cfg.apiBase), {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/x-www-form-urlencoded",
+    },
+    body: bodyParams.toString(),
   });
   const body = (await res.json()) as TapdApiEnvelope<T>;
   if (!res.ok || body.status !== 1) {
@@ -191,6 +226,29 @@ export async function listIterationBugs(
   const prefix = options?.prefix?.trim();
   if (!prefix) return bugs;
   return bugs.filter((bug) => (bug.title ?? bug.name ?? "").startsWith(prefix));
+}
+
+export async function createBug(
+  input: {
+    title: string;
+    description: string;
+    iterationId: string;
+    workspaceId?: string;
+  },
+  cfg: TapdConfig = getTapdConfig()
+): Promise<TapdBug> {
+  const wsId = input.workspaceId ?? cfg.workspaceId;
+  const body = await tapdPost<{ Bug?: TapdBug }>(cfg, "/bugs", {
+    workspace_id: wsId,
+    title: input.title,
+    description: input.description,
+    iteration_id: input.iterationId,
+  });
+  const bug = body.data?.Bug;
+  if (!bug?.id) {
+    throw new Error("TAPD 创建缺陷成功但未返回缺陷 ID");
+  }
+  return bug;
 }
 
 export async function getIterationWorkItems(

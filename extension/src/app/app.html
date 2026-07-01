@@ -244,6 +244,27 @@
         </div>
       </div>
     </div>
+
+    <div id="tapdBugModal" class="page-confirm-modal" hidden>
+      <div class="page-confirm-backdrop" id="tapdBugBackdrop"></div>
+      <div class="page-confirm-dialog" role="dialog" aria-labelledby="tapdBugHeading">
+        <h2 id="tapdBugHeading" class="page-confirm-heading">提交 TAPD bug</h2>
+        <p class="page-confirm-lead">选择迭代后，将把当前任务的 Plan 方案提交为 TAPD bug。</p>
+        <div class="page-confirm-page">
+          <div id="tapdBugTitle" class="page-confirm-title"></div>
+          <div id="tapdBugPlan" class="page-confirm-url tapd-bug-plan"></div>
+        </div>
+        <label class="release-merge-label" for="tapdBugWorkspace">TAPD 项目</label>
+        <select id="tapdBugWorkspace" class="release-merge-select"></select>
+        <label class="release-merge-label" for="tapdBugIteration">TAPD 迭代</label>
+        <select id="tapdBugIteration" class="release-merge-select"></select>
+        <p id="tapdBugHint" class="page-confirm-hint"></p>
+        <div class="page-confirm-actions">
+          <button id="tapdBugCancel" class="secondary" type="button">取消</button>
+          <button id="tapdBugOk" class="primary" type="button">提交 bug</button>
+        </div>
+      </div>
+    </div>
     <script type="module" src="./app.ts"></script>
   </body>
 </html>

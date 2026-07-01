@@ -132,6 +132,13 @@ export interface TapdIteration {
   enddate?: string;
 }
 
+export interface TapdWorkspace {
+  id: string;
+  name?: string;
+  pretty_name?: string;
+  status?: string;
+}
+
 export interface TapdTaskItem {
   id: string;
   name: string;

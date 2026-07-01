@@ -23,7 +23,15 @@ import {
   submitPlan,
   submitJob,
 } from "../shared/api.js";
-import type { JobEvent, JobStatus, JobStatusType, PageContext, SubmitRequest } from "../shared/types.js";
+import type {
+  JobEvent,
+  JobStatus,
+  JobStatusType,
+  PageContext,
+  SubmitRequest,
+  TapdIteration,
+  TapdWorkspace,
+} from "../shared/types.js";
 import {
   MAX_ATTACHMENTS,
   HARD_MAX_BYTES,
@@ -33,6 +41,7 @@ import {
 import { initCodingTaskPicker, refreshTaskDrawer } from "./codingTaskPicker.js";
 import { setupComposerResize } from "./composerResize.js";
 import { attachJobToCodingTask, saveCodingPromptAsTask } from "../shared/codingTaskStore.js";
+import { createTapdBug, fetchTapdIterations, fetchTapdWorkspaces } from "../shared/tapdApi.js";
 import { mountPlanConfirmCard } from "../shared/planConfirmCard.js";
 import {
   appendCodingJobEvent,
@@ -1585,6 +1594,188 @@ function setupRevertDefaultModal(): void {
   });
 }
 
+function buildTapdBugTitle(planSummary: string): string {
+  const maxTitleLength = 29;
+  const plain = planSummary
+    .replace(/```[\s\S]*?```/g, " ")
+    .replace(/[#>*_`[\]-]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  const firstSentence = plain.split(/[。！？.!?]/)[0]?.trim() || plain || "AI 修改问题反馈";
+  return firstSentence.length > maxTitleLength ? firstSentence.slice(0, maxTitleLength) : firstSentence;
+}
+
+interface TapdBugSelection {
+  workspaceId: string;
+  iterationId: string;
+}
+
+let tapdBugResolver: ((selection: TapdBugSelection | null) => void) | null = null;
+let tapdBugLoadIterations: ((workspaceId: string) => Promise<void>) | null = null;
+
+function closeTapdBugModal(selection: TapdBugSelection | null): void {
+  const modal = document.getElementById("tapdBugModal");
+  if (modal) modal.hidden = true;
+  const resolver = tapdBugResolver;
+  tapdBugResolver = null;
+  tapdBugLoadIterations = null;
+  resolver?.(selection);
+}
+
+function workspaceLabel(workspace: TapdWorkspace): string {
+  return workspace.pretty_name ?? workspace.name ?? `项目 ${workspace.id}`;
+}
+
+function renderTapdBugIterations(iterations: TapdIteration[]): void {
+  const selectEl = el<HTMLSelectElement>("tapdBugIteration");
+  const okBtn = el<HTMLButtonElement>("tapdBugOk");
+  selectEl.innerHTML = iterations.length
+    ? iterations
+        .map((iteration) => {
+          const label = [iteration.name, iteration.status, iteration.enddate].filter(Boolean).join(" · ");
+          return `<option value="${escapeHtml(iteration.id)}">${escapeHtml(label)}</option>`;
+        })
+        .join("")
+    : `<option value="">暂无可选迭代</option>`;
+  selectEl.disabled = iterations.length === 0;
+  okBtn.disabled = iterations.length === 0;
+}
+
+function showTapdBugModal(input: {
+  job: JobStatus;
+  serverUrl: string;
+  title: string;
+  defaultWorkspaceId: string;
+  workspaces: TapdWorkspace[];
+}): Promise<TapdBugSelection | null> {
+  return new Promise((resolve) => {
+    const modal = el<HTMLElement>("tapdBugModal");
+    const titleEl = el<HTMLElement>("tapdBugTitle");
+    const planEl = el<HTMLElement>("tapdBugPlan");
+    const workspaceEl = el<HTMLSelectElement>("tapdBugWorkspace");
+    const hintEl = el<HTMLElement>("tapdBugHint");
+    const okBtn = el<HTMLButtonElement>("tapdBugOk");
+
+    tapdBugResolver = resolve;
+    titleEl.textContent = input.title;
+    planEl.textContent = input.job.planSummary ?? "";
+    workspaceEl.innerHTML = input.workspaces.length
+      ? input.workspaces
+          .map((workspace) => {
+            return `<option value="${escapeHtml(workspace.id)}">${escapeHtml(workspaceLabel(workspace))}</option>`;
+          })
+          .join("")
+      : `<option value="">暂无可选项目</option>`;
+    workspaceEl.disabled = input.workspaces.length === 0;
+    okBtn.disabled = true;
+    renderTapdBugIterations([]);
+    hintEl.textContent = input.workspaces.length === 0
+      ? "未加载到 TAPD 项目，请检查 TAPD 配置。"
+      : "请选择项目，迭代将按项目联动加载。";
+
+    const defaultWorkspace = input.workspaces.find((workspace) => workspace.id === input.defaultWorkspaceId);
+    workspaceEl.value = defaultWorkspace?.id ?? input.workspaces[0]?.id ?? "";
+    tapdBugLoadIterations = async (workspaceId: string) => {
+      if (!workspaceId) {
+        renderTapdBugIterations([]);
+        hintEl.textContent = "请先选择 TAPD 项目。";
+        return;
+      }
+      renderTapdBugIterations([]);
+      hintEl.textContent = "正在加载该项目的迭代...";
+      try {
+        const result = await fetchTapdIterations(input.serverUrl, workspaceId);
+        if (workspaceEl.value !== workspaceId) return;
+        renderTapdBugIterations(result.iterations);
+        hintEl.textContent = result.iterations.length === 0
+          ? "当前项目暂无可选迭代。"
+          : "缺陷内容将使用当前任务的 Plan 方案原文。";
+      } catch (err) {
+        if (workspaceEl.value !== workspaceId) return;
+        renderTapdBugIterations([]);
+        hintEl.textContent = err instanceof Error ? err.message : String(err);
+      }
+    };
+
+    modal.hidden = false;
+    if (workspaceEl.value) {
+      workspaceEl.focus();
+      void tapdBugLoadIterations(workspaceEl.value);
+    } else {
+      el<HTMLButtonElement>("tapdBugCancel").focus();
+    }
+  });
+}
+
+function setupTapdBugModal(): void {
+  el<HTMLButtonElement>("tapdBugOk").addEventListener("click", () => {
+    const workspaceId = el<HTMLSelectElement>("tapdBugWorkspace").value;
+    const iterationId = el<HTMLSelectElement>("tapdBugIteration").value;
+    closeTapdBugModal(workspaceId && iterationId ? { workspaceId, iterationId } : null);
+  });
+  el<HTMLSelectElement>("tapdBugWorkspace").addEventListener("change", () => {
+    const workspaceId = el<HTMLSelectElement>("tapdBugWorkspace").value;
+    void tapdBugLoadIterations?.(workspaceId);
+  });
+  el<HTMLButtonElement>("tapdBugCancel").addEventListener("click", () => {
+    closeTapdBugModal(null);
+  });
+  el<HTMLElement>("tapdBugBackdrop").addEventListener("click", () => {
+    closeTapdBugModal(null);
+  });
+  document.addEventListener("keydown", (event) => {
+    if (event.key !== "Escape") return;
+    const modal = document.getElementById("tapdBugModal");
+    if (modal && !modal.hidden) {
+      closeTapdBugModal(null);
+    }
+  });
+}
+
+async function handleCreateTapdBug(job: JobStatus): Promise<void> {
+  const config = await loadConfig();
+  if (!config.serverUrl) {
+    setConnectionStatus("请先在设置中配置服务端地址");
+    return;
+  }
+  const planSummary = job.planSummary?.trim();
+  if (!planSummary) {
+    setConnectionStatus("当前任务没有 Plan 方案，无法提交 bug");
+    return;
+  }
+
+  try {
+    setConnectionStatus("正在加载 TAPD 项目...");
+    const result = await fetchTapdWorkspaces(config.serverUrl);
+    if (result.warning) {
+      setConnectionStatus(`TAPD 项目列表接口受限，已使用本地配置项目：${result.warning}`);
+    }
+    const title = buildTapdBugTitle(planSummary);
+    const selection = await showTapdBugModal({
+      job,
+      serverUrl: config.serverUrl,
+      title,
+      defaultWorkspaceId: result.defaultWorkspaceId,
+      workspaces: result.workspaces,
+    });
+    if (!selection) {
+      setConnectionStatus("已取消提交 TAPD bug");
+      return;
+    }
+
+    setConnectionStatus("正在提交 TAPD bug...");
+    const created = await createTapdBug(config.serverUrl, {
+      title,
+      description: planSummary,
+      iterationId: selection.iterationId,
+      workspaceId: selection.workspaceId,
+    });
+    setConnectionStatus(`已提交 TAPD bug：${created.bug.name ?? created.bug.id}`);
+  } catch (err) {
+    setConnectionStatus(formatErrorMessage(config.serverUrl, err));
+  }
+}
+
 async function handleRevertDefault(job: JobStatus): Promise<void> {
   const config = await loadConfig();
   if (!config.serverUrl) {
@@ -1764,6 +1955,7 @@ async function init(): Promise<void> {
     },
     onReleaseMerge: handleReleaseMerge,
     onRevertDefault: handleRevertDefault,
+    onCreateTapdBug: handleCreateTapdBug,
     onStatus: setConnectionStatus,
   });
   el<HTMLElement>("refreshPageBtn").addEventListener("click", refreshPagePreview);
@@ -1774,6 +1966,7 @@ async function init(): Promise<void> {
   setupPageConfirmModal();
   setupReleaseMergeModal();
   setupRevertDefaultModal();
+  setupTapdBugModal();
 
   el<HTMLTextAreaElement>("prompt").addEventListener("keydown", (e) => {
     if (e.key === "Enter" && !e.shiftKey) {

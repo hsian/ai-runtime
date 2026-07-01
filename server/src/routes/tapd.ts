@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { getTapdConfig, isTapdConfigured } from "../config.js";
 import {
+  createBug,
   getIterationWorkItems,
   getStory,
   getTask,
@@ -40,6 +41,17 @@ tapdRouter.get("/health", async (_req, res) => {
       error: err instanceof Error ? err.message : "TAPD 连接失败",
     });
   }
+});
+
+tapdRouter.get("/workspaces", async (req, res) => {
+  if (tapdNotConfigured(req, res)) return;
+  const cfg = getTapdConfig();
+  const workspaces = cfg.workspaces.map((workspace) => ({
+    id: workspace.id,
+    name: workspace.name,
+    pretty_name: workspace.name,
+  }));
+  res.json({ defaultWorkspaceId: cfg.workspaceId, workspaces });
 });
 
 tapdRouter.get("/iterations", async (req, res) => {
@@ -91,6 +103,35 @@ tapdRouter.get("/iterations/:iterationId/bugs", async (req, res) => {
     res.json({ workspaceId, iterationId: req.params.iterationId, prefix: prefix ?? null, bugs: enriched });
   } catch (err) {
     res.status(502).json({ error: err instanceof Error ? err.message : "获取缺陷列表失败" });
+  }
+});
+
+tapdRouter.post("/bugs", async (req, res) => {
+  if (tapdNotConfigured(req, res)) return;
+  const title = typeof req.body?.title === "string" ? req.body.title.trim() : "";
+  const description = typeof req.body?.description === "string" ? req.body.description.trim() : "";
+  const iterationId = typeof req.body?.iterationId === "string" ? req.body.iterationId.trim() : "";
+  const workspaceId =
+    typeof req.body?.workspaceId === "string" ? req.body.workspaceId.trim() : getTapdConfig().workspaceId;
+
+  if (!title) {
+    res.status(400).json({ error: "缺少缺陷标题" });
+    return;
+  }
+  if (!description) {
+    res.status(400).json({ error: "缺少缺陷描述" });
+    return;
+  }
+  if (!iterationId) {
+    res.status(400).json({ error: "请选择 TAPD 迭代" });
+    return;
+  }
+
+  try {
+    const bug = await createBug({ title, description, iterationId, workspaceId });
+    res.json({ workspaceId, iterationId, bug });
+  } catch (err) {
+    res.status(502).json({ error: err instanceof Error ? err.message : "创建 TAPD 缺陷失败" });
   }
 });
 

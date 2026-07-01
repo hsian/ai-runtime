@@ -54,13 +54,20 @@ const envSchema = z.object({
   TAPD_CLIENT_ID: z.string().optional(),
   TAPD_CLIENT_SECRET: z.string().optional(),
   TAPD_WORKSPACE_ID: z.string().optional(),
+  TAPD_WORKSPACES: z.string().optional(),
 });
+
+export interface TapdConfiguredWorkspace {
+  id: string;
+  name?: string;
+}
 
 export interface TapdConfig {
   apiBase: string;
   clientId: string;
   clientSecret: string;
   workspaceId: string;
+  workspaces: TapdConfiguredWorkspace[];
 }
 
 function loadConfig() {
@@ -98,6 +105,23 @@ function loadConfig() {
 
 export const config = loadConfig();
 
+function parseTapdWorkspaces(value: string | undefined, defaultWorkspaceId: string): TapdConfiguredWorkspace[] {
+  const workspaces = new Map<string, TapdConfiguredWorkspace>();
+  if (defaultWorkspaceId) {
+    workspaces.set(defaultWorkspaceId, { id: defaultWorkspaceId, name: `项目 ${defaultWorkspaceId}` });
+  }
+  for (const part of value?.split(",") ?? []) {
+    const trimmed = part.trim();
+    if (!trimmed) continue;
+    const [idPart, ...nameParts] = trimmed.split(":");
+    const id = idPart.trim();
+    if (!id) continue;
+    const name = nameParts.join(":").trim();
+    workspaces.set(id, { id, name: name || `项目 ${id}` });
+  }
+  return [...workspaces.values()];
+}
+
 export function isTapdConfigured(): boolean {
   return Boolean(
     config.TAPD_CLIENT_ID && config.TAPD_CLIENT_SECRET && config.TAPD_WORKSPACE_ID
@@ -113,6 +137,7 @@ export function getTapdConfig(): TapdConfig {
     clientId: config.TAPD_CLIENT_ID!,
     clientSecret: config.TAPD_CLIENT_SECRET!,
     workspaceId: config.TAPD_WORKSPACE_ID!,
+    workspaces: parseTapdWorkspaces(config.TAPD_WORKSPACES, config.TAPD_WORKSPACE_ID!),
   };
 }
 

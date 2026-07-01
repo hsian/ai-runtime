@@ -1,13 +1,37 @@
 import { normalizeServerUrl } from "./config.js";
-import type { TapdIteration, TapdTaskItem } from "./types.js";
+import type { TapdIteration, TapdTaskItem, TapdWorkspace } from "./types.js";
 
 export const TAPD_TASK_PREFIX = "AI";
 
-export async function fetchTapdIterations(serverUrl: string): Promise<{
+export async function fetchTapdWorkspaces(serverUrl: string): Promise<{
+  defaultWorkspaceId: string;
+  workspaces: TapdWorkspace[];
+  warning?: string;
+}> {
+  const res = await fetch(`${normalizeServerUrl(serverUrl)}/api/tapd/workspaces`);
+  const data = (await res.json()) as {
+    defaultWorkspaceId?: string;
+    workspaces?: TapdWorkspace[];
+    warning?: string;
+    error?: string;
+  };
+  if (!res.ok) {
+    throw new Error(data.error ?? `获取 TAPD 项目失败: ${res.status}`);
+  }
+  return {
+    defaultWorkspaceId: data.defaultWorkspaceId ?? "",
+    workspaces: Array.isArray(data.workspaces) ? data.workspaces : [],
+    warning: data.warning,
+  };
+}
+
+export async function fetchTapdIterations(serverUrl: string, workspaceId?: string): Promise<{
   workspaceId: string;
   iterations: TapdIteration[];
 }> {
-  const res = await fetch(`${normalizeServerUrl(serverUrl)}/api/tapd/iterations`);
+  const url = new URL(`${normalizeServerUrl(serverUrl)}/api/tapd/iterations`);
+  if (workspaceId) url.searchParams.set("workspaceId", workspaceId);
+  const res = await fetch(url);
   const data = (await res.json()) as {
     workspaceId?: string;
     iterations?: TapdIteration[];
@@ -81,6 +105,36 @@ export async function fetchTapdIterationBugs(
     workspaceId: data.workspaceId ?? "",
     iterationId: data.iterationId ?? iterationId,
     bugs: Array.isArray(data.bugs) ? data.bugs : [],
+  };
+}
+
+export async function createTapdBug(
+  serverUrl: string,
+  input: {
+    title: string;
+    description: string;
+    iterationId: string;
+    workspaceId?: string;
+  }
+): Promise<{ workspaceId: string; iterationId: string; bug: TapdTaskItem }> {
+  const res = await fetch(`${normalizeServerUrl(serverUrl)}/api/tapd/bugs`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  const data = (await res.json()) as {
+    workspaceId?: string;
+    iterationId?: string;
+    bug?: TapdTaskItem;
+    error?: string;
+  };
+  if (!res.ok || !data.bug) {
+    throw new Error(data.error ?? `创建缺陷失败: ${res.status}`);
+  }
+  return {
+    workspaceId: data.workspaceId ?? input.workspaceId ?? "",
+    iterationId: data.iterationId ?? input.iterationId,
+    bug: data.bug,
   };
 }
 

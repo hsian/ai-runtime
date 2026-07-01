@@ -8,6 +8,7 @@ export interface CodingTaskPickerOptions {
   onSelect: (task: CodingTask) => void;
   onReleaseMerge?: (job: JobStatus) => void | Promise<void>;
   onRevertDefault?: (job: JobStatus) => void | Promise<void>;
+  onCreateTapdBug?: (job: JobStatus) => void | Promise<void>;
   onStatus?: (text: string) => void;
 }
 
@@ -49,6 +50,10 @@ function isReleaseMergeCandidate(job: JobStatus): boolean {
       job.branch === job.mergedToDefaultBranch &&
       !job.revertedFromDefaultAt
   );
+}
+
+function canCreateTapdBug(job?: JobStatus): boolean {
+  return Boolean(job?.jobId && job.planSummary?.trim());
 }
 
 function canRevertDefault(job?: JobStatus): boolean {
@@ -124,6 +129,7 @@ async function renderTaskList(): Promise<void> {
           const job = findJobForTask(task, jobs);
           const canReleaseMerge = job && isReleaseMergeCandidate(job);
           const canRevert = canRevertDefault(job);
+          const canCreateBug = canCreateTapdBug(job);
           return `
         <div class="task-picker-item" data-task-id="${escapeHtml(task.id)}">
           <button class="task-picker-select" type="button" data-task-id="${escapeHtml(task.id)}">
@@ -142,6 +148,11 @@ async function renderTaskList(): Promise<void> {
               ${
                 canRevert && job
                   ? `<button type="button" class="task-picker-menu-item danger" data-revert-job-id="${escapeHtml(job.jobId)}">撤回 test 提交</button>`
+                  : ""
+              }
+              ${
+                canCreateBug && job
+                  ? `<button type="button" class="task-picker-menu-item" data-create-bug-job-id="${escapeHtml(job.jobId)}">一键提交 bug</button>`
                   : ""
               }
               <button type="button" class="task-picker-menu-item" data-delete-id="${escapeHtml(task.id)}">删除本地任务</button>
@@ -272,6 +283,33 @@ export function initCodingTaskPicker(options: CodingTaskPickerOptions): void {
           menu.hidden = !menu.hidden;
         } else {
           menu.hidden = true;
+        }
+      });
+      return;
+    }
+
+    const createBugJobId = target.closest<HTMLElement>("[data-create-bug-job-id]")?.dataset.createBugJobId;
+    if (createBugJobId) {
+      event.stopPropagation();
+      listEl.querySelectorAll<HTMLElement>(".task-picker-menu").forEach((menu) => {
+        menu.hidden = true;
+      });
+      void loadConfig().then(async (config) => {
+        try {
+          if (!config.serverUrl) {
+            options.onStatus?.("请先在设置中配置服务端地址");
+            return;
+          }
+          const jobs = await listJobs(config.serverUrl);
+          const job = jobs.find((item) => item.jobId === createBugJobId);
+          if (!job) {
+            options.onStatus?.("任务不存在或服务已重启");
+            return;
+          }
+          await options.onCreateTapdBug?.(job);
+          await renderTaskList();
+        } catch (err) {
+          options.onStatus?.(err instanceof Error ? err.message : String(err));
         }
       });
       return;
