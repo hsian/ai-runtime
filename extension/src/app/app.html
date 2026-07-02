@@ -105,6 +105,12 @@
 
         <main class="batch-main">
           <section class="batch-toolbar">
+            <label class="batch-field batch-workspace-field">
+              <span>项目</span>
+              <select id="workspaceSelect">
+                <option value="">加载中…</option>
+              </select>
+            </label>
             <label class="batch-field">
               <span>迭代</span>
               <select id="iterationSelect">
@@ -156,10 +162,6 @@
                   <div class="batch-card-actions batch-run-actions">
                     <button id="confirmMergeBtn" class="batch-primary batch-compact-action" type="button" hidden>合并到 test</button>
                     <button id="discardMergeBtn" class="batch-secondary batch-compact-action" type="button" hidden>放弃合并</button>
-                    <button id="pauseBatchBtn" class="batch-secondary batch-compact-action" type="button" hidden>暂停</button>
-                    <button id="retryBatchBtn" class="batch-secondary batch-compact-action" type="button" hidden>重试当前</button>
-                    <button id="skipBatchBtn" class="batch-secondary batch-compact-action" type="button" hidden>跳过并继续</button>
-                    <button id="cancelBatchBtn" class="batch-danger batch-compact-action" type="button" hidden>终止</button>
                   </div>
                 </div>
                 <div id="jobProgressLog" class="batch-progress-log chat-messages"></div>
@@ -175,7 +177,7 @@
 
         <footer class="batch-footer">
           <div class="batch-footer-summary" id="batchFooterSummary">已选 0 个</div>
-          <button id="startBatchBtn" class="batch-primary" type="button" disabled>开始执行</button>
+          <button id="batchPrimaryActionBtn" class="batch-primary" type="button" disabled>开始执行</button>
         </footer>
       </div>
     </div>

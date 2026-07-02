@@ -28,6 +28,12 @@ let drawerWidth = 300;
 let rafId: number | null = null;
 let queuedWidth: number | null = null;
 
+function closeTaskMenus(): void {
+  listEl?.querySelectorAll<HTMLElement>(".task-picker-menu").forEach((menu) => {
+    menu.hidden = true;
+  });
+}
+
 function escapeHtml(text: string): string {
   return text
     .replace(/&/g, "&amp;")
@@ -137,14 +143,14 @@ async function renderTaskList(): Promise<void> {
             <span class="task-picker-summary">${escapeHtml(summarize(task.draftPrompt))}</span>
             ${renderTaskJobMeta(job)}
           </button>
-          ${
-            canReleaseMerge
-              ? `<button class="task-picker-release" type="button" data-release-job-id="${escapeHtml(job.jobId)}">合并</button>`
-              : ""
-          }
           <div class="task-picker-more-wrap">
             <button class="task-picker-more" type="button" data-menu-task-id="${escapeHtml(task.id)}" title="更多操作">⋯</button>
             <div class="task-picker-menu" data-menu-for="${escapeHtml(task.id)}" hidden>
+              ${
+                canReleaseMerge && job
+                  ? `<button type="button" class="task-picker-menu-item" data-release-job-id="${escapeHtml(job.jobId)}">合并分支</button>`
+                  : ""
+              }
               ${
                 canRevert && job
                   ? `<button type="button" class="task-picker-menu-item danger" data-revert-job-id="${escapeHtml(job.jobId)}">撤回 test 提交</button>`
@@ -291,9 +297,7 @@ export function initCodingTaskPicker(options: CodingTaskPickerOptions): void {
     const createBugJobId = target.closest<HTMLElement>("[data-create-bug-job-id]")?.dataset.createBugJobId;
     if (createBugJobId) {
       event.stopPropagation();
-      listEl.querySelectorAll<HTMLElement>(".task-picker-menu").forEach((menu) => {
-        menu.hidden = true;
-      });
+      closeTaskMenus();
       void loadConfig().then(async (config) => {
         try {
           if (!config.serverUrl) {
@@ -318,9 +322,7 @@ export function initCodingTaskPicker(options: CodingTaskPickerOptions): void {
     const revertJobId = target.closest<HTMLElement>("[data-revert-job-id]")?.dataset.revertJobId;
     if (revertJobId) {
       event.stopPropagation();
-      listEl.querySelectorAll<HTMLElement>(".task-picker-menu").forEach((menu) => {
-        menu.hidden = true;
-      });
+      closeTaskMenus();
       void loadConfig().then(async (config) => {
         try {
           if (!config.serverUrl) {
@@ -345,6 +347,7 @@ export function initCodingTaskPicker(options: CodingTaskPickerOptions): void {
     const releaseJobId = target.closest<HTMLElement>("[data-release-job-id]")?.dataset.releaseJobId;
     if (releaseJobId) {
       event.stopPropagation();
+      closeTaskMenus();
       void loadConfig().then(async (config) => {
         try {
           if (!config.serverUrl) {
@@ -370,9 +373,16 @@ export function initCodingTaskPicker(options: CodingTaskPickerOptions): void {
     const deleteId = target.closest<HTMLElement>("[data-delete-id]")?.dataset.deleteId;
     if (deleteId) {
       event.stopPropagation();
-      listEl.querySelectorAll<HTMLElement>(".task-picker-menu").forEach((menu) => {
-        menu.hidden = true;
-      });
+      closeTaskMenus();
+      const taskTitle = target
+        .closest<HTMLElement>(".task-picker-item")
+        ?.querySelector<HTMLElement>(".task-picker-title")
+        ?.textContent
+        ?.trim();
+      const confirmed = window.confirm(
+        `确认删除本地任务${taskTitle ? `「${taskTitle}」` : ""}？\n\n只会删除任务历史记录，不会影响代码或服务端任务。`
+      );
+      if (!confirmed) return;
       void deleteCodingTask(deleteId).then(() => renderTaskList());
       return;
     }
@@ -388,13 +398,16 @@ export function initCodingTaskPicker(options: CodingTaskPickerOptions): void {
     });
   });
 
-  document.addEventListener("click", (event) => {
-    if (!listEl?.contains(event.target as Node)) {
-      listEl?.querySelectorAll<HTMLElement>(".task-picker-menu").forEach((menu) => {
-        menu.hidden = true;
-      });
-    }
-  });
+  document.addEventListener(
+    "pointerdown",
+    (event) => {
+      const target = event.target as HTMLElement | null;
+      if (!target?.closest(".task-picker-more-wrap")) {
+        closeTaskMenus();
+      }
+    },
+    true
+  );
 
   void chrome.storage.local.get([DRAWER_OPEN_KEY]).then((stored) => {
     if (stored[DRAWER_OPEN_KEY] === true) {

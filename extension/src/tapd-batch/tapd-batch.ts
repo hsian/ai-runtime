@@ -8,6 +8,7 @@ import {
   fetchTapdIterationBugs,
   fetchTapdIterationTasks,
   fetchTapdIterations,
+  fetchTapdWorkspaces,
   TAPD_TASK_PREFIX,
 } from "../shared/tapdApi.js";
 import { sendTapdBatchCommand } from "../shared/tapdBatchClient.js";
@@ -18,7 +19,14 @@ import {
   loadTapdBatchSession,
   saveTapdBatchSession,
 } from "../shared/tapdBatchStore.js";
-import type { JobEvent, TapdBatchSession, TapdBatchTask, TapdIteration, TapdTaskItem } from "../shared/types.js";
+import type {
+  JobEvent,
+  TapdBatchSession,
+  TapdBatchTask,
+  TapdIteration,
+  TapdTaskItem,
+  TapdWorkspace,
+} from "../shared/types.js";
 
 type PickerKind = "task" | "bug";
 
@@ -33,6 +41,7 @@ interface PickerRow {
 
 let serverUrl = "";
 let workspaceId = "";
+let workspaces: TapdWorkspace[] = [];
 let iterations: TapdIteration[] = [];
 let activePickerKind: PickerKind = "task";
 const pickerRowsByKind: Record<PickerKind, PickerRow[]> = {
@@ -48,6 +57,7 @@ let createMergeRequestOnMerge = false;
 const expandedPromptTaskIds = new Set<string>();
 
 const SELECTED_ITERATION_KEY = "tapdBatchSelectedIterationId";
+const SELECTED_WORKSPACE_KEY = "tapdBatchSelectedWorkspaceId";
 
 let panelRoot: HTMLElement | null = null;
 let panelInitialized = false;
@@ -182,7 +192,7 @@ function ensureProgressView(): JobProgressView {
       },
       onPlanReply: (jobId, reply) => {
         if (session?.activeJobId && session.activeJobId !== jobId) {
-          setStatus("任务已更新，请点「重试当前」后重新操作");
+          setStatus("任务已更新，请终止后重新开始");
           return;
         }
         void sendTapdBatchCommand<{ ok: boolean; error?: string }>({
@@ -198,8 +208,10 @@ function ensureProgressView(): JobProgressView {
           setStatus("正在根据补充说明继续分析...");
         });
       },
-      onCancelJob: () => {
-        void sendTapdBatchCommand({ type: "TAPD_BATCH_PAUSE" });
+      onCancelJob: (jobId) => {
+        progressView?.renderConfirmCard(jobId, "cancelled");
+        setStatus("正在取消任务...");
+        void sendTapdBatchCommand({ type: "TAPD_BATCH_CANCEL" }).then(() => syncStateFromBackground());
       },
       onConfirmMerge: (jobId) => {
         void sendTapdBatchCommand({ type: "TAPD_BATCH_CONFIRM_MERGE" }).then(() => {
@@ -343,10 +355,31 @@ function pickDefaultIterationId(list: TapdIteration[]): string {
   return open?.id ?? list[0]?.id ?? "";
 }
 
+function workspaceLabel(workspace: TapdWorkspace): string {
+  return workspace.pretty_name ?? workspace.name ?? `项目 ${workspace.id}`;
+}
+
+function renderWorkspaceOptions(selectedId: string): void {
+  const select = el<HTMLSelectElement>("workspaceSelect");
+  if (workspaces.length === 0) {
+    select.innerHTML = `<option value="">暂无项目</option>`;
+    select.disabled = true;
+    return;
+  }
+
+  select.innerHTML = workspaces
+    .map((workspace) => {
+      return `<option value="${escapeHtml(workspace.id)}"${workspace.id === selectedId ? " selected" : ""}>${escapeHtml(workspaceLabel(workspace))}</option>`;
+    })
+    .join("");
+  select.disabled = false;
+}
+
 function renderIterationOptions(selectedId: string): void {
   const select = el<HTMLSelectElement>("iterationSelect");
   if (iterations.length === 0) {
     select.innerHTML = `<option value="">暂无迭代</option>`;
+    select.disabled = true;
     return;
   }
 
@@ -358,6 +391,7 @@ function renderIterationOptions(selectedId: string): void {
       return `<option value="${escapeHtml(iteration.id)}"${iteration.id === selectedId ? " selected" : ""}>${escapeHtml(label)}</option>`;
     })
     .join("");
+  select.disabled = false;
 }
 
 function renderTaskPicker(): void {
@@ -531,13 +565,9 @@ function renderQueue(): void {
 }
 
 function updateFooter(): void {
-  const startBtn = el<HTMLButtonElement>("startBatchBtn");
+  const primaryActionBtn = el<HTMLButtonElement>("batchPrimaryActionBtn");
   const confirmMergeBtn = el<HTMLButtonElement>("confirmMergeBtn");
   const discardMergeBtn = el<HTMLButtonElement>("discardMergeBtn");
-  const pauseBtn = el<HTMLButtonElement>("pauseBatchBtn");
-  const retryBtn = el<HTMLButtonElement>("retryBatchBtn");
-  const skipBtn = el<HTMLButtonElement>("skipBatchBtn");
-  const cancelBtn = el<HTMLButtonElement>("cancelBatchBtn");
   const loadBtn = el<HTMLButtonElement>("loadTasksBtn");
   const loadBugsBtn = el<HTMLButtonElement>("loadBugsBtn");
 
@@ -549,31 +579,27 @@ function updateFooter(): void {
   confirmMergeBtn.hidden = true;
   confirmMergeBtn.textContent = createMergeRequestOnMerge ? "提交 Merge Request" : "合并到 test";
   discardMergeBtn.hidden = true;
-  pauseBtn.hidden = true;
-  retryBtn.hidden = true;
-  skipBtn.hidden = true;
-  cancelBtn.hidden = true;
-  startBtn.hidden = false;
+  primaryActionBtn.classList.remove("batch-danger");
+  primaryActionBtn.classList.add("batch-primary");
   updateSelectionSummary();
   updateSideEmptyState();
 
   if (!active) {
-    startBtn.textContent = "开始执行";
-    startBtn.disabled = loopRunning || checkedCount === 0;
+    primaryActionBtn.textContent = "开始执行";
+    primaryActionBtn.disabled = loopRunning || checkedCount === 0;
     loadBtn.disabled = loopRunning && !terminalBatch;
     loadBugsBtn.disabled = loopRunning && !terminalBatch;
     return;
   }
 
-  cancelBtn.hidden = false;
+  primaryActionBtn.textContent = "终止";
+  primaryActionBtn.disabled = false;
+  primaryActionBtn.classList.remove("batch-primary");
+  primaryActionBtn.classList.add("batch-danger");
   loadBtn.disabled = true;
   loadBugsBtn.disabled = true;
-  startBtn.hidden = true;
 
   switch (status) {
-    case "running":
-      pauseBtn.hidden = false;
-      break;
     case "waiting_confirm":
     case "waiting_input":
       break;
@@ -581,14 +607,7 @@ function updateFooter(): void {
       confirmMergeBtn.hidden = false;
       discardMergeBtn.hidden = false;
       break;
-    case "paused":
-      retryBtn.hidden = false;
-      skipBtn.hidden = false;
-      break;
     default:
-      startBtn.hidden = false;
-      startBtn.textContent = "开始执行";
-      startBtn.disabled = true;
       break;
   }
 }
@@ -662,16 +681,60 @@ async function syncStateFromBackground(): Promise<void> {
   renderTaskPicker();
 }
 
-async function loadIterations(selectSaved = true): Promise<void> {
+async function loadWorkspaces(selectSaved = true): Promise<void> {
   if (!serverUrl) {
     setStatus("请先在设置中配置服务端地址");
     return;
   }
 
+  setStatus("正在加载 TAPD 项目…");
+  try {
+    const result = await fetchTapdWorkspaces(serverUrl);
+    workspaces = result.workspaces;
+    const stored = selectSaved
+      ? ((await chrome.storage.local.get([SELECTED_WORKSPACE_KEY]))[SELECTED_WORKSPACE_KEY] as string | undefined)
+      : undefined;
+    const selectedId = stored && workspaces.some((item) => item.id === stored)
+      ? stored
+      : result.defaultWorkspaceId && workspaces.some((item) => item.id === result.defaultWorkspaceId)
+        ? result.defaultWorkspaceId
+        : workspaces[0]?.id ?? "";
+
+    renderWorkspaceOptions(selectedId);
+    workspaceId = selectedId;
+    if (workspaceId) {
+      await chrome.storage.local.set({ [SELECTED_WORKSPACE_KEY]: workspaceId });
+    }
+    if (result.warning) {
+      setStatus(`TAPD 项目列表接口受限，已使用本地配置项目：${result.warning}`);
+    } else {
+      setStatus(`已加载 ${workspaces.length} 个 TAPD 项目`);
+    }
+  } catch (err) {
+    setStatus(formatErrorMessage(serverUrl, err));
+  }
+}
+
+async function loadIterations(selectSaved = true): Promise<void> {
+  if (!serverUrl) {
+    setStatus("请先在设置中配置服务端地址");
+    return;
+  }
+  const selectedWorkspaceId = el<HTMLSelectElement>("workspaceSelect").value;
+  if (!selectedWorkspaceId) {
+    workspaceId = "";
+    iterations = [];
+    renderIterationOptions("");
+    setStatus("请先选择 TAPD 项目");
+    return;
+  }
+
+  workspaceId = selectedWorkspaceId;
   setStatus("正在加载迭代…");
   try {
-    const result = await fetchTapdIterations(serverUrl);
-    workspaceId = result.workspaceId;
+    const result = await fetchTapdIterations(serverUrl, selectedWorkspaceId);
+    if (el<HTMLSelectElement>("workspaceSelect").value !== selectedWorkspaceId) return;
+    workspaceId = result.workspaceId || selectedWorkspaceId;
     iterations = result.iterations.sort((a, b) => (b.enddate ?? "").localeCompare(a.enddate ?? ""));
 
     const stored = selectSaved
@@ -682,8 +745,12 @@ async function loadIterations(selectSaved = true): Promise<void> {
       : pickDefaultIterationId(iterations);
 
     renderIterationOptions(selectedId);
+    await chrome.storage.local.set({ [SELECTED_WORKSPACE_KEY]: selectedWorkspaceId });
     setStatus(`已加载 ${iterations.length} 个迭代`);
   } catch (err) {
+    if (el<HTMLSelectElement>("workspaceSelect").value !== selectedWorkspaceId) return;
+    iterations = [];
+    renderIterationOptions("");
     setStatus(formatErrorMessage(serverUrl, err));
   }
 }
@@ -700,8 +767,8 @@ async function loadTapdItems(kind: PickerKind): Promise<void> {
   try {
     const completedIds = await listCompletedTapdTaskIds();
     const items = kind === "bug"
-      ? (await fetchTapdIterationBugs(serverUrl, iterationId)).bugs
-      : (await fetchTapdIterationTasks(serverUrl, iterationId)).tasks;
+      ? (await fetchTapdIterationBugs(serverUrl, iterationId, TAPD_TASK_PREFIX, workspaceId)).bugs
+      : (await fetchTapdIterationTasks(serverUrl, iterationId, TAPD_TASK_PREFIX, workspaceId)).tasks;
     setActivePickerRows(items.map((task) => ({
       kind,
       task,
@@ -798,6 +865,7 @@ async function resetTapdTaskPanel(): Promise<void> {
   session = null;
   loopRunning = false;
   clearPickerRows();
+  workspaces = [];
   iterations = [];
   workspaceId = "";
 
@@ -812,12 +880,13 @@ async function resetTapdTaskPanel(): Promise<void> {
 
   await Promise.all([
     saveTapdBatchSession(null),
-    chrome.storage.local.remove([SELECTED_ITERATION_KEY, TAPD_BATCH_JOB_LOG]),
+    chrome.storage.local.remove([SELECTED_WORKSPACE_KEY, SELECTED_ITERATION_KEY, TAPD_BATCH_JOB_LOG]),
   ]);
 
   setStatus("就绪");
   updateFooter();
 
+  await loadWorkspaces(true);
   await loadIterations(true);
 }
 
@@ -887,6 +956,14 @@ function bindEvents(options?: TapdBatchPanelOptions): void {
   });
   el<HTMLButtonElement>("loadTasksBtn").addEventListener("click", () => void loadTasks());
   el<HTMLButtonElement>("loadBugsBtn").addEventListener("click", () => void loadBugs());
+  el<HTMLSelectElement>("workspaceSelect").addEventListener("change", () => {
+    workspaceId = el<HTMLSelectElement>("workspaceSelect").value;
+    clearPickerRows();
+    switchPickerKind("task");
+    renderTaskPicker();
+    void chrome.storage.local.remove([SELECTED_ITERATION_KEY]);
+    void loadIterations(false).then(() => loadTasks());
+  });
   el<HTMLSelectElement>("iterationSelect").addEventListener("change", () => {
     clearPickerRows();
     switchPickerKind("task");
@@ -952,18 +1029,12 @@ function bindEvents(options?: TapdBatchPanelOptions): void {
     updateFooter();
   });
 
-  el<HTMLButtonElement>("startBatchBtn").addEventListener("click", () => void startBatch());
-  el<HTMLButtonElement>("pauseBatchBtn").addEventListener("click", () => {
-    void sendTapdBatchCommand({ type: "TAPD_BATCH_PAUSE" });
-  });
-  el<HTMLButtonElement>("retryBatchBtn").addEventListener("click", () => {
-    void sendTapdBatchCommand({ type: "TAPD_BATCH_RETRY_CURRENT" }).then(() => syncStateFromBackground());
-  });
-  el<HTMLButtonElement>("skipBatchBtn").addEventListener("click", () => {
-    void sendTapdBatchCommand({ type: "TAPD_BATCH_SKIP_CURRENT" }).then(() => syncStateFromBackground());
-  });
-  el<HTMLButtonElement>("cancelBatchBtn").addEventListener("click", () => {
-    void sendTapdBatchCommand({ type: "TAPD_BATCH_CANCEL" }).then(() => syncStateFromBackground());
+  el<HTMLButtonElement>("batchPrimaryActionBtn").addEventListener("click", () => {
+    if (hasActiveBatchSession(session)) {
+      void sendTapdBatchCommand({ type: "TAPD_BATCH_CANCEL" }).then(() => syncStateFromBackground());
+      return;
+    }
+    void startBatch();
   });
   el<HTMLButtonElement>("confirmMergeBtn").addEventListener("click", () => {
     const jobId = session?.activeJobId;
@@ -1051,10 +1122,19 @@ async function initPanel(options?: TapdBatchPanelOptions): Promise<void> {
   createMergeRequestOnMerge = config.createMergeRequestOnMerge;
   setupTapdResetConfirmModal();
   bindEvents(options);
+  await loadWorkspaces();
   await loadIterations();
 
   const storedSession = await loadTapdBatchSession();
-  if (storedSession?.iterationId && iterations.some((item) => item.id === storedSession.iterationId)) {
+  if (storedSession?.workspaceId && workspaces.some((item) => item.id === storedSession.workspaceId)) {
+    el<HTMLSelectElement>("workspaceSelect").value = storedSession.workspaceId;
+    await loadIterations();
+  }
+  if (
+    storedSession?.workspaceId === el<HTMLSelectElement>("workspaceSelect").value &&
+    storedSession.iterationId &&
+    iterations.some((item) => item.id === storedSession.iterationId)
+  ) {
     el<HTMLSelectElement>("iterationSelect").value = storedSession.iterationId;
   }
 

@@ -255,6 +255,14 @@ async function runSingleTask(
 
   if (!jobId) {
     await loadPersistedServerUrl();
+    next = touchSession({
+      ...next,
+      pauseReason: task.sourceHtml && /<img\b/i.test(task.sourceHtml)
+        ? `${task.title}：正在准备 TAPD 描述配图...`
+        : `${task.title}：正在提交 Plan...`,
+    });
+    await emitSession(next);
+
     const prepared = await prepareTapdJobImages(serverUrl, task.sourceHtml, current.workspaceId);
     if (prepared.downloadFailed) {
       return touchSession({
@@ -269,6 +277,12 @@ async function runSingleTask(
     }
 
     const prompt = appendTapdImageInstructions(task.prompt, prepared.images.length);
+    next = touchSession({
+      ...next,
+      pauseReason: `${task.title}：正在提交 Plan...`,
+    });
+    await emitSession(next);
+
     const plan = await submitPlan(serverUrl, {
       prompt,
       submittedBy: "tapd-batch",
@@ -283,6 +297,7 @@ async function runSingleTask(
     next = touchSession({
       ...updateTask(next, task.id, { jobId }),
       activeJobId: jobId,
+      pauseReason: undefined,
     });
     await emitSession(next);
   } else {
@@ -550,7 +565,7 @@ async function runBatchLoop(
   } finally {
     loopRunning = false;
     closeEventStream();
-    if (session?.status === "cancelled") {
+    if (session) {
       chrome.runtime.sendMessage({ type: TAPD_BATCH_STATE, session, loopRunning }).catch(() => {});
     }
   }
@@ -585,7 +600,7 @@ async function handlePlanReplyError(
       status: "paused",
       activeJobId: undefined,
       planSummary: undefined,
-      pauseReason: `${task.title}：服务端任务已过期，请点「重试当前」`,
+      pauseReason: `${task.title}：服务端任务已过期，请终止后重新开始`,
     });
   }
   throw err;
@@ -593,7 +608,7 @@ async function handlePlanReplyError(
 
 async function directPlanReply(reply: string): Promise<{ ok: boolean; error?: string }> {
   if (!session?.activeJobId || !session.currentTaskId) {
-    return { ok: false, error: "无活动任务，请点「重试当前」" };
+    return { ok: false, error: "无活动任务，请终止后重新开始" };
   }
   await loadPersistedServerUrl();
   if (!serverUrl) {
@@ -620,7 +635,7 @@ async function directPlanReply(reply: string): Promise<{ ok: boolean; error?: st
     return {
       ok: false,
       error: isJobNotFoundError(err)
-        ? "服务端任务已过期（可能已重启），请点「重试当前」"
+        ? "服务端任务已过期（可能已重启），请终止后重新开始"
         : err instanceof Error
           ? err.message
           : String(err),
@@ -772,10 +787,6 @@ export async function handleTapdBatchCommand(
       void runBatchLoop(command.session);
       return { ok: true };
 
-    case "TAPD_BATCH_PAUSE":
-      stopRequested = true;
-      return { ok: true };
-
     case "TAPD_BATCH_CANCEL":
       await cancelBatchSession();
       return { ok: true };
@@ -795,7 +806,7 @@ export async function handleTapdBatchCommand(
 
     case "TAPD_BATCH_CONFIRM_MERGE":
       if (userGateExpected === "merge") {
-        userGateResolve?.("execute");
+        userGateResolve?.("merge");
         return { ok: true };
       }
       return directConfirmMerge();
@@ -806,42 +817,6 @@ export async function handleTapdBatchCommand(
         return { ok: true };
       }
       return directDiscardMerge();
-
-    case "TAPD_BATCH_SKIP_CURRENT": {
-      if (!session?.currentTaskId) return { ok: false };
-      const taskId = session.currentTaskId;
-      const next = touchSession({
-        ...session,
-        status: "running",
-        pauseReason: undefined,
-        tasks: session.tasks.map((task) =>
-          task.id === taskId ? { ...task, status: "skipped", error: undefined, failedPhase: undefined } : task
-        ),
-      });
-      userGateResolve?.("cancel");
-      await emitSession(next);
-      void runBatchLoop(next);
-      return { ok: true };
-    }
-
-    case "TAPD_BATCH_RETRY_CURRENT": {
-      if (!session) return { ok: false };
-      const taskId = session.currentTaskId ?? session.tasks.find((t) => t.status === "failed")?.id;
-      if (!taskId) return { ok: false };
-      const next = touchSession({
-        ...session,
-        status: "running",
-        pauseReason: undefined,
-        tasks: session.tasks.map((task) =>
-          task.id === taskId
-            ? { ...task, status: "pending", error: undefined, failedPhase: undefined, jobId: undefined }
-            : task
-        ),
-      });
-      await emitSession(next);
-      void runBatchLoop(next);
-      return { ok: true };
-    }
 
     default:
       return { ok: false };

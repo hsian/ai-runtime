@@ -5,6 +5,7 @@ import {
 } from "./tapdClient.js";
 
 export const MAX_TAPD_DESCRIPTION_IMAGES = 8;
+const TAPD_REMOTE_IMAGE_TIMEOUT_MS = 12000;
 
 const IMG_ATTR_PATTERNS = [
   /\ssrc=["']([^"']+)["']/i,
@@ -105,9 +106,12 @@ function isTapdImagePath(pathOrUrl: string): boolean {
 }
 
 async function fetchBinary(url: string): Promise<{ buffer: Buffer; mime: string } | null> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), TAPD_REMOTE_IMAGE_TIMEOUT_MS);
   try {
     const res = await fetch(url, {
       redirect: "follow",
+      signal: controller.signal,
       headers: { "User-Agent": "AI-Runtime/1.0", Referer: "https://www.tapd.cn/" },
     });
     if (!res.ok) return null;
@@ -119,6 +123,8 @@ async function fetchBinary(url: string): Promise<{ buffer: Buffer; mime: string 
     return { buffer, mime: mime === "image/jpg" ? "image/jpeg" : mime };
   } catch {
     return null;
+  } finally {
+    clearTimeout(timeout);
   }
 }
 

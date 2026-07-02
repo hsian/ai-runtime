@@ -1,6 +1,9 @@
 import { compressImageForUpload, HARD_MAX_BYTES, MAX_ATTACHMENTS } from "./imageCompress.js";
 import { normalizeServerUrl } from "./config.js";
 
+const SERVER_IMAGE_FETCH_TIMEOUT_MS = 15000;
+const BROWSER_IMAGE_FETCH_TIMEOUT_MS = 10000;
+
 interface SerializedTapdImage {
   dataUrl: string;
   mime?: string;
@@ -50,26 +53,33 @@ async function fetchTapdDescriptionImagesFromServer(
   html: string,
   workspaceId?: string
 ): Promise<Blob[]> {
-  const res = await fetch(`${normalizeServerUrl(serverUrl)}/api/tapd/images/from-html`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ html, workspaceId }),
-  });
-  const data = (await res.json()) as {
-    images?: SerializedTapdImage[];
-    error?: string;
-    warning?: string;
-  };
-  if (!res.ok) {
-    throw new Error(data.error ?? data.warning ?? `下载配图失败: ${res.status}`);
-  }
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), SERVER_IMAGE_FETCH_TIMEOUT_MS);
+  try {
+    const res = await fetch(`${normalizeServerUrl(serverUrl)}/api/tapd/images/from-html`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ html, workspaceId }),
+      signal: controller.signal,
+    });
+    const data = (await res.json()) as {
+      images?: SerializedTapdImage[];
+      error?: string;
+      warning?: string;
+    };
+    if (!res.ok) {
+      throw new Error(data.error ?? data.warning ?? `下载配图失败: ${res.status}`);
+    }
 
-  const blobs: Blob[] = [];
-  for (const item of data.images ?? []) {
-    const blob = dataUrlToBlob(item.dataUrl, item.mime);
-    if (blob) blobs.push(blob);
+    const blobs: Blob[] = [];
+    for (const item of data.images ?? []) {
+      const blob = dataUrlToBlob(item.dataUrl, item.mime);
+      if (blob) blobs.push(blob);
+    }
+    return blobs;
+  } finally {
+    window.clearTimeout(timeout);
   }
-  return blobs;
 }
 
 const IMG_ATTR_PATTERNS = [
@@ -152,24 +162,31 @@ async function fetchSingleTapdImageUrl(url: string): Promise<Blob | null> {
   if (cookieHeader) headers.Cookie = cookieHeader;
 
   try {
-    const res = await fetch(url, {
-      credentials: "include",
-      redirect: "follow",
-      headers,
-    });
-    if (!res.ok) return null;
-    const buffer = await res.arrayBuffer();
-    if (buffer.byteLength === 0 || buffer.byteLength > 8 * 1024 * 1024) return null;
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), BROWSER_IMAGE_FETCH_TIMEOUT_MS);
+    try {
+      const res = await fetch(url, {
+        credentials: "include",
+        redirect: "follow",
+        headers,
+        signal: controller.signal,
+      });
+      if (!res.ok) return null;
+      const buffer = await res.arrayBuffer();
+      if (buffer.byteLength === 0 || buffer.byteLength > 8 * 1024 * 1024) return null;
 
-    const bytes = new Uint8Array(buffer);
-    const sniffed = sniffImageMime(bytes);
-    if (sniffed) return new Blob([buffer], { type: sniffed });
+      const bytes = new Uint8Array(buffer);
+      const sniffed = sniffImageMime(bytes);
+      if (sniffed) return new Blob([buffer], { type: sniffed });
 
-    const headerType = res.headers.get("content-type")?.split(";")[0]?.trim();
-    if (headerType?.startsWith("image/")) {
-      return new Blob([buffer], { type: headerType });
+      const headerType = res.headers.get("content-type")?.split(";")[0]?.trim();
+      if (headerType?.startsWith("image/")) {
+        return new Blob([buffer], { type: headerType });
+      }
+      return null;
+    } finally {
+      window.clearTimeout(timeout);
     }
-    return null;
   } catch {
     return null;
   }

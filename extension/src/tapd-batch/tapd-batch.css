@@ -175,7 +175,9 @@ body.batch-resizing {
 }
 
 #queueSection {
-  flex: 0 1 36%;
+  flex: 0 0 auto;
+  min-height: 138px;
+  max-height: 252px;
 }
 
 #progressSection {
@@ -258,6 +260,10 @@ body.batch-resizing {
   font-size: 12px;
   color: var(--color-muted);
   font-weight: 600;
+}
+
+.batch-workspace-field {
+  flex: 0 1 260px;
 }
 
 .batch-field select {
@@ -349,7 +355,9 @@ body.batch-resizing {
 }
 
 .batch-queue-list {
+  flex: 1;
   min-height: 0;
+  max-height: 154px;
   overflow-y: auto;
 }
 
@@ -508,6 +516,7 @@ body.batch-resizing {
   align-items: flex-start;
   justify-content: space-between;
   gap: 10px;
+  min-height: 62px;
   padding: 10px;
   border: 1px solid var(--color-border-soft);
   border-left: 3px solid var(--color-border-soft);
@@ -575,7 +584,8 @@ body.batch-resizing {
   cursor: pointer;
 }
 
-.batch-footer .batch-primary {
+.batch-footer .batch-primary,
+.batch-footer .batch-danger {
   flex: 0 0 160px;
 }
 

@@ -49,7 +49,8 @@ export async function fetchTapdIterations(serverUrl: string, workspaceId?: strin
 export async function fetchTapdIterationTasks(
   serverUrl: string,
   iterationId: string,
-  prefix = TAPD_TASK_PREFIX
+  prefix = TAPD_TASK_PREFIX,
+  workspaceId?: string
 ): Promise<{
   workspaceId: string;
   iterationId: string;
@@ -59,6 +60,7 @@ export async function fetchTapdIterationTasks(
     `${normalizeServerUrl(serverUrl)}/api/tapd/iterations/${encodeURIComponent(iterationId)}/tasks`
   );
   if (prefix) url.searchParams.set("prefix", prefix);
+  if (workspaceId) url.searchParams.set("workspaceId", workspaceId);
 
   const res = await fetch(url);
   const data = (await res.json()) as {
@@ -80,7 +82,8 @@ export async function fetchTapdIterationTasks(
 export async function fetchTapdIterationBugs(
   serverUrl: string,
   iterationId: string,
-  prefix = TAPD_TASK_PREFIX
+  prefix = TAPD_TASK_PREFIX,
+  workspaceId?: string
 ): Promise<{
   workspaceId: string;
   iterationId: string;
@@ -90,6 +93,7 @@ export async function fetchTapdIterationBugs(
     `${normalizeServerUrl(serverUrl)}/api/tapd/iterations/${encodeURIComponent(iterationId)}/bugs`
   );
   if (prefix) url.searchParams.set("prefix", prefix);
+  if (workspaceId) url.searchParams.set("workspaceId", workspaceId);
 
   const res = await fetch(url);
   const data = (await res.json()) as {

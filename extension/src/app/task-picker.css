@@ -335,19 +335,3 @@
   background: #fafafa;
   border-color: #f0f0f0;
 }
-
-.task-picker-release {
-  flex: 0 0 52px;
-  width: 52px;
-  border: 1px solid #bfdbfe;
-  border-radius: 6px;
-  background: #eff6ff;
-  color: #1d4ed8;
-  cursor: pointer;
-  font-size: 12px;
-}
-
-.task-picker-release:hover {
-  background: #dbeafe;
-  border-color: #93c5fd;
-}
