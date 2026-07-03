@@ -1,7 +1,7 @@
 import "../shared/styles.css";
 import "../shared/shellView.css";
 import { initTapdBatchPanel } from "../tapd-batch/tapd-batch.js";
-import { loadConfig } from "../shared/config.js";
+import { loadConfig, saveConfig } from "../shared/config.js";
 import {
   fetchCurrentTabPreview,
   fetchPageContext,
@@ -1936,15 +1936,76 @@ function switchAppView(view: "coding" | "batch"): void {
   }
 }
 
+function closeSettingsModal(): void {
+  const modal = el<HTMLElement>("settingsModal");
+  modal.hidden = true;
+}
+
+async function openSettingsModal(): Promise<void> {
+  const modal = el<HTMLElement>("settingsModal");
+  const result = el<HTMLElement>("settingsSaveResult");
+  const resultText = el<HTMLElement>("settingsSaveResultText");
+  const config = await loadConfig();
+
+  el<HTMLInputElement>("settingsServerUrl").value = config.serverUrl;
+  el<HTMLInputElement>("settingsCreateMergeRequestOnMerge").checked =
+    config.createMergeRequestOnMerge;
+  el<HTMLInputElement>("settingsTapdBatchSilentMode").checked = config.tapdBatchSilentMode;
+  result.classList.add("hidden");
+  resultText.textContent = "";
+  modal.hidden = false;
+  el<HTMLInputElement>("settingsServerUrl").focus();
+}
+
+async function saveSettingsFromModal(): Promise<void> {
+  const serverUrl = el<HTMLInputElement>("settingsServerUrl").value.trim();
+  const createMergeRequest = el<HTMLInputElement>("settingsCreateMergeRequestOnMerge").checked;
+  const tapdBatchSilentMode = el<HTMLInputElement>("settingsTapdBatchSilentMode").checked;
+  const result = el<HTMLElement>("settingsSaveResult");
+  const resultText = el<HTMLElement>("settingsSaveResultText");
+
+  result.classList.remove("hidden");
+
+  if (!serverUrl) {
+    resultText.textContent = "请填写服务端地址";
+    resultText.style.color = "#fca5a5";
+    return;
+  }
+
+  await saveConfig({
+    serverUrl,
+    createMergeRequestOnMerge: createMergeRequest,
+    tapdBatchSilentMode,
+  });
+  createMergeRequestOnMerge = createMergeRequest;
+  resultText.textContent = "已保存";
+  resultText.style.color = "#86efac";
+  setConnectionStatus("设置已保存");
+}
+
+function setupSettingsModal(): void {
+  el<HTMLElement>("settingsBtn").addEventListener("click", () => {
+    void openSettingsModal();
+  });
+  el<HTMLElement>("settingsBackdrop").addEventListener("click", closeSettingsModal);
+  el<HTMLButtonElement>("settingsCancel").addEventListener("click", closeSettingsModal);
+  el<HTMLButtonElement>("settingsSave").addEventListener("click", () => {
+    void saveSettingsFromModal();
+  });
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && !el<HTMLElement>("settingsModal").hidden) {
+      closeSettingsModal();
+    }
+  });
+}
+
 async function init(): Promise<void> {
   const config = await loadConfig();
   createMergeRequestOnMerge = config.createMergeRequestOnMerge;
 
   await refreshPagePreview();
 
-  el<HTMLElement>("settingsBtn").addEventListener("click", () => {
-    window.location.href = chrome.runtime.getURL("settings.html");
-  });
+  setupSettingsModal();
   el<HTMLButtonElement>("tapdBatchBtn").addEventListener("click", () => {
     switchAppView("batch");
   });

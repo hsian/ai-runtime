@@ -211,6 +211,56 @@
       </div>
     </div>
 
+    <div id="settingsModal" class="page-confirm-modal" hidden>
+      <div class="page-confirm-backdrop" id="settingsBackdrop"></div>
+      <div class="page-confirm-dialog settings-dialog" role="dialog" aria-labelledby="settingsHeading">
+        <h2 id="settingsHeading" class="page-confirm-heading">设置</h2>
+        <p class="page-confirm-lead">不常修改的配置项</p>
+
+        <section class="settings-card settings-card-embedded">
+          <div class="settings-group">
+            <h2>服务连接</h2>
+            <label for="settingsServerUrl">服务端地址</label>
+            <input type="url" id="settingsServerUrl" placeholder="http://192.168.x.x:6080" />
+            <p class="settings-note">
+              内网 AI Runtime 服务地址。Chrome 不建议使用 6000 端口，推荐 6080、8080。
+            </p>
+          </div>
+
+          <div class="settings-group">
+            <h2>合并策略</h2>
+            <label class="checkbox" for="settingsCreateMergeRequestOnMerge">
+              <input type="checkbox" id="settingsCreateMergeRequestOnMerge" />
+              <span>确认合并时提交 Merge Request（不直接合并 test）</span>
+            </label>
+            <p class="settings-note">
+              默认关闭，保持现有的直接合并到 test 并推送；开启后会推送 feature 分支并创建 Merge Request。
+            </p>
+          </div>
+
+          <div class="settings-group">
+            <h2>TAPD 批量执行</h2>
+            <label class="checkbox" for="settingsTapdBatchSilentMode">
+              <input type="checkbox" id="settingsTapdBatchSilentMode" />
+              <span>TAPD 批量任务静默模式</span>
+            </label>
+            <p class="settings-note">
+              默认关闭。开启后仅 TAPD 批量任务会在 Plan 生成后自动执行修改，并自动合并到 test 或提交 Merge Request，然后继续下一个任务。
+            </p>
+          </div>
+        </section>
+
+        <section class="result hidden settings-result" id="settingsSaveResult">
+          <pre id="settingsSaveResultText"></pre>
+        </section>
+
+        <div class="page-confirm-actions">
+          <button id="settingsCancel" class="secondary" type="button">取消</button>
+          <button id="settingsSave" class="primary" type="button">保存</button>
+        </div>
+      </div>
+    </div>
+
     <div id="releaseMergeModal" class="page-confirm-modal" hidden>
       <div class="page-confirm-backdrop" id="releaseMergeBackdrop"></div>
       <div class="page-confirm-dialog" role="dialog" aria-labelledby="releaseMergeHeading">

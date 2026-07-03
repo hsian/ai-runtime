@@ -287,6 +287,21 @@ button.secondary:hover {
   box-shadow: var(--shadow-sm);
 }
 
+.settings-dialog {
+  width: min(100%, 560px);
+  max-height: calc(100vh - 32px);
+  overflow-y: auto;
+}
+
+.settings-card-embedded {
+  margin: 0 0 12px;
+  box-shadow: none;
+}
+
+.settings-result {
+  margin-bottom: 12px;
+}
+
 .settings-group {
   padding: 14px;
   border-top: 1px solid var(--color-border-soft);
