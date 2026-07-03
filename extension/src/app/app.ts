@@ -651,22 +651,18 @@ async function recoverJobConnection(serverUrl: string, jobId: string): Promise<v
 }
 
 function renderPagePreview(url: string, title?: string): void {
-  const pageTitleEl = el<HTMLElement>("pageTitle");
   const pageUrlEl = el<HTMLElement>("pageUrl");
   if (!url) {
-    pageTitleEl.textContent = "AI Runtime";
     pageUrlEl.textContent = "未找到浏览器页面，请先打开测试环境页面";
     return;
   }
-  pageTitleEl.textContent = title?.trim() ? title : "AI Runtime";
-  pageUrlEl.textContent = url;
+  const pageTitle = title?.trim();
+  pageUrlEl.textContent = pageTitle ? `${pageTitle} ｜ ${url}` : url;
 }
 
 async function refreshPagePreview(): Promise<void> {
-  const pageTitleEl = el<HTMLElement>("pageTitle");
   const pageUrlEl = el<HTMLElement>("pageUrl");
-  pageTitleEl.textContent = "刷新中...";
-  pageUrlEl.textContent = "";
+  pageUrlEl.textContent = "刷新中...";
   try {
     const preview = await fetchCurrentTabPreview();
     if (!preview) {
@@ -1924,13 +1920,28 @@ let batchPanelReady = false;
 function switchAppView(view: "coding" | "batch"): void {
   const codingView = el<HTMLElement>("codingView");
   const batchPanel = el<HTMLElement>("tapdBatchPanel");
-  const batchBtn = el<HTMLButtonElement>("tapdBatchBtn");
+  const codingModeTab = el<HTMLButtonElement>("codingModeTab");
+  const tapdBatchBtn = el<HTMLButtonElement>("tapdBatchBtn");
+  const batchCodingModeTab = el<HTMLButtonElement>("backToCodingBtn");
+  const batchTapdModeTab = el<HTMLButtonElement>("batchTapdModeTab");
+  const isBatch = view === "batch";
 
-  codingView.hidden = view !== "coding";
-  batchPanel.hidden = view !== "batch";
-  batchBtn.classList.toggle("icon-btn-active", view === "batch");
+  codingView.hidden = isBatch;
+  batchPanel.hidden = !isBatch;
+  codingModeTab.classList.toggle("mode-tab-active", !isBatch);
+  tapdBatchBtn.classList.toggle("mode-tab-active", isBatch);
+  batchCodingModeTab.classList.toggle("mode-tab-active", !isBatch);
+  batchTapdModeTab.classList.toggle("mode-tab-active", isBatch);
+  codingModeTab.setAttribute("aria-selected", String(!isBatch));
+  tapdBatchBtn.setAttribute("aria-selected", String(isBatch));
+  batchCodingModeTab.setAttribute("aria-selected", String(!isBatch));
+  batchTapdModeTab.setAttribute("aria-selected", String(isBatch));
+  codingModeTab.disabled = !isBatch;
+  tapdBatchBtn.disabled = isBatch;
+  batchCodingModeTab.disabled = !isBatch;
+  batchTapdModeTab.disabled = isBatch;
 
-  if (view === "batch" && !batchPanelReady) {
+  if (isBatch && !batchPanelReady) {
     initTapdBatchPanel(batchPanel, { onBack: () => switchAppView("coding") });
     batchPanelReady = true;
   }
@@ -1987,6 +1998,9 @@ function setupSettingsModal(): void {
   el<HTMLElement>("settingsBtn").addEventListener("click", () => {
     void openSettingsModal();
   });
+  el<HTMLElement>("batchSettingsBtn").addEventListener("click", () => {
+    void openSettingsModal();
+  });
   el<HTMLElement>("settingsBackdrop").addEventListener("click", closeSettingsModal);
   el<HTMLButtonElement>("settingsCancel").addEventListener("click", closeSettingsModal);
   el<HTMLButtonElement>("settingsSave").addEventListener("click", () => {
@@ -2006,6 +2020,7 @@ async function init(): Promise<void> {
   await refreshPagePreview();
 
   setupSettingsModal();
+  switchAppView("coding");
   el<HTMLButtonElement>("tapdBatchBtn").addEventListener("click", () => {
     switchAppView("batch");
   });

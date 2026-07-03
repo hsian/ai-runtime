@@ -374,19 +374,44 @@ button.secondary:hover {
   min-width: 0;
 }
 
-.header-actions {
+.header-actions,
+.batch-header-actions {
   display: flex;
   gap: 8px;
   flex: 0 0 auto;
+  align-items: center;
+  margin-top: 0;
 }
 
-.page-title {
-  font-size: 15px;
-  font-weight: 650;
-  line-height: 1.25;
+.mode-tabs {
+  display: inline-flex;
+  align-items: center;
+  gap: 18px;
+  min-height: 30px;
+}
+
+.mode-tab {
+  height: 30px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--color-muted);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 24px;
   white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  cursor: pointer;
+}
+
+.mode-tab:hover:not(:disabled) {
+  color: var(--color-text);
+}
+
+.mode-tab-active,
+.mode-tab:disabled.mode-tab-active {
+  color: var(--color-primary);
+  cursor: default;
 }
 
 .page-url {

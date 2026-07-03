@@ -89,20 +89,20 @@
 }
 
 .task-drawer-handle {
-  flex: 0 0 10px;
-  width: 10px;
+  flex: 0 0 1px;
+  width: 1px;
   margin: 0;
   padding: 0;
   border: none;
-  border-left: 1px solid #e5e7eb;
-  background: #f3f4f6;
+  background: transparent;
   cursor: pointer;
   position: relative;
   z-index: 5;
+  overflow: visible;
 }
 
 .task-drawer-handle:hover {
-  background: #e8eaed;
+  background: transparent;
 }
 
 .task-drawer-handle:hover .task-drawer-tab {
@@ -111,7 +111,7 @@
 
 .task-drawer-tab {
   position: absolute;
-  left: -14px;
+  left: -16px;
   top: 50%;
   transform: translateY(-50%);
   width: 16px;
