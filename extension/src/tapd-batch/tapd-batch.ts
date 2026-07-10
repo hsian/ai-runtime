@@ -136,6 +136,11 @@ function escapeHtml(value: string): string {
     .replace(/"/g, "&quot;");
 }
 
+function imageIconHtml(hasImage?: boolean): string {
+  if (!hasImage) return "";
+  return `<span class="batch-image-mark" title="有配图" aria-label="有配图">[图]</span>`;
+}
+
 function statusLabel(status: TapdBatchTask["status"]): string {
   const map: Record<TapdBatchTask["status"], string> = {
     pending: "待执行",
@@ -145,6 +150,27 @@ function statusLabel(status: TapdBatchTask["status"]): string {
     skipped: "已跳过",
   };
   return map[status] ?? status;
+}
+
+function taskQueueStatusLabel(task: TapdBatchTask): string {
+  if (task.failedPhase === "已终止" || task.error === "用户终止") return "已终止";
+  if (task.failedPhase === "已取消" || task.error === "用户取消") return "已取消";
+  if (task.error === "已放弃合并") return "已放弃";
+  return statusLabel(task.status);
+}
+
+function taskQueueClass(task: TapdBatchTask): string {
+  if (task.status === "running") return "running";
+  if (
+    task.failedPhase === "已终止" ||
+    task.failedPhase === "已取消" ||
+    task.error === "用户终止" ||
+    task.error === "用户取消" ||
+    task.error === "已放弃合并"
+  ) {
+    return "cancelled";
+  }
+  return task.status;
 }
 
 function sessionStatusLabel(status: TapdBatchSession["status"]): string {
@@ -398,9 +424,6 @@ function renderTaskPicker(): void {
       const badge = [
         row.checked ? `<span class="batch-badge order">第 ${executionOrderByIndex.get(index)} 个执行</span>` : "",
         row.previouslyCompleted ? `<span class="batch-badge done">曾执行</span>` : "",
-        (row.task.imageCount ?? 0) > 0
-          ? `<span class="batch-badge">${row.task.imageCount} 张配图</span>`
-          : "",
       ].join("");
       const owner = row.task.owner ? ` · ${escapeHtml(row.task.owner)}` : "";
       const status = row.task.status ? ` · ${escapeHtml(row.task.status)}` : "";
@@ -414,7 +437,7 @@ function renderTaskPicker(): void {
             <input type="checkbox" data-picker-index="${index}" ${row.checked ? "checked" : ""} ${busy ? "disabled" : ""} />
             <div class="batch-task-meta">
               <div class="batch-task-title batch-task-title-toggle" data-prompt-toggle-index="${index}" data-expanded="${expanded ? "true" : "false"}">
-                ${escapeHtml(row.task.name)}${badge}
+                ${imageIconHtml((row.task.imageCount ?? 0) > 0)}<span class="batch-task-title-text">${escapeHtml(row.task.name)}</span>${badge}
               </div>
               <div class="batch-task-sub">#${escapeHtml(row.task.id)}${owner}${status}</div>
             </div>
@@ -525,20 +548,10 @@ function renderQueue(): void {
   section.hidden = false;
   list.innerHTML = session.tasks
     .map((task) => {
-      const extra = [
-        task.imageCount ? `${task.imageCount} 张配图` : "",
-        task.error ? `${task.failedPhase ?? ""} ${task.error}` : "",
-      ]
-        .filter(Boolean)
-        .map((line) => `<div class="batch-task-sub">${escapeHtml(line)}</div>`)
-        .join("");
       return `
-        <div class="batch-queue-item is-${task.status === "running" ? "running" : task.status}">
-          <div>
-            <div class="batch-task-title">${escapeHtml(task.title)}</div>
-            ${extra}
-          </div>
-          <div class="batch-queue-status">${escapeHtml(statusLabel(task.status))}</div>
+        <div class="batch-queue-item is-${taskQueueClass(task)}">
+          <div class="batch-task-title">${imageIconHtml((task.imageCount ?? 0) > 0)}<span class="batch-task-title-text">${escapeHtml(task.title)}</span></div>
+          <div class="batch-queue-status">${escapeHtml(taskQueueStatusLabel(task))}</div>
         </div>
       `;
     })
@@ -1082,15 +1095,20 @@ function bindEvents(options?: TapdBatchPanelOptions): void {
             }
           }
           view.renderConfirmCard(event.jobId, "awaiting_confirm");
+          setStatus("等待确认 Plan");
+          updateFooter();
         })();
       }
       if (event.phase === "plan_need_more" && event.jobId) {
         const summary = session?.planSummary;
         if (summary) ensureProgressView().renderPlan(event.jobId, summary, false);
         ensureProgressView().renderConfirmCard(event.jobId, "awaiting_input");
+        setStatus("需要补充信息");
+        updateFooter();
       }
       if (event.phase === "execute_ready" && event.jobId) {
         ensureProgressView().renderMergeCard(event.jobId, "awaiting_merge", event.previewUrl, event.previewMessage);
+        setStatus("等待确认合并");
         scrollProgressToBottom();
         updateFooter();
       }

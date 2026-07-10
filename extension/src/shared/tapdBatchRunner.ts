@@ -78,7 +78,7 @@ async function driveJobToCompletion(
       ok: false,
       pause: {
         phase: "配图",
-        message: `描述中有 ${prepared.expectedInHtml} 张配图但下载或处理失败`,
+        message: `描述中有 ${prepared.expectedInHtml} 张配图但下载失败。请确认浏览器已登录 tapd.cn，或检查服务端 TAPD 图片接口权限后重试`,
       },
     };
   }

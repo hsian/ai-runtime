@@ -19,6 +19,7 @@ import {
   touchSession,
   loadTapdBatchSession,
 } from "./tapdBatchStore.js";
+import { startActionAlert, stopActionAlert } from "./actionAlert.js";
 import { TAPD_BATCH_JOB_EVENT, TAPD_BATCH_JOB_LOG, TAPD_BATCH_STATE } from "./tapdBatchMessages.js";
 import { loadConfig } from "./config.js";
 
@@ -106,9 +107,38 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function notifyBatchActionState(next: TapdBatchSession | null): void {
+  const status = next?.status;
+  if (status === "waiting_confirm") {
+    startActionAlert({
+      title: "TAPD 批量任务：Plan 已生成，等待执行修改",
+    });
+    return;
+  }
+
+  if (status === "waiting_input") {
+    startActionAlert({
+      title: "TAPD 批量任务：Plan 需要补充信息",
+    });
+    return;
+  }
+
+  if (status === "waiting_merge") {
+    startActionAlert({
+      title: "TAPD 批量任务：修改完成，等待合并确认",
+    });
+    return;
+  }
+
+  if (!status || status === "running" || status === "completed" || status === "cancelled" || status === "paused" || status === "idle") {
+    stopActionAlert();
+  }
+}
+
 async function emitSession(next: TapdBatchSession | null): Promise<void> {
   session = next;
   await saveTapdBatchSession(next);
+  notifyBatchActionState(next);
   chrome.runtime.sendMessage({ type: TAPD_BATCH_STATE, session: next, loopRunning }).catch(() => {});
 }
 
@@ -270,7 +300,7 @@ async function runSingleTask(
           failedPhase: "配图",
         }),
         status: "paused",
-        pauseReason: `${task.title}：描述中有 ${prepared.expectedInHtml} 张配图但下载失败。请重启服务端后重试；若仍失败，请在浏览器登录 tapd.cn 后再跑任务`,
+        pauseReason: `${task.title}：描述中有 ${prepared.expectedInHtml} 张配图但下载失败。请确认浏览器已登录 tapd.cn，或检查服务端 TAPD 图片接口权限后重试`,
       });
     }
 

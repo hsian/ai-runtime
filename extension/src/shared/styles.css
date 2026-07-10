@@ -833,6 +833,9 @@ body.composer-resizing {
 
 .progress-log {
   margin-top: 6px;
+  max-height: 180px;
+  overflow-y: auto;
+  padding-right: 2px;
   display: flex;
   flex-direction: column;
   gap: 4px;

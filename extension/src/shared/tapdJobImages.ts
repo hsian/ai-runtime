@@ -54,7 +54,7 @@ async function fetchTapdDescriptionImagesFromServer(
   workspaceId?: string
 ): Promise<Blob[]> {
   const controller = new AbortController();
-  const timeout = window.setTimeout(() => controller.abort(), SERVER_IMAGE_FETCH_TIMEOUT_MS);
+  const timeout = globalThis.setTimeout(() => controller.abort(), SERVER_IMAGE_FETCH_TIMEOUT_MS);
   try {
     const res = await fetch(`${normalizeServerUrl(serverUrl)}/api/tapd/images/from-html`, {
       method: "POST",
@@ -78,7 +78,7 @@ async function fetchTapdDescriptionImagesFromServer(
     }
     return blobs;
   } finally {
-    window.clearTimeout(timeout);
+    globalThis.clearTimeout(timeout);
   }
 }
 
@@ -137,38 +137,14 @@ export function countImagesInHtml(html: string): number {
   return (html.match(/<img\b/gi) ?? []).length;
 }
 
-async function buildTapdCookieHeader(): Promise<string | undefined> {
-  if (!chrome.cookies?.getAll) return undefined;
-  const seen = new Set<string>();
-  const parts: string[] = [];
-  for (const domain of [".tapd.cn", "tapd.cn", "www.tapd.cn", "file.tapd.cn"]) {
-    const list = await chrome.cookies.getAll({ domain });
-    for (const cookie of list) {
-      const pair = `${cookie.name}=${cookie.value}`;
-      if (seen.has(pair)) continue;
-      seen.add(pair);
-      parts.push(pair);
-    }
-  }
-  return parts.length > 0 ? parts.join("; ") : undefined;
-}
-
 async function fetchSingleTapdImageUrl(url: string): Promise<Blob | null> {
-  const cookieHeader = await buildTapdCookieHeader();
-  const headers: Record<string, string> = {
-    Referer: "https://www.tapd.cn/",
-    "User-Agent": "Mozilla/5.0",
-  };
-  if (cookieHeader) headers.Cookie = cookieHeader;
-
   try {
     const controller = new AbortController();
-    const timeout = window.setTimeout(() => controller.abort(), BROWSER_IMAGE_FETCH_TIMEOUT_MS);
+    const timeout = globalThis.setTimeout(() => controller.abort(), BROWSER_IMAGE_FETCH_TIMEOUT_MS);
     try {
       const res = await fetch(url, {
         credentials: "include",
         redirect: "follow",
-        headers,
         signal: controller.signal,
       });
       if (!res.ok) return null;
@@ -185,7 +161,7 @@ async function fetchSingleTapdImageUrl(url: string): Promise<Blob | null> {
       }
       return null;
     } finally {
-      window.clearTimeout(timeout);
+      globalThis.clearTimeout(timeout);
     }
   } catch {
     return null;
