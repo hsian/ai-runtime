@@ -118,7 +118,7 @@ export async function processJob(jobId: string): Promise<void> {
     await gitService.createBranch(branchName);
     if (await abortIfCancelled(jobId, "branch")) return;
 
-    emitStage(jobId, "agent", "Claude Code 正在分析并修改代码...");
+    emitStage(jobId, "agent", "正在分析并修改代码...");
 
     const repoPath = gitService.getRepoPath();
     const stagedAttachments = await stageAttachmentsForAgent(job.attachments, repoPath, jobId);
@@ -146,7 +146,7 @@ export async function processJob(jobId: string): Promise<void> {
       if (looksLikeClarification(result.summary)) {
         finishJob(jobId, {
           status: "failed",
-          error: "Claude Code 未执行修改，而是在等待澄清",
+          error: "未执行修改，而是在等待澄清",
           message: result.summary,
           sourceBranch: branchName,
           branch: branchName,
@@ -248,7 +248,7 @@ export async function processJob(jobId: string): Promise<void> {
       finishJob(jobId, {
         status: "failed",
         error: "未产生代码变更",
-        message: "Claude Code 执行完成但没有修改任何文件",
+        message: "执行完成但没有修改任何文件",
         sourceBranch: branchName,
         branch: branchName,
       });

@@ -94,7 +94,7 @@ function handleStreamJsonLine(line: string, onEvent: AgentEventHandler | undefin
   const type = String(parsed.type ?? "");
 
   if (type === "system" && parsed.status === "requesting") {
-    emitStatus(state, onEvent, "Claude 正在请求模型响应...");
+    emitStatus(state, onEvent, "正在请求模型响应...");
   }
 
   if (type === "stream_event" && parsed.event && typeof parsed.event === "object") {
@@ -104,7 +104,7 @@ function handleStreamJsonLine(line: string, onEvent: AgentEventHandler | undefin
     if (eventType === "content_block_start") {
       const block = event.content_block as { type?: string; name?: string } | undefined;
       if (block?.type === "thinking") {
-        emitStatus(state, onEvent, "Claude 正在思考...");
+        emitStatus(state, onEvent, "正在思考...");
       }
       if (block?.type === "tool_use" && block.name) {
         const key = `start:${block.name}`;
@@ -117,7 +117,7 @@ function handleStreamJsonLine(line: string, onEvent: AgentEventHandler | undefin
 
     const delta = event.delta as { type?: string; text?: string; thinking?: string } | undefined;
     if (delta?.type === "thinking_delta" && delta.thinking) {
-      emitStatus(state, onEvent, "Claude 正在思考...");
+      emitStatus(state, onEvent, "正在思考...");
     }
     if (delta?.type === "text_delta" && delta.text) {
       onEvent?.({ type: "agent_text", delta: delta.text });
@@ -228,16 +228,16 @@ function runClaudeCommand(
       const stderrTail = stderr.trim().slice(-300);
       const detail = `最后活动 ${idleSeconds}s 前，最后事件: ${lastEventLabel}`;
       const stderrDetail = stderrTail ? `，stderr: ${stderrTail}` : "";
-      reject(new Error(`Claude Code 执行超时（${timeoutMs}ms，${detail}${stderrDetail}）`));
+      reject(new Error(`执行超时（${timeoutMs}ms，${detail}${stderrDetail}）`));
     }, timeoutMs);
 
     child.on("error", (err) => {
       clearTimeout(timer);
       if (jobId) unregisterAgentProcess(jobId);
       const hint = IS_WINDOWS
-        ? "请确认已安装 Claude Code CLI 且 CLAUDE_CLI_PATH=claude 可用"
-        : "请确认已安装 Claude Code CLI，必要时在 .env 设置 CLAUDE_CLI_PATH 为绝对路径";
-      reject(new Error(`无法启动 Claude Code CLI: ${err.message}。${hint}`));
+        ? "请确认服务端执行引擎路径配置可用"
+        : "请确认服务端已安装执行引擎，必要时在 .env 设置执行引擎绝对路径";
+      reject(new Error(`无法启动执行引擎: ${err.message}。${hint}`));
     });
 
     child.on("close", (code, signal) => {
@@ -266,12 +266,12 @@ function runClaudeCommand(
 
       if (code === 0) {
         const output = pickPlanOutput(finalSummary, streamedText);
-        resolve(output || "Claude Code 已完成代码修改");
+        resolve(output || "已完成代码修改");
         return;
       }
 
       const detail = stderr.trim() || streamedText.trim() || `exit code ${code}`;
-      reject(new Error(`Claude Code 执行失败: ${detail.slice(0, 500)}`));
+      reject(new Error(`执行失败: ${detail.slice(0, 500)}`));
     });
 
     child.stdin.write(stdinText);
@@ -346,6 +346,6 @@ export async function runClaudeAgent(
   );
 
   return {
-    summary: output || (isPlan ? "Plan 分析完成" : "Claude Code 已完成代码修改"),
+    summary: output || (isPlan ? "Plan 分析完成" : "已完成代码修改"),
   };
 }

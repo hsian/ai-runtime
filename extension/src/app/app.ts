@@ -989,12 +989,12 @@ function appendAgentDelta(delta: string, jobId?: string): void {
   let meta = node.querySelector<HTMLElement>(".msg-meta");
 
   if (!bubble) {
-    node.innerHTML = `<div class="msg-meta">Claude</div><div class="msg-bubble"></div>`;
+    node.innerHTML = `<div class="msg-meta">输出</div><div class="msg-bubble"></div>`;
     bubble = node.querySelector<HTMLElement>(".msg-bubble")!;
     meta = node.querySelector<HTMLElement>(".msg-meta")!;
   }
 
-  meta!.textContent = "Claude · 输出中…";
+  meta!.textContent = "输出中…";
   bubble!.textContent += delta;
 }
 
@@ -1020,7 +1020,7 @@ function finalizeAgentStream(): void {
   const key = `${AGENT_STREAM_KEY}-${activeJobId}`;
   const node = el<HTMLElement>("chatMessages").querySelector<HTMLElement>(`[data-key="${key}"]`);
   const meta = node?.querySelector<HTMLElement>(".msg-meta");
-  if (meta) meta.textContent = "Claude";
+  if (meta) meta.textContent = "输出";
 }
 
 function appendDoneBubble(event: JobEvent): void {
