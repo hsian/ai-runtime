@@ -35,6 +35,7 @@ interface PickerRow {
   task: TapdTaskItem;
   prompt: string;
   sourceHtml: string;
+  promptEdited: boolean;
   checked: boolean;
   previouslyCompleted: boolean;
 }
@@ -171,6 +172,10 @@ function taskQueueClass(task: TapdBatchTask): string {
     return "cancelled";
   }
   return task.status;
+}
+
+function promptReferencesImages(prompt: string): boolean {
+  return /(?:如图|图|配图)\s*\d+/i.test(prompt) || /(?:本次已附带|描述中含)\s*\d+\s*张配图/.test(prompt);
 }
 
 function sessionStatusLabel(status: TapdBatchSession["status"]): string {
@@ -618,16 +623,18 @@ function buildSessionFromSelection(): TapdBatchSession | null {
   if (selected.length === 0) return null;
 
   const now = new Date().toISOString();
-  const tasks = selected.map(({ row }, order) =>
-    createBatchTask({
+  const tasks = selected.map(({ row }, order) => {
+    const prompt = row.prompt.trim() || buildTaskPrompt(row.task);
+    const shouldAttachImages = !row.promptEdited || promptReferencesImages(prompt);
+    return createBatchTask({
       tapdTaskId: completedKeyFor(row.kind, row.task.id),
       title: row.task.name,
-      prompt: row.prompt.trim() || buildTaskPrompt(row.task),
-      sourceHtml: row.sourceHtml || row.task.description,
-      imageCount: row.task.imageCount,
+      prompt,
+      sourceHtml: shouldAttachImages ? row.sourceHtml || row.task.description : undefined,
+      imageCount: shouldAttachImages ? row.task.imageCount : 0,
       order,
-    })
-  );
+    });
+  });
 
   return {
     id: crypto.randomUUID(),
@@ -769,6 +776,7 @@ async function loadTapdItems(kind: PickerKind): Promise<void> {
       task,
       prompt: buildTaskPrompt(task),
       sourceHtml: task.description ?? "",
+      promptEdited: false,
       checked: !completedIds.has(completedKeyFor(kind, task.id)),
       previouslyCompleted: completedIds.has(completedKeyFor(kind, task.id)),
     })));
@@ -1010,6 +1018,7 @@ function bindEvents(options?: TapdBatchPanelOptions): void {
     const row = pickerRows[Number(index)];
     if (!row) return;
     row.prompt = target.value;
+    row.promptEdited = true;
   });
 
   el<HTMLButtonElement>("selectPendingBtn").addEventListener("click", () => {

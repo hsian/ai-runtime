@@ -815,9 +815,42 @@ body.composer-resizing {
 }
 
 .progress-main {
+  display: flex;
+  align-items: center;
+  gap: 7px;
   color: var(--color-text);
   font-size: 12px;
   line-height: 1.5;
+}
+
+.progress-main::before {
+  content: "";
+  flex: 0 0 auto;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--color-success);
+  box-shadow: 0 0 0 3px rgba(21, 128, 61, 0.12);
+  animation: progress-thinking-pulse 1.8s ease-in-out infinite;
+}
+
+@keyframes progress-thinking-pulse {
+  0%,
+  100% {
+    opacity: 0.68;
+    transform: scale(0.82);
+  }
+
+  50% {
+    opacity: 1;
+    transform: scale(1.22);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .progress-main::before {
+    animation: none;
+  }
 }
 
 .progress-details {
