@@ -11,6 +11,36 @@ import { confirmJobMerge, createJobMergeRequest, discardJobMerge, mergeCompleted
 import type { JobRequest } from "../types.js";
 import { resolvePlanSummary } from "../services/agent/planSummaryResolver.js";
 
+function getRequestOwnerId(req: import("express").Request): string {
+  const headerValue = req.get("x-ai-runtime-client-id");
+  const queryValue = req.query.clientId;
+  const raw =
+    headerValue ??
+    (typeof queryValue === "string" ? queryValue : undefined) ??
+    "anonymous";
+  const ownerId = raw.trim().slice(0, 128);
+  return ownerId || "anonymous";
+}
+
+function isAuthorizedJob(
+  job: NonNullable<ReturnType<typeof getJob>>,
+  ownerId: string
+): boolean {
+  return !job.ownerId || job.ownerId === ownerId;
+}
+
+function getAuthorizedJob(
+  req: import("express").Request,
+  res: import("express").Response
+): NonNullable<ReturnType<typeof getJob>> | undefined {
+  const job = getJob(req.params.jobId);
+  if (!job || !isAuthorizedJob(job, getRequestOwnerId(req))) {
+    res.status(404).json({ error: "任务不存在" });
+    return undefined;
+  }
+  return job;
+}
+
 async function revertPlanWorkspaceChanges(jobId: string, reason: string): Promise<void> {
   const reverted = await gitService.discardUncommittedChanges();
   if (reverted.length === 0) return;
@@ -173,7 +203,7 @@ function createJobFromSubmit(
     ? (req.files as Express.Multer.File[] | undefined)
     : undefined;
 
-  const job = createJob(parsed.data);
+  const job = createJob({ ...parsed.data, ownerId: getRequestOwnerId(req) });
   const previewHost = req.get("x-forwarded-host") ?? req.get("host");
   if (previewHost) {
     updateJob(job.jobId, { previewHost });
@@ -259,11 +289,8 @@ jobsRouter.post("/plan", handleJobImagesUpload, (req, res) => {
 
 jobsRouter.post("/:jobId/execute", (req, res) => {
   const jobId = req.params.jobId;
-  const job = getJob(jobId);
-  if (!job) {
-    res.status(404).json({ error: "任务不存在" });
-    return;
-  }
+  const job = getAuthorizedJob(req, res);
+  if (!job) return;
 
   if (job.status !== "awaiting_confirm") {
     res.status(400).json({ error: `当前状态不可执行: ${job.status}` });
@@ -292,11 +319,8 @@ jobsRouter.post("/:jobId/execute", (req, res) => {
 
 jobsRouter.post("/:jobId/cancel", async (req, res) => {
   const jobId = req.params.jobId;
-  const job = getJob(jobId);
-  if (!job) {
-    res.status(404).json({ error: "任务不存在" });
-    return;
-  }
+  const job = getAuthorizedJob(req, res);
+  if (!job) return;
 
   if (job.status === "completed" || job.status === "failed" || job.status === "cancelled") {
     res.status(400).json({ error: `当前状态不可取消: ${job.status}` });
@@ -360,11 +384,8 @@ jobsRouter.post("/:jobId/cancel", async (req, res) => {
 
 jobsRouter.post("/:jobId/merge", (req, res) => {
   const jobId = req.params.jobId;
-  const job = getJob(jobId);
-  if (!job) {
-    res.status(404).json({ error: "任务不存在" });
-    return;
-  }
+  const job = getAuthorizedJob(req, res);
+  if (!job) return;
 
   if (job.status !== "awaiting_merge") {
     res.status(400).json({ error: `当前状态不可合并: ${job.status}` });
@@ -401,11 +422,8 @@ jobsRouter.post("/:jobId/merge", (req, res) => {
 
 jobsRouter.post("/:jobId/discard-merge", async (req, res) => {
   const jobId = req.params.jobId;
-  const job = getJob(jobId);
-  if (!job) {
-    res.status(404).json({ error: "任务不存在" });
-    return;
-  }
+  const job = getAuthorizedJob(req, res);
+  if (!job) return;
 
   if (job.status !== "awaiting_merge") {
     res.status(400).json({ error: `当前状态不可放弃合并: ${job.status}` });
@@ -432,11 +450,8 @@ jobsRouter.post("/:jobId/discard-merge", async (req, res) => {
 });
 
 jobsRouter.get("/:jobId/release-branches", async (req, res) => {
-  const job = getJob(req.params.jobId);
-  if (!job) {
-    res.status(404).json({ error: "任务不存在" });
-    return;
-  }
+  const job = getAuthorizedJob(req, res);
+  if (!job) return;
 
   try {
     const branches = await gitService.listRemoteBranches();
@@ -460,11 +475,8 @@ jobsRouter.get("/:jobId/release-branches", async (req, res) => {
 
 jobsRouter.post("/:jobId/release-merge", async (req, res) => {
   const jobId = req.params.jobId;
-  const job = getJob(jobId);
-  if (!job) {
-    res.status(404).json({ error: "任务不存在" });
-    return;
-  }
+  const job = getAuthorizedJob(req, res);
+  if (!job) return;
 
   const body = req.body as { targetBranch?: unknown } | undefined;
   const targetBranch = typeof body?.targetBranch === "string" ? body.targetBranch.trim() : "";
@@ -486,11 +498,8 @@ jobsRouter.post("/:jobId/release-merge", async (req, res) => {
 
 jobsRouter.post("/:jobId/revert-default", async (req, res) => {
   const jobId = req.params.jobId;
-  const job = getJob(jobId);
-  if (!job) {
-    res.status(404).json({ error: "任务不存在" });
-    return;
-  }
+  const job = getAuthorizedJob(req, res);
+  if (!job) return;
 
   try {
     const { done } = jobQueue.enqueueAndWait(jobId, async (queuedJobId) => {
@@ -504,22 +513,16 @@ jobsRouter.post("/:jobId/revert-default", async (req, res) => {
 });
 
 jobsRouter.get("/:jobId/events", (req, res) => {
-  const job = getJob(req.params.jobId);
-  if (!job) {
-    res.status(404).json({ error: "任务不存在" });
-    return;
-  }
+  const job = getAuthorizedJob(req, res);
+  if (!job) return;
 
   res.json({ events: getJobEvents(job.jobId) });
 });
 
 jobsRouter.get("/:jobId/stream", (req, res) => {
   const jobId = req.params.jobId;
-  const job = getJob(jobId);
-  if (!job) {
-    res.status(404).json({ error: "任务不存在" });
-    return;
-  }
+  const job = getAuthorizedJob(req, res);
+  if (!job) return;
 
   res.setHeader("Content-Type", "text/event-stream; charset=utf-8");
   res.setHeader("Cache-Control", "no-cache, no-transform");
@@ -556,14 +559,11 @@ jobsRouter.get("/:jobId/stream", (req, res) => {
 });
 
 jobsRouter.get("/:jobId", (req, res) => {
-  const job = getJob(req.params.jobId);
-  if (!job) {
-    res.status(404).json({ error: "任务不存在" });
-    return;
-  }
+  const job = getAuthorizedJob(req, res);
+  if (!job) return;
   res.json(job);
 });
 
-jobsRouter.get("/", (_req, res) => {
-  res.json({ jobs: listJobs() });
+jobsRouter.get("/", (req, res) => {
+  res.json({ jobs: listJobs(getRequestOwnerId(req)) });
 });

@@ -44,7 +44,7 @@ app.use(
 
     methods: ["GET", "POST", "OPTIONS"],
 
-    allowedHeaders: ["Content-Type"],
+    allowedHeaders: ["Content-Type", "X-AI-Runtime-Client-Id"],
 
   })
 

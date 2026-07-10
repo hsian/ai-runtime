@@ -1297,6 +1297,7 @@ function setupAttachmentHandlers(): void {
 }
 
 function handleJobEvent(event: JobEvent, options?: { skipPersist?: boolean }): void {
+  if (activeJobId && event.jobId !== activeJobId) return;
   if (seenEventIds.has(event.id)) return;
   seenEventIds.add(event.id);
   lastEventAt = Date.now();

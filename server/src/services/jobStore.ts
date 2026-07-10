@@ -15,6 +15,7 @@ export function createJob(request: JobRequest): Job {
   const now = new Date().toISOString();
   const job: Job = {
     jobId: uuidv4(),
+    ownerId: request.ownerId ?? "anonymous",
     status: "pending",
     prompt: request.prompt,
     pageContext: request.pageContext,
@@ -41,8 +42,12 @@ export function updateJob(jobId: string, patch: Partial<Job>): Job | undefined {
   return updated;
 }
 
-export function listJobs(): Job[] {
-  return Array.from(jobs.values()).sort(
+export function listJobs(ownerId?: string): Job[] {
+  const all = Array.from(jobs.values());
+  const visible = ownerId
+    ? all.filter((job) => job.ownerId === ownerId || !job.ownerId)
+    : all;
+  return visible.sort(
     (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
   );
 }

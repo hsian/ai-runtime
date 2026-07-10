@@ -19,6 +19,23 @@ function summarizeJob(jobId: string, jobsAhead: number): QueueItemSummary | null
   };
 }
 
+function summarizeJobForOwner(
+  jobId: string,
+  jobsAhead: number,
+  ownerId: string | undefined
+): QueueItemSummary | null {
+  const job = getJob(jobId);
+  if (!job) return null;
+  if (ownerId && job.ownerId !== ownerId) {
+    return {
+      jobId,
+      prompt: "其他用户任务",
+      jobsAhead,
+    };
+  }
+  return summarizeJob(jobId, jobsAhead);
+}
+
 class JobQueue {
   private readonly waiting: { jobId: string; worker: JobQueueWorker }[] = [];
   private processing = false;
@@ -84,14 +101,15 @@ class JobQueue {
     running: QueueItemSummary | null;
     waiting: QueueItemSummary[];
   } {
+    const ownerId = getJob(forJobId)?.ownerId;
     const jobsAhead = this.getJobsAhead(forJobId) ?? 0;
     const running =
-      this.currentJobId != null ? summarizeJob(this.currentJobId, 0) : null;
+      this.currentJobId != null ? summarizeJobForOwner(this.currentJobId, 0, ownerId) : null;
 
     const waiting = this.waiting
       .map((item, index) => {
         const ahead = (this.currentJobId ? 1 : 0) + index;
-        return summarizeJob(item.jobId, ahead);
+        return summarizeJobForOwner(item.jobId, ahead, ownerId);
       })
       .filter((item): item is QueueItemSummary => item != null);
 

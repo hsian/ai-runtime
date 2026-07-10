@@ -1,9 +1,17 @@
 import type { JobStatus, PageContext, SubmitRequest, SubmitResponse } from "./types.js";
 import { normalizeServerUrl } from "./config.js";
+import { getClientId, getClientIdSync, withClientId } from "./clientIdentity.js";
 import {
   clearPendingServerCancel,
   getPendingServerCancelJobId,
 } from "./codingJobStore.js";
+
+async function clientHeaders(extra?: HeadersInit): Promise<HeadersInit> {
+  return {
+    ...(extra ?? {}),
+    "X-AI-Runtime-Client-Id": await getClientId(),
+  };
+}
 
 export async function fetchPageContext(includeContext: boolean): Promise<PageContext | undefined> {
   if (!includeContext) return undefined;
@@ -31,11 +39,12 @@ async function postJob(
   const res = hasImages
     ? await fetch(`${normalizeServerUrl(serverUrl)}${path}`, {
         method: "POST",
+        headers: await clientHeaders(),
         body: buildSubmitFormData(body),
       })
     : await fetch(`${normalizeServerUrl(serverUrl)}${path}`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: await clientHeaders({ "Content-Type": "application/json" }),
         body: JSON.stringify({
           prompt: body.prompt,
           pageContext: body.pageContext,
@@ -86,7 +95,7 @@ export async function executeJob(
 ): Promise<SubmitResponse> {
   const res = await fetch(`${normalizeServerUrl(serverUrl)}/api/jobs/${encodeURIComponent(jobId)}/execute`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: await clientHeaders({ "Content-Type": "application/json" }),
     body: JSON.stringify(planSummary ? { planSummary } : {}),
   });
   const data = (await res.json()) as SubmitResponse & { error?: string };
@@ -99,7 +108,7 @@ export async function executeJob(
 export async function discardMerge(serverUrl: string, jobId: string): Promise<{ ok: boolean }> {
   const res = await fetch(
     `${normalizeServerUrl(serverUrl)}/api/jobs/${encodeURIComponent(jobId)}/discard-merge`,
-    { method: "POST" }
+    { method: "POST", headers: await clientHeaders() }
   );
   const data = (await res.json()) as { ok?: boolean; error?: string };
   if (!res.ok) {
@@ -115,7 +124,7 @@ export async function mergeJob(
 ): Promise<SubmitResponse> {
   const res = await fetch(`${normalizeServerUrl(serverUrl)}/api/jobs/${encodeURIComponent(jobId)}/merge`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: await clientHeaders({ "Content-Type": "application/json" }),
     body: JSON.stringify(options?.createMergeRequest ? { createMergeRequest: true } : {}),
   });
   const data = (await res.json()) as SubmitResponse & { error?: string };
@@ -126,7 +135,9 @@ export async function mergeJob(
 }
 
 export async function listJobs(serverUrl: string): Promise<JobStatus[]> {
-  const res = await fetch(`${normalizeServerUrl(serverUrl)}/api/jobs`);
+  const res = await fetch(`${normalizeServerUrl(serverUrl)}/api/jobs`, {
+    headers: await clientHeaders(),
+  });
   const data = (await res.json()) as { jobs?: JobStatus[]; error?: string };
   if (!res.ok) {
     throw new Error(data.error ?? `查询失败: ${res.status}`);
@@ -136,7 +147,8 @@ export async function listJobs(serverUrl: string): Promise<JobStatus[]> {
 
 export async function fetchReleaseBranches(serverUrl: string, jobId: string): Promise<string[]> {
   const res = await fetch(
-    `${normalizeServerUrl(serverUrl)}/api/jobs/${encodeURIComponent(jobId)}/release-branches`
+    `${normalizeServerUrl(serverUrl)}/api/jobs/${encodeURIComponent(jobId)}/release-branches`,
+    { headers: await clientHeaders() }
   );
   const data = (await res.json()) as { branches?: string[]; error?: string };
   if (!res.ok) {
@@ -154,7 +166,7 @@ export async function mergeJobToReleaseBranch(
     `${normalizeServerUrl(serverUrl)}/api/jobs/${encodeURIComponent(jobId)}/release-merge`,
     {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: await clientHeaders({ "Content-Type": "application/json" }),
       body: JSON.stringify({ targetBranch }),
     }
   );
@@ -171,7 +183,7 @@ export async function revertJobFromDefaultBranch(
 ): Promise<JobStatus> {
   const res = await fetch(
     `${normalizeServerUrl(serverUrl)}/api/jobs/${encodeURIComponent(jobId)}/revert-default`,
-    { method: "POST" }
+    { method: "POST", headers: await clientHeaders() }
   );
   const data = (await res.json()) as { ok?: boolean; job?: JobStatus; error?: string };
   if (!res.ok || !data.job) {
@@ -183,6 +195,7 @@ export async function revertJobFromDefaultBranch(
 export async function cancelJob(serverUrl: string, jobId: string): Promise<{ ok: boolean }> {
   const res = await fetch(`${normalizeServerUrl(serverUrl)}/api/jobs/${encodeURIComponent(jobId)}/cancel`, {
     method: "POST",
+    headers: await clientHeaders(),
   });
   const data = (await res.json()) as { ok?: boolean; error?: string };
   if (!res.ok) {
@@ -215,7 +228,9 @@ export async function flushPendingServerCancel(serverUrl: string): Promise<boole
 }
 
 export async function queryJobStatus(serverUrl: string, jobId: string): Promise<JobStatus> {
-  const res = await fetch(`${normalizeServerUrl(serverUrl)}/api/jobs/${jobId}`);
+  const res = await fetch(`${normalizeServerUrl(serverUrl)}/api/jobs/${jobId}`, {
+    headers: await clientHeaders(),
+  });
   const data = (await res.json()) as JobStatus & { error?: string };
 
   if (!res.ok) {
@@ -229,7 +244,8 @@ export async function fetchJobEvents(
   jobId: string
 ): Promise<import("./types.js").JobEvent[]> {
   const res = await fetch(
-    `${normalizeServerUrl(serverUrl)}/api/jobs/${encodeURIComponent(jobId)}/events`
+    `${normalizeServerUrl(serverUrl)}/api/jobs/${encodeURIComponent(jobId)}/events`,
+    { headers: await clientHeaders() }
   );
   const data = (await res.json()) as { events?: import("./types.js").JobEvent[]; error?: string };
   if (!res.ok) {
@@ -300,7 +316,12 @@ export function openJobEventStream(
     onClose?: () => void;
   }
 ): EventSource {
-  const es = new EventSource(`${normalizeServerUrl(serverUrl)}/api/jobs/${encodeURIComponent(jobId)}/stream`);
+  const clientId = getClientIdSync();
+  const streamUrl = withClientId(
+    `${normalizeServerUrl(serverUrl)}/api/jobs/${encodeURIComponent(jobId)}/stream`,
+    clientId
+  );
+  const es = new EventSource(streamUrl);
   es.onmessage = (message) => {
     try {
       onEvent(JSON.parse(message.data) as import("./types.js").JobEvent);

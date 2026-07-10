@@ -17,6 +17,7 @@ export interface JobRequest {
   prompt: string;
   pageContext?: PageContext;
   submittedBy?: string;
+  ownerId?: string;
   attachments?: JobAttachment[];
 }
 
@@ -33,6 +34,7 @@ export type JobStatus =
 
 export interface Job {
   jobId: string;
+  ownerId: string;
   status: JobStatus;
   prompt: string;
   pageContext?: PageContext;
