@@ -78,7 +78,14 @@ export class JobProgressView {
   }
 
   private scrollToBottom(): void {
-    this.container.scrollTop = this.container.scrollHeight;
+    const scroll = (): void => {
+      this.container.scrollTop = this.container.scrollHeight;
+    };
+    requestAnimationFrame(() => {
+      scroll();
+      requestAnimationFrame(scroll);
+    });
+    window.setTimeout(scroll, 120);
   }
 
   renderPlan(jobId: string, summary: string, editable = false): void {

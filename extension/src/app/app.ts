@@ -92,6 +92,16 @@ let planOutputBuffer = "";
 let planOutputJobId: string | null = null;
 let createMergeRequestOnMerge = false;
 
+function startActionAlert(title: string): void {
+  chrome.runtime
+    .sendMessage({ type: "ACTION_ALERT_START", title })
+    .catch(() => {});
+}
+
+function stopActionAlert(): void {
+  chrome.runtime.sendMessage({ type: "ACTION_ALERT_STOP" }).catch(() => {});
+}
+
 function resetPlanOutputBuffer(jobId: string | null = null): void {
   planOutputBuffer = "";
   planOutputJobId = jobId;
@@ -172,6 +182,7 @@ function renderPlanResultBubble(jobId: string, text: string, editable: boolean):
   }
 
   container.appendChild(node);
+  scrollChatToBottom();
 }
 
 function lockPlanResultBubble(jobId: string): void {
@@ -194,6 +205,7 @@ function moveMessageToBottom(key: string): void {
   const container = el<HTMLElement>("chatMessages");
   const node = container.querySelector<HTMLElement>(`[data-key="${key}"]`);
   if (node) container.appendChild(node);
+  scrollChatToBottom();
 }
 
 function isCancellableStatus(status: JobStatusType | null): boolean {
@@ -320,9 +332,14 @@ function el<T extends HTMLElement>(id: string): T {
 
 function scrollChatToBottom(): void {
   const main = el<HTMLElement>("chatMain");
-  requestAnimationFrame(() => {
+  const scroll = (): void => {
     main.scrollTop = main.scrollHeight;
+  };
+  requestAnimationFrame(() => {
+    scroll();
+    requestAnimationFrame(scroll);
   });
+  window.setTimeout(scroll, 120);
 }
 
 function clearChatDom(): void {
@@ -1201,6 +1218,7 @@ function handleJobEvent(event: JobEvent, options?: { skipPersist?: boolean }): v
           currentJobStatus = "awaiting_confirm";
           upsertConfirmCard(event.jobId, "awaiting_confirm");
           setConnectionStatus("等待确认执行");
+          startActionAlert("Plan 已生成，等待执行修改");
           updateSubmitButton();
         });
       } else if (event.phase === "plan_need_more") {
@@ -1208,17 +1226,22 @@ function handleJobEvent(event: JobEvent, options?: { skipPersist?: boolean }): v
         currentJobStatus = "awaiting_input";
         upsertConfirmCard(event.jobId, "awaiting_input");
         setConnectionStatus("需要补充信息");
+        startActionAlert("Plan 需要补充信息");
         updateSubmitButton();
       } else if (event.phase === "execute_confirmed") {
         lockPlanResultBubble(event.jobId);
         currentJobStatus = "pending";
         upsertConfirmCard(event.jobId, "pending");
         setConnectionStatus("已确认执行，排队中");
+        stopActionAlert();
         updateSubmitButton();
       } else if (event.phase === "execute_ready") {
         currentJobStatus = "awaiting_merge";
         upsertMergeConfirmCard(event.jobId, "awaiting_merge", event.previewUrl, event.previewMessage);
         setConnectionStatus("等待确认合并");
+        startActionAlert(
+          createMergeRequestOnMerge ? "修改完成，等待提交 Merge Request" : "修改完成，等待合并确认"
+        );
         updateSubmitButton();
       } else if (event.phase === "merge") {
         const hasMergeCard = Boolean(
@@ -1232,23 +1255,27 @@ function handleJobEvent(event: JobEvent, options?: { skipPersist?: boolean }): v
         } else {
           setConnectionStatus("执行中");
         }
+        stopActionAlert();
         updateSubmitButton();
       } else if (event.phase === "merge_request") {
         currentJobStatus = "running";
         upsertMergeConfirmCard(event.jobId, "running");
         setConnectionStatus("正在提交 Merge Request");
+        stopActionAlert();
         updateSubmitButton();
       } else if (event.phase === "release_merge_done" || event.phase === "default_revert_done") {
         refreshTaskDrawer();
       } else if (event.phase && ["pull", "branch", "agent", "commit"].includes(event.phase)) {
         currentJobStatus = "running";
         setConnectionStatus("执行中");
+        stopActionAlert();
         updateSubmitButton();
       } else if (event.phase === "plan") {
         resetPlanOutputBuffer(event.jobId);
         currentJobStatus = "planning";
         upsertConfirmCard(event.jobId, "planning");
         setConnectionStatus("Plan 分析中");
+        stopActionAlert();
         updateSubmitButton();
       }
       break;
@@ -1267,6 +1294,7 @@ function handleJobEvent(event: JobEvent, options?: { skipPersist?: boolean }): v
       upsertConfirmCard(event.jobId, "completed");
       upsertMergeConfirmCard(event.jobId, "completed");
       setConnectionStatus("任务已完成");
+      stopActionAlert();
       activeStream?.close();
       activeStream = null;
       updateSubmitButton();
@@ -1279,6 +1307,7 @@ function handleJobEvent(event: JobEvent, options?: { skipPersist?: boolean }): v
       upsertConfirmCard(event.jobId, "cancelled");
       upsertMergeConfirmCard(event.jobId, "cancelled");
       setConnectionStatus("任务已取消");
+      stopActionAlert();
       activeStream?.close();
       activeStream = null;
       updateSubmitButton();
@@ -1292,10 +1321,12 @@ function handleJobEvent(event: JobEvent, options?: { skipPersist?: boolean }): v
         upsertConfirmCard(event.jobId, "cancelled");
         upsertMergeConfirmCard(event.jobId, "cancelled");
         setConnectionStatus("任务已取消");
+        stopActionAlert();
       } else {
         currentJobStatus = "failed";
         appendErrorBubble(event);
         setConnectionStatus("任务失败");
+        stopActionAlert();
       }
       activeStream?.close();
       activeStream = null;

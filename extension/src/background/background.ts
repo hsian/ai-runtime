@@ -1,8 +1,95 @@
 import type { PageContext } from "../shared/types.js";
 import { handleTapdBatchCommand, initTapdBatchControllerFromStorage } from "../shared/tapdBatchController.js";
+import { TAPD_BATCH_STATE } from "../shared/tapdBatchMessages.js";
 import type { TapdBatchCommand } from "../shared/tapdBatchMessages.js";
 
 let lastBrowserTabId: number | null = null;
+let actionAlertTimer: ReturnType<typeof setInterval> | null = null;
+let actionAlertVisible = false;
+let actionAlertTitle = "";
+let actionAlertNotificationId: string | null = null;
+
+interface ActionAlertOptions {
+  title: string;
+}
+
+function setActionBadge(text: string): void {
+  void chrome.action.setBadgeBackgroundColor({ color: "#f97316" });
+  void chrome.action.setBadgeTextColor?.({ color: "#ffffff" });
+  void chrome.action.setBadgeText({ text });
+}
+
+function stopActionAlert(): void {
+  if (actionAlertTimer) {
+    clearInterval(actionAlertTimer);
+    actionAlertTimer = null;
+  }
+  actionAlertVisible = false;
+  actionAlertTitle = "";
+  void chrome.action.setBadgeText({ text: "" });
+  void chrome.action.setTitle({ title: "AI Runtime" });
+  if (actionAlertNotificationId) {
+    void chrome.notifications.clear(actionAlertNotificationId);
+    actionAlertNotificationId = null;
+  }
+}
+
+function startActionAlert(options: ActionAlertOptions): void {
+  if (actionAlertTimer && actionAlertTitle === options.title) {
+    return;
+  }
+
+  stopActionAlert();
+  actionAlertTitle = options.title;
+  void chrome.action.setTitle({ title: options.title });
+  actionAlertNotificationId = `ai-runtime-alert-${Date.now()}`;
+  void chrome.notifications.create(actionAlertNotificationId, {
+    type: "basic",
+    iconUrl: "icons/icon128.png",
+    title: "AI Runtime",
+    message: options.title,
+    priority: 2,
+  });
+
+  const tick = (): void => {
+    actionAlertVisible = !actionAlertVisible;
+    setActionBadge(actionAlertVisible ? "OK" : "");
+  };
+
+  tick();
+  actionAlertTimer = setInterval(tick, 650);
+}
+
+function handleTapdBatchStateAlert(session: unknown): void {
+  const status = typeof session === "object" && session !== null && "status" in session
+    ? String((session as { status?: unknown }).status)
+    : "";
+
+  if (status === "waiting_confirm") {
+    startActionAlert({
+      title: "TAPD 批量任务：Plan 已生成，等待执行修改",
+    });
+    return;
+  }
+
+  if (status === "waiting_input") {
+    startActionAlert({
+      title: "TAPD 批量任务：Plan 需要补充信息",
+    });
+    return;
+  }
+
+  if (status === "waiting_merge") {
+    startActionAlert({
+      title: "TAPD 批量任务：修改完成，等待合并确认",
+    });
+    return;
+  }
+
+  if (["running", "completed", "cancelled", "paused", "idle"].includes(status)) {
+    stopActionAlert();
+  }
+}
 
 function isBrowserTab(tab: chrome.tabs.Tab): boolean {
   const url = tab.url ?? "";
@@ -163,10 +250,35 @@ chrome.runtime.onInstalled.addListener(() => {
 void initTapdBatchControllerFromStorage();
 
 chrome.action.onClicked.addListener(() => {
+  stopActionAlert();
+  void openAppWindow();
+});
+
+chrome.notifications.onClicked.addListener((notificationId) => {
+  if (notificationId !== actionAlertNotificationId) return;
+  stopActionAlert();
   void openAppWindow();
 });
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+  if (message?.type === "ACTION_ALERT_START") {
+    const title = typeof message.title === "string" ? message.title : "AI Runtime 需要处理";
+    startActionAlert({ title });
+    sendResponse({ ok: true });
+    return false;
+  }
+
+  if (message?.type === "ACTION_ALERT_STOP") {
+    stopActionAlert();
+    sendResponse({ ok: true });
+    return false;
+  }
+
+  if (message?.type === TAPD_BATCH_STATE) {
+    handleTapdBatchStateAlert(message.session);
+    return false;
+  }
+
   if (message?.type?.startsWith("TAPD_BATCH_")) {
     void handleTapdBatchCommand(message as TapdBatchCommand).then(sendResponse);
     return true;
