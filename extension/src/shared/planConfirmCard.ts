@@ -35,6 +35,25 @@ function confirmCardStatusLabel(status: JobStatusType): string {
   }
 }
 
+function confirmCardTitle(status: JobStatusType): string {
+  switch (status) {
+    case "planning":
+      return "Plan 分析中，请稍候...";
+    case "pending":
+      return "已确认执行，等待排队";
+    case "running":
+      return "已确认执行，正在修改";
+    case "completed":
+      return "执行已完成";
+    case "failed":
+      return "执行失败";
+    case "cancelled":
+      return "任务已取消";
+    default:
+      return "Plan 完成：是否执行修改？";
+  }
+}
+
 export function mountPlanConfirmCard(
   node: HTMLElement,
   jobId: string,
@@ -48,7 +67,7 @@ export function mountPlanConfirmCard(
     node.innerHTML = `
       <div class="msg-meta">Plan 确认</div>
       <div class="queue-card">
-        <div class="queue-title">${needsInput ? "Plan 等待补充信息" : "Plan 完成：是否执行修改？"}</div>
+        <div class="queue-title">${escapeHtml(confirmCardTitle(status))}</div>
         <div class="confirm-status">${escapeHtml(confirmCardStatusLabel(status))}</div>
       </div>
     `;

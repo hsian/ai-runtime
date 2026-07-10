@@ -2,6 +2,7 @@ import type { JobEvent, JobStatusType } from "./types.js";
 import { mountPlanConfirmCard, mountMergeConfirmCard } from "./planConfirmCard.js";
 
 const PLAN_KEY = "plan-result";
+const PROGRESS_KEY = "agent-progress";
 const CONFIRM_KEY = "confirm-card";
 const MERGE_KEY = "merge-card";
 
@@ -28,6 +29,32 @@ function formatTime(iso: string): string {
   } catch {
     return "";
   }
+}
+
+function describeToolProgress(event: JobEvent): string {
+  const name = (event.toolName ?? "").toLowerCase();
+  const detail = event.toolDetail ?? event.text ?? "";
+
+  if (["grep", "glob", "ls"].includes(name)) return "正在定位相关代码...";
+  if (["read", "notebookread"].includes(name)) return "正在阅读相关文件...";
+  if (["edit", "multiedit", "write", "notebookedit"].includes(name)) return "正在修改文件...";
+  if (name === "bash") {
+    if (/test|lint|build|check|typecheck|tsc|npm|pnpm|yarn/i.test(detail)) {
+      return "正在执行检查命令...";
+    }
+    if (/git/i.test(detail)) return "正在处理代码版本...";
+    return "正在执行必要命令...";
+  }
+  if (name === "webfetch" || name === "websearch") return "正在查询相关资料...";
+  if (event.toolAction === "done") return "已完成一个处理步骤";
+  return "正在推进任务...";
+}
+
+function progressDetailText(event: JobEvent): string {
+  const name = event.toolName ?? "工具";
+  const action = event.toolAction === "done" ? "完成" : "开始";
+  const detail = event.toolDetail || event.text || "";
+  return detail ? `${action} ${name}: ${detail}` : `${action} ${name}`;
 }
 
 export interface JobProgressViewOptions {
@@ -86,6 +113,36 @@ export class JobProgressView {
       requestAnimationFrame(scroll);
     });
     window.setTimeout(scroll, 120);
+  }
+
+  private upsertProgress(jobId: string, text: string, detail?: string): void {
+    const node = this.ensure(`${PROGRESS_KEY}-${jobId}`, "msg msg-progress");
+    if (!node.dataset.ready) {
+      node.dataset.ready = "1";
+      node.innerHTML = `
+        <div class="progress-card">
+          <div class="progress-main"></div>
+          <details class="progress-details">
+            <summary>详细日志</summary>
+            <div class="progress-log"></div>
+          </details>
+        </div>
+      `;
+    }
+
+    const main = node.querySelector<HTMLElement>(".progress-main")!;
+    main.textContent = text;
+
+    if (detail) {
+      const log = node.querySelector<HTMLElement>(".progress-log")!;
+      const line = document.createElement("div");
+      line.className = "progress-log-line";
+      line.textContent = detail;
+      log.appendChild(line);
+    }
+
+    this.container.appendChild(node);
+    this.scrollToBottom();
   }
 
   renderPlan(jobId: string, summary: string, editable = false): void {
@@ -178,24 +235,17 @@ export class JobProgressView {
           const next = prev + event.delta;
           this.agentBuffers.set(event.jobId, next);
           const node = this.ensure(key, "msg msg-agent");
-          node.innerHTML = `<div class="msg-meta">Agent</div><div class="msg-bubble">${escapeHtml(next)}</div>`;
+          node.innerHTML = `<div class="msg-meta">输出</div><div class="msg-bubble">${escapeHtml(next)}</div>`;
         }
         break;
       case "agent_tool":
-        if (!event.text) break;
-        {
-          const node = document.createElement("div");
-          node.className = "msg msg-tool";
-          node.dataset.key = event.id;
-          node.textContent = event.text;
-          this.container.appendChild(node);
-        }
+        this.upsertProgress(event.jobId, describeToolProgress(event), progressDetailText(event));
         break;
       case "agent_status":
         if (event.statusText ?? event.text) {
-          const node = this.ensure(`agent-status-${event.jobId}`, "msg msg-tool");
-          node.textContent = event.statusText ?? event.text ?? "";
-          this.options.onStatus?.(event.statusText ?? event.text ?? "");
+          const text = event.statusText ?? event.text ?? "";
+          this.upsertProgress(event.jobId, text);
+          this.options.onStatus?.(text);
         }
         break;
       case "done": {

@@ -61,7 +61,7 @@ interface PendingAttachment {
 }
 
 const AGENT_STREAM_KEY = "agent-stream";
-const AGENT_STATUS_KEY = "agent-status";
+const AGENT_PROGRESS_KEY = "agent-progress";
 const PLAN_RESULT_KEY = "plan-result";
 const QUEUE_CARD_KEY = "queue-card";
 const CONFIRM_CARD_KEY = "confirm-card";
@@ -76,8 +76,11 @@ let recoverAttemptAt = 0;
 let recoveryStopped = false;
 let recoveryFailureCount = 0;
 let recoveryTimer: ReturnType<typeof setTimeout> | null = null;
+let progressIdleTimer: ReturnType<typeof setInterval> | null = null;
+let lastProgressNoticeAt = 0;
 const MAX_RECOVERY_FAILURES = 3;
 const RECOVER_QUIET_MS = 12_000;
+const PROGRESS_IDLE_NOTICE_MS = 30_000;
 const RECOVER_RETRY_GAP_MS = 8_000;
 const PENDING_CANCEL_RETRY_MS = 10_000;
 
@@ -208,6 +211,10 @@ function moveMessageToBottom(key: string): void {
   scrollChatToBottom();
 }
 
+function removeMessageByKey(key: string): void {
+  el<HTMLElement>("chatMessages").querySelector<HTMLElement>(`[data-key="${key}"]`)?.remove();
+}
+
 function isCancellableStatus(status: JobStatusType | null): boolean {
   return status === "planning" || status === "pending" || status === "running";
 }
@@ -259,8 +266,44 @@ function stopJobRecovery(): void {
     clearTimeout(recoveryTimer);
     recoveryTimer = null;
   }
+  stopProgressIdleNotice();
   activeStream?.close();
   activeStream = null;
+}
+
+function isWaitingForUserStatus(status: JobStatusType | null): boolean {
+  return status === "awaiting_confirm" || status === "awaiting_input" || status === "awaiting_merge";
+}
+
+function stopProgressIdleNotice(): void {
+  if (!progressIdleTimer) return;
+  clearInterval(progressIdleTimer);
+  progressIdleTimer = null;
+}
+
+function startProgressIdleNotice(jobId: string): void {
+  stopProgressIdleNotice();
+  lastProgressNoticeAt = Date.now();
+  progressIdleTimer = setInterval(() => {
+    if (
+      activeJobId !== jobId ||
+      isTerminalStatus(currentJobStatus) ||
+      isWaitingForUserStatus(currentJobStatus)
+    ) {
+      stopProgressIdleNotice();
+      return;
+    }
+
+    const quietMs = Date.now() - lastEventAt;
+    const sinceNoticeMs = Date.now() - lastProgressNoticeAt;
+    if (quietMs < PROGRESS_IDLE_NOTICE_MS || sinceNoticeMs < PROGRESS_IDLE_NOTICE_MS) return;
+
+    const seconds = Math.max(30, Math.round(quietMs / 1000));
+    const text = `仍在处理中，已等待 ${seconds} 秒，可能正在等待响应或执行耗时操作...`;
+    upsertProgressCard(jobId, text);
+    setConnectionStatus(text);
+    lastProgressNoticeAt = Date.now();
+  }, 5000);
 }
 
 function applyLocalJobCancelled(jobId: string, message: string): void {
@@ -998,21 +1041,80 @@ function appendAgentDelta(delta: string, jobId?: string): void {
   bubble!.textContent += delta;
 }
 
+function describeToolProgress(event: JobEvent): string {
+  const name = (event.toolName ?? "").toLowerCase();
+  const detail = event.toolDetail ?? event.text ?? "";
+
+  if (["grep", "glob", "ls"].includes(name)) return "正在定位相关代码...";
+  if (["read", "notebookread"].includes(name)) return "正在阅读相关文件...";
+  if (["edit", "multiedit", "write", "notebookedit"].includes(name)) return "正在修改文件...";
+  if (name === "bash") {
+    if (/test|lint|build|check|typecheck|tsc|npm|pnpm|yarn/i.test(detail)) {
+      return "正在执行检查命令...";
+    }
+    if (/git/i.test(detail)) return "正在处理代码版本...";
+    return "正在执行必要命令...";
+  }
+  if (name === "webfetch" || name === "websearch") return "正在查询相关资料...";
+  if (event.toolAction === "done") return "已完成一个处理步骤";
+  return "正在推进任务...";
+}
+
+function progressDetailText(event: JobEvent): string {
+  const name = event.toolName ?? "工具";
+  const action = event.toolAction === "done" ? "完成" : "开始";
+  const detail = event.toolDetail || event.text || "";
+  return detail ? `${action} ${name}: ${detail}` : `${action} ${name}`;
+}
+
+function upsertProgressCard(jobId: string, text: string, detail?: string): void {
+  const node = ensureMessageElement(`${AGENT_PROGRESS_KEY}-${jobId}`, "msg msg-progress");
+  if (!node.dataset.ready) {
+    node.dataset.ready = "1";
+    node.innerHTML = `
+      <div class="progress-card">
+        <div class="progress-main"></div>
+        <details class="progress-details">
+          <summary>详细日志</summary>
+          <div class="progress-log"></div>
+        </details>
+      </div>
+    `;
+  }
+
+  const main = node.querySelector<HTMLElement>(".progress-main")!;
+  if (main.textContent !== text) {
+    main.textContent = text;
+  }
+
+  if (detail) {
+    const log = node.querySelector<HTMLElement>(".progress-log")!;
+    const line = document.createElement("div");
+    line.className = "progress-log-line";
+    line.textContent = detail;
+    log.appendChild(line);
+  }
+
+  moveMessageToBottom(`${AGENT_PROGRESS_KEY}-${jobId}`);
+}
+
+function noteProgressActivity(text: string): void {
+  lastProgressNoticeAt = Date.now();
+  setConnectionStatus(text);
+}
+
 function upsertAgentStatus(event: JobEvent): void {
   const text = event.statusText ?? event.text;
   if (!text) return;
 
-  const node = ensureMessageElement(`${AGENT_STATUS_KEY}-${event.jobId}`, "msg msg-tool");
-  node.innerHTML = `<div class="tool-line">${escapeHtml(text)}</div>`;
-  setConnectionStatus(text);
+  upsertProgressCard(event.jobId, text);
+  noteProgressActivity(text);
 }
 
 function appendToolLine(event: JobEvent): void {
-  const node = document.createElement("div");
-  node.className = "msg msg-tool";
-  node.dataset.key = event.id;
-  node.innerHTML = `<div class="tool-line">${escapeHtml(event.text ?? event.toolName ?? "")}</div>`;
-  el<HTMLElement>("chatMessages").appendChild(node);
+  const text = describeToolProgress(event);
+  upsertProgressCard(event.jobId, text, progressDetailText(event));
+  noteProgressActivity(text);
 }
 
 function finalizeAgentStream(): void {
@@ -1219,6 +1321,7 @@ function handleJobEvent(event: JobEvent, options?: { skipPersist?: boolean }): v
           upsertConfirmCard(event.jobId, "awaiting_confirm");
           setConnectionStatus("等待确认执行");
           startActionAlert("Plan 已生成，等待执行修改");
+          stopProgressIdleNotice();
           updateSubmitButton();
         });
       } else if (event.phase === "plan_need_more") {
@@ -1227,6 +1330,7 @@ function handleJobEvent(event: JobEvent, options?: { skipPersist?: boolean }): v
         upsertConfirmCard(event.jobId, "awaiting_input");
         setConnectionStatus("需要补充信息");
         startActionAlert("Plan 需要补充信息");
+        stopProgressIdleNotice();
         updateSubmitButton();
       } else if (event.phase === "execute_confirmed") {
         lockPlanResultBubble(event.jobId);
@@ -1242,6 +1346,7 @@ function handleJobEvent(event: JobEvent, options?: { skipPersist?: boolean }): v
         startActionAlert(
           createMergeRequestOnMerge ? "修改完成，等待提交 Merge Request" : "修改完成，等待合并确认"
         );
+        stopProgressIdleNotice();
         updateSubmitButton();
       } else if (event.phase === "merge") {
         const hasMergeCard = Boolean(
@@ -1273,7 +1378,7 @@ function handleJobEvent(event: JobEvent, options?: { skipPersist?: boolean }): v
       } else if (event.phase === "plan") {
         resetPlanOutputBuffer(event.jobId);
         currentJobStatus = "planning";
-        upsertConfirmCard(event.jobId, "planning");
+        removeMessageByKey(`${CONFIRM_CARD_KEY}-${event.jobId}`);
         setConnectionStatus("Plan 分析中");
         stopActionAlert();
         updateSubmitButton();
@@ -1295,6 +1400,7 @@ function handleJobEvent(event: JobEvent, options?: { skipPersist?: boolean }): v
       upsertMergeConfirmCard(event.jobId, "completed");
       setConnectionStatus("任务已完成");
       stopActionAlert();
+      stopProgressIdleNotice();
       activeStream?.close();
       activeStream = null;
       updateSubmitButton();
@@ -1308,6 +1414,7 @@ function handleJobEvent(event: JobEvent, options?: { skipPersist?: boolean }): v
       upsertMergeConfirmCard(event.jobId, "cancelled");
       setConnectionStatus("任务已取消");
       stopActionAlert();
+      stopProgressIdleNotice();
       activeStream?.close();
       activeStream = null;
       updateSubmitButton();
@@ -1322,11 +1429,13 @@ function handleJobEvent(event: JobEvent, options?: { skipPersist?: boolean }): v
         upsertMergeConfirmCard(event.jobId, "cancelled");
         setConnectionStatus("任务已取消");
         stopActionAlert();
+        stopProgressIdleNotice();
       } else {
         currentJobStatus = "failed";
         appendErrorBubble(event);
         setConnectionStatus("任务失败");
         stopActionAlert();
+        stopProgressIdleNotice();
       }
       activeStream?.close();
       activeStream = null;
@@ -1349,6 +1458,7 @@ function connectJobStream(serverUrl: string, jobId: string, initialStatus?: JobS
   resetJobRecovery();
   setConnectionStatus("加载任务记录…");
   lastEventAt = Date.now();
+  startProgressIdleNotice(jobId);
 
   activeStream = openJobEventStream(serverUrl, jobId, handleJobEvent, {
     onOpen: () => {
