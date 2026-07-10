@@ -11,7 +11,6 @@ function escapeHtml(value: string): string {
 export interface PlanConfirmCardHandlers {
   getPlanText: (jobId: string) => string;
   onExecute: (jobId: string, planSummary: string) => void | Promise<void>;
-  onPlanReply: (jobId: string, reply: string) => void | Promise<void>;
   onCancel: (jobId: string) => void | Promise<void>;
 }
 
@@ -61,51 +60,31 @@ export function mountPlanConfirmCard(
     <div class="queue-card">
       <div class="queue-title">${
         needsInput
-          ? "需求信息不足，请补充后重新分析"
-          : "Plan 完成：可直接执行，或在下方补充说明后重新分析"
+          ? "需求信息不足，请重新提交更具体的需求"
+          : "Plan 完成：可编辑上方方案后执行修改"
       }</div>
-      <details class="plan-reply-details"${needsInput ? " open" : ""}>
-        <summary class="plan-reply-summary">${needsInput ? "补充说明（必填）" : "补充说明（可选）"}</summary>
-        <label class="plan-reply-label" for="plan-reply-${escapeHtml(jobId)}">回答问题或说明要调整的点</label>
-        <textarea
-          id="plan-reply-${escapeHtml(jobId)}"
-          class="plan-reply-input"
-          rows="3"
-          placeholder="${needsInput ? "请补充缺失的需求信息" : "仅当要改方案时填写，例如：选备选 A"}"
-        ></textarea>
-      </details>
       <div class="confirm-actions">
         ${
           needsInput
-            ? `<button class="primary" data-action="reply">继续分析</button>`
-            : `<button class="primary" data-action="execute">执行修改</button>
-               <button class="secondary" data-action="reply">继续分析</button>`
+            ? ""
+            : `<button class="primary" data-action="execute">执行修改</button>`
         }
         <button class="secondary" data-action="cancel">取消</button>
       </div>
       <div class="hint" style="margin-top:8px;">${
         needsInput
-          ? "当前 Plan 信息不足，填写后点「继续分析」"
-          : "默认直接点「执行修改」即可；只有想改方案时才填说明并点「继续分析」"
+          ? "当前 Plan 信息不足，取消后请重新提交完整需求"
+          : "执行时会使用上方当前方案文本；执行完成后还需确认合并到 test"
       }</div>
-      ${
-        needsInput
-          ? ""
-          : `<div class="hint" style="margin-top:4px;">也可直接编辑上方方案文本后执行；执行完成后还需确认合并到 test</div>`
-      }
     </div>
   `;
 
-  const replyInput = node.querySelector<HTMLTextAreaElement>(`#plan-reply-${CSS.escape(jobId)}`);
   const execBtn = node.querySelector<HTMLButtonElement>('[data-action="execute"]');
-  const replyBtn = node.querySelector<HTMLButtonElement>('[data-action="reply"]');
   const cancelBtn = node.querySelector<HTMLButtonElement>('[data-action="cancel"]');
 
   const setBusy = (busy: boolean): void => {
     execBtn && (execBtn.disabled = busy);
-    replyBtn && (replyBtn.disabled = busy);
     cancelBtn && (cancelBtn.disabled = busy);
-    if (replyInput) replyInput.disabled = busy;
   };
 
   execBtn?.addEventListener("click", () => {
@@ -115,23 +94,6 @@ export function mountPlanConfirmCard(
       setBusy(true);
       try {
         await handlers.onExecute(jobId, planSummary);
-      } finally {
-        setBusy(false);
-      }
-    })();
-  });
-
-  replyBtn?.addEventListener("click", () => {
-    void (async () => {
-      const reply = replyInput?.value.trim() ?? "";
-      if (!reply) {
-        replyInput?.focus();
-        return;
-      }
-      setBusy(true);
-      try {
-        await handlers.onPlanReply(jobId, reply);
-        if (replyInput) replyInput.value = "";
       } finally {
         setBusy(false);
       }

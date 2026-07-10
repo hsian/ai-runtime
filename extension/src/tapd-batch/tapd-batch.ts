@@ -190,24 +190,6 @@ function ensureProgressView(): JobProgressView {
           progressView?.renderConfirmCard(jobId, "pending");
         });
       },
-      onPlanReply: (jobId, reply) => {
-        if (session?.activeJobId && session.activeJobId !== jobId) {
-          setStatus("任务已更新，请终止后重新开始");
-          return;
-        }
-        void sendTapdBatchCommand<{ ok: boolean; error?: string }>({
-          type: "TAPD_BATCH_PLAN_REPLY",
-          reply,
-        }).then((result) => {
-          if (result?.ok === false) {
-            setStatus(result.error ?? "继续分析失败");
-            void syncStateFromBackground();
-            return;
-          }
-          progressView?.renderConfirmCard(jobId, "planning");
-          setStatus("正在根据补充说明继续分析...");
-        });
-      },
       onCancelJob: (jobId) => {
         progressView?.renderConfirmCard(jobId, "cancelled");
         setStatus("正在取消任务...");

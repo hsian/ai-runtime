@@ -19,7 +19,6 @@ import {
   revertJobFromDefaultBranch,
   queryJobStatus,
   queryJobStatusWithRetry,
-  replyToPlan,
   submitPlan,
   submitJob,
 } from "../shared/api.js";
@@ -811,20 +810,6 @@ function upsertConfirmCard(jobId: string, status: JobStatusType = currentJobStat
         } else {
           setConnectionStatus(formatErrorMessage(config.serverUrl, err));
         }
-      }
-    },
-    onPlanReply: async (id, reply) => {
-      const config = await loadConfig();
-      if (!config.serverUrl) return;
-      try {
-        resetPlanOutputBuffer(id);
-        currentJobStatus = "planning";
-        upsertConfirmCard(id, "planning");
-        setConnectionStatus("正在根据补充说明继续分析...");
-        await replyToPlan(config.serverUrl, id, reply);
-      } catch (err) {
-        setConnectionStatus(formatErrorMessage(config.serverUrl, err));
-        upsertConfirmCard(id, currentJobStatus ?? "awaiting_input");
       }
     },
     onCancel: async (id) => {

@@ -33,7 +33,6 @@ function formatTime(iso: string): string {
 export interface JobProgressViewOptions {
   onStatus?: (text: string) => void;
   onConfirmExecute?: (jobId: string, planSummary: string) => void;
-  onPlanReply?: (jobId: string, reply: string) => void;
   onCancelJob?: (jobId: string) => void;
   onConfirmMerge?: (jobId: string) => void;
   onDiscardMerge?: (jobId: string) => void;
@@ -99,9 +98,6 @@ export class JobProgressView {
       getPlanText: (id) => this.getPlanText(id),
       onExecute: (id, planSummary) => {
         this.options.onConfirmExecute?.(id, planSummary);
-      },
-      onPlanReply: (id, reply) => {
-        this.options.onPlanReply?.(id, reply);
       },
       onCancel: (id) => {
         this.options.onCancelJob?.(id);

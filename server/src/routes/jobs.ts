@@ -257,61 +257,6 @@ jobsRouter.post("/plan", handleJobImagesUpload, (req, res) => {
   });
 });
 
-jobsRouter.post("/:jobId/plan-reply", (req, res) => {
-  const jobId = req.params.jobId;
-  const job = getJob(jobId);
-  if (!job) {
-    res.status(404).json({ error: "任务不存在" });
-    return;
-  }
-
-  if (job.status !== "awaiting_confirm" && job.status !== "awaiting_input") {
-    res.status(400).json({ error: `当前状态不可补充说明: ${job.status}` });
-    return;
-  }
-
-  const body = req.body as { reply?: unknown } | undefined;
-  const reply = typeof body?.reply === "string" ? body.reply.trim() : "";
-  if (!reply) {
-    res.status(400).json({ error: "补充说明不能为空" });
-    return;
-  }
-
-  const previousPlan = job.planSummary?.trim();
-  const augmentedPrompt = `${job.prompt}
-
-【上一轮 Plan】
-${previousPlan ?? "（无）"}
-
-【用户补充说明】
-${reply}`;
-
-  updateJob(jobId, {
-    prompt: augmentedPrompt,
-    planSummary: undefined,
-    status: "planning",
-    message: "正在根据补充说明继续 Plan...",
-  });
-
-  appendJobEvent(jobId, { type: "user", text: reply });
-  appendJobEvent(jobId, {
-    type: "stage",
-    phase: "plan",
-    text: "根据补充说明加入 Plan 队列...",
-  });
-
-  const jobsAhead = jobQueue.enqueue(jobId, runQueuedPlan);
-
-  res.status(202).json({
-    jobId,
-    status: "planning",
-    message: jobsAhead > 0
-      ? `已收到补充说明，Plan 已加入队列，前面还有 ${jobsAhead} 个任务`
-      : "已收到补充说明，正在继续 Plan 分析",
-    jobsAhead,
-  });
-});
-
 jobsRouter.post("/:jobId/execute", (req, res) => {
   const jobId = req.params.jobId;
   const job = getJob(jobId);

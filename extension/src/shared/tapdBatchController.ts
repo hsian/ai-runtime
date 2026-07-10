@@ -6,7 +6,6 @@ import {
   mergeJob,
   openJobEventStream,
   queryJobStatus,
-  replyToPlan,
   submitPlan,
 } from "./api.js";
 import type { JobEvent, JobStatus, JobStatusType, TapdBatchSession, TapdBatchTask } from "./types.js";
@@ -45,7 +44,7 @@ function shouldAutoResumeSession(next: TapdBatchSession | null): boolean {
   );
 }
 
-type UserGate = "execute" | "merge" | "cancel" | "reply";
+type UserGate = "execute" | "merge" | "cancel";
 
 let serverUrl = "";
 let session: TapdBatchSession | null = null;
@@ -54,9 +53,8 @@ let batchCancelled = false;
 let loopRunning = false;
 let activeEventSource: EventSource | null = null;
 let userGateResolve: ((gate: UserGate) => void) | null = null;
-let userGateExpected: "execute" | "merge" | "reply" | null = null;
+let userGateExpected: "execute" | "merge" | "cancel" | null = null;
 let pendingPlanSummary = "";
-let pendingPlanReply = "";
 
 function isTerminal(status: JobStatusType): boolean {
   return status === "completed" || status === "failed" || status === "cancelled";
@@ -211,7 +209,7 @@ async function cancelBatchSession(): Promise<void> {
   await emitSession(next);
 }
 
-function waitForUserGate(expected: "execute" | "merge" | "reply"): Promise<UserGate> {
+function waitForUserGate(expected: "execute" | "merge" | "cancel"): Promise<UserGate> {
   userGateExpected = expected;
   return new Promise((resolve) => {
     userGateResolve = (gate) => {
@@ -323,7 +321,7 @@ async function runSingleTask(
       });
       await emitSession(next);
 
-      const inputGate = await waitForUserGate("reply");
+      const inputGate = await waitForUserGate("cancel");
       if (inputGate === "cancel") {
         if (batchCancelled) return session ?? next;
         await cancelJob(serverUrl, jobId);
@@ -334,18 +332,6 @@ async function runSingleTask(
         });
       }
 
-      const reply = pendingPlanReply.trim();
-      pendingPlanReply = "";
-      if (!reply) continue;
-
-      try {
-        await replyToPlan(serverUrl, jobId, reply);
-      } catch (err) {
-        return handlePlanReplyError(next, task, err);
-      }
-      next = touchSession({ ...next, status: "running", planSummary: undefined, pauseReason: undefined });
-      await emitSession(next);
-      job = await waitForJobStatus(jobId, ["awaiting_confirm", "awaiting_input", "failed", "cancelled"], startedAt);
       continue;
     }
 
@@ -371,21 +357,6 @@ async function runSingleTask(
         status: "paused",
         pauseReason: `${task.title}：已取消`,
       });
-    }
-
-    if (gate === "reply") {
-      const reply = pendingPlanReply.trim();
-      pendingPlanReply = "";
-      if (!reply) continue;
-      try {
-        await replyToPlan(serverUrl, jobId, reply);
-      } catch (err) {
-        return handlePlanReplyError(next, task, err);
-      }
-      next = touchSession({ ...next, status: "running", planSummary: undefined });
-      await emitSession(next);
-      job = await waitForJobStatus(jobId, ["awaiting_confirm", "awaiting_input", "failed", "cancelled"], startedAt);
-      continue;
     }
 
     const planSummary = (silentMode ? job.planSummary : pendingPlanSummary || job.planSummary || "").trim();
@@ -579,83 +550,6 @@ export function isTapdBatchLoopRunning(): boolean {
   return loopRunning;
 }
 
-function isJobNotFoundError(err: unknown): boolean {
-  const msg = err instanceof Error ? err.message : String(err);
-  return /任务不存在|分析任务不存在|404/.test(msg);
-}
-
-async function handlePlanReplyError(
-  current: TapdBatchSession,
-  task: TapdBatchTask,
-  err: unknown
-): Promise<TapdBatchSession> {
-  if (isJobNotFoundError(err)) {
-    return touchSession({
-      ...updateTask(current, task.id, {
-        jobId: undefined,
-        status: "failed",
-        error: "服务端任务已过期",
-        failedPhase: "Plan",
-      }),
-      status: "paused",
-      activeJobId: undefined,
-      planSummary: undefined,
-      pauseReason: `${task.title}：服务端任务已过期，请终止后重新开始`,
-    });
-  }
-  throw err;
-}
-
-async function directPlanReply(reply: string): Promise<{ ok: boolean; error?: string }> {
-  if (!session?.activeJobId || !session.currentTaskId) {
-    return { ok: false, error: "无活动任务，请终止后重新开始" };
-  }
-  await loadPersistedServerUrl();
-  if (!serverUrl) {
-    return { ok: false, error: "未配置服务端地址" };
-  }
-
-  const replyText = reply.trim();
-  if (!replyText) {
-    return { ok: false, error: "补充说明不能为空" };
-  }
-
-  const jobId = session.activeJobId;
-  const taskId = session.currentTaskId;
-  const task = session.tasks.find((item) => item.id === taskId);
-  if (!task) {
-    return { ok: false, error: "当前任务不存在" };
-  }
-
-  try {
-    await replyToPlan(serverUrl, jobId, replyText);
-  } catch (err) {
-    const next = await handlePlanReplyError(session, task, err);
-    await emitSession(next);
-    return {
-      ok: false,
-      error: isJobNotFoundError(err)
-        ? "服务端任务已过期（可能已重启），请终止后重新开始"
-        : err instanceof Error
-          ? err.message
-          : String(err),
-    };
-  }
-
-  const next = touchSession({
-    ...session,
-    status: "running",
-    planSummary: undefined,
-    pauseReason: undefined,
-  });
-  await emitSession(next);
-
-  if (!loopRunning) {
-    void runBatchLoop(next, { resume: true });
-  }
-  return { ok: true };
-}
-
 async function directDiscardMerge(): Promise<{ ok: boolean; error?: string }> {
   if (!session?.activeJobId) {
     return { ok: false, error: "无活动任务" };
@@ -795,14 +689,6 @@ export async function handleTapdBatchCommand(
       pendingPlanSummary = command.planSummary;
       if (userGateExpected === "execute") userGateResolve?.("execute");
       return { ok: true };
-
-    case "TAPD_BATCH_PLAN_REPLY":
-      pendingPlanReply = command.reply;
-      if (userGateExpected === "reply" || userGateExpected === "execute") {
-        userGateResolve?.("reply");
-        return { ok: true };
-      }
-      return directPlanReply(command.reply);
 
     case "TAPD_BATCH_CONFIRM_MERGE":
       if (userGateExpected === "merge") {

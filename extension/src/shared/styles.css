@@ -823,43 +823,6 @@ body.composer-resizing {
   flex: 1;
 }
 
-.plan-reply-label {
-  display: block;
-  font-size: 11px;
-  color: #666;
-  margin: 8px 0 4px;
-}
-
-.plan-reply-details {
-  margin-top: 8px;
-}
-
-.plan-reply-summary {
-  font-size: 12px;
-  color: var(--color-primary);
-  cursor: pointer;
-  user-select: none;
-}
-
-.plan-reply-input {
-  width: 100%;
-  box-sizing: border-box;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm);
-  padding: 8px;
-  font-size: 12px;
-  line-height: 1.45;
-  resize: vertical;
-  min-height: 64px;
-  font-family: inherit;
-}
-
-.plan-reply-input:focus {
-  outline: none;
-  border-color: var(--color-primary);
-  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.14);
-}
-
 .queue-title {
   font-size: 12px;
   font-weight: 600;
