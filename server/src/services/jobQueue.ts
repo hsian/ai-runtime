@@ -183,12 +183,6 @@ class JobQueue {
         } catch (err) {
           console.error(`[JobQueue ${jobId}] 处理异常:`, err);
         } finally {
-          const latest = getJob(jobId);
-          if (latest?.status === "awaiting_merge") {
-            this.syncWaitingJobs();
-            this.broadcastQueueForAll();
-            return;
-          }
           this.currentJobId = null;
           this.broadcastQueueForAll();
         }

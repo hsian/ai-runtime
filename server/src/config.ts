@@ -11,6 +11,7 @@ const envSchema = z.object({
   GIT_AUTHOR_NAME: z.string().default("AI Runtime Bot"),
   GIT_AUTHOR_EMAIL: z.string().default("ai-runtime@company.com"),
   WORKSPACE_DIR: z.string().default("./workspace"),
+  WORKTREE_DIR: z.string().default("./data/wt"),
   CLAUDE_CLI_PATH: z.string().default("claude"),
   CLAUDE_MODEL: z.string().optional(),
   CLAUDE_TIMEOUT_MS: z.coerce.number().default(1_200_000),
@@ -100,6 +101,7 @@ function loadConfig() {
     ...parsed.data,
     UPLOAD_DIR: resolve(process.cwd(), parsed.data.UPLOAD_DIR),
     WORKSPACE_DIR: resolve(process.cwd(), parsed.data.WORKSPACE_DIR),
+    WORKTREE_DIR: resolve(process.cwd(), parsed.data.WORKTREE_DIR),
   };
 }
 

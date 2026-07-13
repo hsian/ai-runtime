@@ -51,10 +51,10 @@ function isCancelled(jobId: string): boolean {
   return getJob(jobId)?.status === "cancelled";
 }
 
-async function abortIfCancelled(jobId: string, phase: string): Promise<boolean> {
+async function abortIfCancelled(jobId: string, phase: string, repoPath?: string): Promise<boolean> {
   if (!isCancelled(jobId)) return false;
   appendJobEvent(jobId, { type: "stage", phase: "abort", text: `任务已取消，停止在阶段: ${phase}` });
-  await gitService.discardUncommittedChanges();
+  await gitService.discardUncommittedChanges(repoPath);
   return true;
 }
 
@@ -96,7 +96,7 @@ export async function processJob(jobId: string): Promise<void> {
 
   const job = updateJob(jobId, {
     status: "running",
-    message: "正在拉取代码...",
+    message: "正在准备独立工作区...",
     jobsAhead: 0,
   });
   if (!job) return;
@@ -108,19 +108,19 @@ export async function processJob(jobId: string): Promise<void> {
 
   const branchName = `plugin-fix/${jobId.slice(0, 8)}`;
   const defaultBranch = config.GIT_DEFAULT_BRANCH;
+  let repoPath: string | undefined;
 
   try {
-    emitStage(jobId, "pull", `正在拉取 ${defaultBranch} 分支最新代码...`);
-    await gitService.prepareBaseBranch();
-    if (await abortIfCancelled(jobId, "pull")) return;
+    emitStage(jobId, "pull", `正在基于 ${defaultBranch} 创建独立工作区...`);
+    repoPath = await gitService.createJobWorktree(jobId, branchName);
+    updateJob(jobId, { worktreePath: repoPath });
+    if (await abortIfCancelled(jobId, "pull", repoPath)) return;
 
-    emitStage(jobId, "branch", `正在创建分支 ${branchName}...`);
-    await gitService.createBranch(branchName);
-    if (await abortIfCancelled(jobId, "branch")) return;
+    emitStage(jobId, "branch", `已创建独立工作区和分支 ${branchName}`);
+    if (await abortIfCancelled(jobId, "branch", repoPath)) return;
 
     emitStage(jobId, "agent", "正在分析并修改代码...");
 
-    const repoPath = gitService.getRepoPath();
     const stagedAttachments = await stageAttachmentsForAgent(job.attachments, repoPath, jobId);
     if (stagedAttachments?.length) {
       emitStage(jobId, "attachments", `已准备 ${stagedAttachments.length} 张截图供分析`);
@@ -138,9 +138,9 @@ export async function processJob(jobId: string): Promise<void> {
         confirmedPlan: job.requiresConfirm ? job.planSummary : undefined,
       }
     );
-    if (await abortIfCancelled(jobId, "agent")) return;
+    if (await abortIfCancelled(jobId, "agent", repoPath)) return;
 
-    const hasChanges = await gitService.hasUncommittedChanges();
+    const hasChanges = await gitService.hasUncommittedChanges(repoPath);
 
     if (!hasChanges) {
       if (looksLikeClarification(result.summary)) {
@@ -170,9 +170,9 @@ export async function processJob(jobId: string): Promise<void> {
         ? "正在提交并推送代码..."
         : "正在提交代码（feature 分支不推送，仅合并后推送 test）..."
     );
-    if (await abortIfCancelled(jobId, "commit")) return;
+    if (await abortIfCancelled(jobId, "commit", repoPath)) return;
     const commitMessage = buildCommitMessage(job.prompt, result.summary, jobId);
-    const commitSha = await gitService.commitAndPush(branchName, commitMessage);
+    const commitSha = await gitService.commitAndPush(branchName, commitMessage, repoPath);
 
     if (job.requiresConfirm) {
       const defaultBranch = config.GIT_DEFAULT_BRANCH;
@@ -182,7 +182,7 @@ export async function processJob(jobId: string): Promise<void> {
       let previewNotice = "预览未启动";
 
       try {
-        const changedFiles = await gitService.listChangedFilesAgainstDefault(branchName);
+        const changedFiles = await gitService.listChangedFilesAgainstDefault(branchName, repoPath);
         const preview = await resolveJobPreviewLink({
           repoPath,
           changedFiles,
@@ -201,6 +201,7 @@ export async function processJob(jobId: string): Promise<void> {
         status: "awaiting_merge",
         sourceBranch: branchName,
         sourceCommitSha: commitSha,
+        worktreePath: repoPath,
         branch: branchName,
         commitSha,
         message: pendingMessage,
@@ -223,7 +224,7 @@ export async function processJob(jobId: string): Promise<void> {
 
     if (config.AUTO_MERGE_TO_DEFAULT_BRANCH) {
       emitStage(jobId, "merge", `正在合并到 ${defaultBranch} 并推送...`);
-      if (await abortIfCancelled(jobId, "merge")) return;
+      if (await abortIfCancelled(jobId, "merge", repoPath)) return;
       const mergeMessage = `merge(plugin): ${job.prompt}\n\nJob: ${jobId}`;
       mergeSha = await gitService.mergeIntoDefaultBranch(branchName, mergeMessage);
       finalBranch = defaultBranch;
@@ -266,12 +267,13 @@ export async function processJob(jobId: string): Promise<void> {
   } finally {
     try {
       const latest = getJob(jobId);
-      if (latest?.status !== "awaiting_merge" || !latest.previewUrl) {
-        await gitService.restoreBaseBranch();
+      if (repoPath && latest?.status !== "awaiting_merge") {
+        await gitService.removeJobWorktree(repoPath, branchName);
+        updateJob(jobId, { worktreePath: undefined });
       }
     } catch (err) {
       console.warn(
-        "[AI Runtime] 任务结束后未能切回基线分支:",
+        "[AI Runtime] 任务结束后未能清理 worktree:",
         err instanceof Error ? err.message : String(err)
       );
     }

@@ -1,6 +1,6 @@
 import { config } from "../config.js";
 import { getJob, updateJob } from "./jobStore.js";
-import { gitService } from "./gitService.js";
+import { GitMergeConflictError, gitService } from "./gitService.js";
 import { appendJobEvent } from "./jobEvents.js";
 import type { ReleaseMergeRecord } from "../types.js";
 
@@ -36,6 +36,7 @@ export async function confirmJobMerge(jobId: string): Promise<void> {
       commitSha: mergeSha,
       mergedToDefaultBranch: defaultBranch,
       mergedToDefaultAt: new Date().toISOString(),
+      worktreePath: undefined,
     });
     appendJobEvent(jobId, {
       type: "done",
@@ -45,12 +46,68 @@ export async function confirmJobMerge(jobId: string): Promise<void> {
       commitSha: mergeSha,
     });
   } catch (err) {
+    if (err instanceof GitMergeConflictError) {
+      appendJobEvent(jobId, {
+        type: "stage",
+        phase: "merge_conflict",
+        text: `自动合并到 ${defaultBranch} 发生冲突，正在提交 Merge Request 交由技术处理...`,
+      });
+
+      try {
+        await gitService.pushFeatureBranch(job.branch, job.worktreePath);
+        const title = `fix(plugin): ${job.prompt.slice(0, 80)}`;
+        const description = [
+          `${job.message ?? "代码修改已完成"}`,
+          "",
+          `自动合并到 ${defaultBranch} 时发生冲突，已转为 Merge Request。`,
+          err.files.length > 0 ? `冲突文件：${err.files.join(", ")}` : "",
+          "",
+          `Job: ${jobId}`,
+        ].filter(Boolean).join("\n");
+        const mergeRequest = await gitService.createMergeRequest({
+          sourceBranch: job.branch,
+          title,
+          description,
+        });
+        const doneMessage = `${job.message ?? "修改已完成"}\n\n自动合并 ${defaultBranch} 发生冲突，已提交 Merge Request: ${mergeRequest.url}`;
+
+        updateJob(jobId, {
+          status: "completed",
+          message: doneMessage,
+          mergeRequestUrl: mergeRequest.url,
+          sourceBranch: job.sourceBranch ?? job.branch,
+          sourceCommitSha: job.sourceCommitSha ?? job.commitSha,
+          worktreePath: undefined,
+          branch: job.branch,
+        });
+        appendJobEvent(jobId, {
+          type: "done",
+          text: doneMessage,
+          message: doneMessage,
+          branch: job.branch,
+          commitSha: job.commitSha,
+          mergeRequestUrl: mergeRequest.url,
+        });
+        await gitService.removeJobWorktree(job.worktreePath, job.branch);
+        return;
+      } catch (mrErr) {
+        const error = mrErr instanceof Error ? mrErr.message : String(mrErr);
+        updateJob(jobId, { status: "failed", error, message: "合并冲突且提交 Merge Request 失败" });
+        appendJobEvent(jobId, { type: "error", message: error, text: `合并冲突且提交 Merge Request 失败: ${error}` });
+        throw mrErr;
+      }
+    }
+
     const error = err instanceof Error ? err.message : String(err);
     updateJob(jobId, { status: "failed", error, message: "合并失败" });
     appendJobEvent(jobId, { type: "error", message: error, text: `合并失败: ${error}` });
     throw err;
   } finally {
     try {
+      const latest = getJob(jobId);
+      if (latest?.status === "completed") {
+        await gitService.removeJobWorktree(job.worktreePath, job.branch);
+      }
       await gitService.restoreBaseBranch();
     } catch (err) {
       console.warn(
@@ -80,7 +137,7 @@ export async function createJobMergeRequest(jobId: string): Promise<void> {
   });
 
   try {
-    await gitService.pushFeatureBranch(job.branch);
+    await gitService.pushFeatureBranch(job.branch, job.worktreePath);
     const title = `fix(plugin): ${job.prompt.slice(0, 80)}`;
     const description = `${job.message ?? "代码修改已完成"}\n\nJob: ${jobId}`;
     const mergeRequest = await gitService.createMergeRequest({
@@ -94,6 +151,7 @@ export async function createJobMergeRequest(jobId: string): Promise<void> {
       status: "completed",
       message: doneMessage,
       mergeRequestUrl: mergeRequest.url,
+      worktreePath: undefined,
     });
     appendJobEvent(jobId, {
       type: "done",
@@ -103,6 +161,7 @@ export async function createJobMergeRequest(jobId: string): Promise<void> {
       commitSha: job.commitSha,
       mergeRequestUrl: mergeRequest.url,
     });
+    await gitService.removeJobWorktree(job.worktreePath, job.branch);
   } catch (err) {
     const error = err instanceof Error ? err.message : String(err);
     updateJob(jobId, { status: "failed", error, message: "提交 Merge Request 失败" });
@@ -277,7 +336,7 @@ export async function discardJobMerge(jobId: string): Promise<void> {
 
   try {
     if (job.branch) {
-      await gitService.discardFeatureBranch(job.branch);
+      await gitService.discardFeatureBranch(job.branch, job.worktreePath);
     } else {
       await gitService.restoreBaseBranch();
     }
@@ -289,7 +348,7 @@ export async function discardJobMerge(jobId: string): Promise<void> {
     await gitService.restoreBaseBranch();
   }
 
-  updateJob(jobId, { status: "cancelled", message: "已放弃合并，test 分支未改动" });
+  updateJob(jobId, { status: "cancelled", message: "已放弃合并，test 分支未改动", worktreePath: undefined });
   appendJobEvent(jobId, {
     type: "cancelled",
     message: "已放弃合并",

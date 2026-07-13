@@ -502,7 +502,7 @@ function applyHeaderStatusFromJob(job: JobStatus): void {
     awaiting_confirm: "等待确认执行",
     awaiting_merge: "等待确认合并",
     awaiting_input: "需要补充信息",
-    pending: job.jobsAhead ? `排队中，前面 ${job.jobsAhead} 个任务` : "排队中",
+    pending: job.jobsAhead ? `排队中，前面 ${job.jobsAhead} 个任务` : "准备执行",
     running: "执行中",
     completed: "任务已完成",
     failed: "任务失败",
@@ -530,7 +530,7 @@ function confirmCardStatusLabel(status: JobStatusType): string {
     case "failed":
       return "执行失败";
     case "pending":
-      return "已确认，排队中";
+      return "已确认，准备执行";
     case "running":
       return "已确认，执行中";
     case "planning":
@@ -626,7 +626,7 @@ function applyServerJobState(job: JobStatus): void {
   }
 
   if (job.status === "pending" || job.status === "running") {
-    setConnectionStatus(job.status === "running" ? "执行中" : "排队中");
+    setConnectionStatus(job.status === "running" ? "执行中" : "准备执行");
     updateSubmitButton();
   }
 }
@@ -857,7 +857,7 @@ function upsertConfirmCard(jobId: string, status: JobStatusType = currentJobStat
         return;
       }
       try {
-        setConnectionStatus("已确认执行，正在加入队列...");
+        setConnectionStatus("已确认执行，正在准备独立工作区...");
         await executeJob(config.serverUrl, id, planSummary);
         lockPlanResultBubble(id);
         currentJobStatus = "pending";
@@ -1337,7 +1337,7 @@ function handleJobEvent(event: JobEvent, options?: { skipPersist?: boolean }): v
         lockPlanResultBubble(event.jobId);
         currentJobStatus = "pending";
         upsertConfirmCard(event.jobId, "pending");
-        setConnectionStatus("已确认执行，排队中");
+        setConnectionStatus("正在准备独立工作区");
         stopActionAlert();
         updateSubmitButton();
       } else if (event.phase === "execute_ready") {
@@ -2033,7 +2033,7 @@ async function handleSubmit(): Promise<void> {
     resetPlanOutputBuffer(data.jobId);
 
     connectJobStream(config.serverUrl, data.jobId, data.status as JobStatusType);
-    setConnectionStatus(effectivePlan ? "Plan 分析中…" : data.jobsAhead ? `排队中，前面 ${data.jobsAhead} 个任务` : "任务已提交");
+    setConnectionStatus(effectivePlan ? "Plan 分析中…" : data.message || "正在准备独立工作区");
   } catch (err) {
     setConnectionStatus(formatErrorMessage(config.serverUrl, err));
   } finally {

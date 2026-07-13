@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { createJob, getJob, listJobs, updateJob } from "../services/jobStore.js";
 import { jobQueue } from "../services/jobQueue.js";
+import { processJob } from "../services/jobProcessor.js";
 import { appendJobEvent, getJobEvents, subscribeJobEvents } from "../services/jobEvents.js";
 import { gitService } from "../services/gitService.js";
 import { runAgent, killAgentForJob, AgentAbortedError } from "../services/agent/index.js";
@@ -42,7 +43,8 @@ function getAuthorizedJob(
 }
 
 async function revertPlanWorkspaceChanges(jobId: string, reason: string): Promise<void> {
-  const reverted = await gitService.discardUncommittedChanges();
+  const job = getJob(jobId);
+  const reverted = await gitService.discardUncommittedChanges(job?.worktreePath);
   if (reverted.length === 0) return;
 
   const fileList = reverted.slice(0, 5).join(", ");
@@ -249,18 +251,13 @@ jobsRouter.post("/", handleJobImagesUpload, (req, res) => {
   const { job, data } = created;
   emitUserSubmitEvents(job.jobId, data);
 
-  const jobsAhead = jobQueue.enqueue(job.jobId);
-
-  const message =
-    jobsAhead > 0
-      ? `任务已加入队列，前面还有 ${jobsAhead} 个任务`
-      : "任务已创建，即将开始处理";
+  void processJob(job.jobId);
 
   res.status(202).json({
     jobId: job.jobId,
     status: job.status,
-    message,
-    jobsAhead,
+    message: "任务已创建，正在准备独立工作区",
+    jobsAhead: 0,
   });
 });
 
@@ -275,15 +272,13 @@ jobsRouter.post("/plan", handleJobImagesUpload, (req, res) => {
   updateJob(job.jobId, { requiresConfirm: true, status: "planning" });
   emitUserSubmitEvents(job.jobId, data);
 
-  const jobsAhead = jobQueue.enqueue(job.jobId, runQueuedPlan);
+  void runQueuedPlan(job.jobId);
 
   res.status(202).json({
     jobId: job.jobId,
     status: "planning",
-    message: jobsAhead > 0
-      ? `Plan 已加入队列，前面还有 ${jobsAhead} 个任务`
-      : "已进入 Plan 分析（不改代码），完成后可确认执行",
-    jobsAhead,
+    message: "已进入 Plan 分析（不改代码），完成后可确认执行",
+    jobsAhead: 0,
   });
 });
 
@@ -305,15 +300,15 @@ jobsRouter.post("/:jobId/execute", (req, res) => {
     return;
   }
 
-  updateJob(jobId, { status: "pending", message: "已确认执行，等待排队...", planSummary });
-  appendJobEvent(jobId, { type: "stage", phase: "execute_confirmed", text: "已确认执行，正在加入队列..." });
+  updateJob(jobId, { status: "pending", message: "已确认执行，正在准备独立工作区...", planSummary });
+  appendJobEvent(jobId, { type: "stage", phase: "execute_confirmed", text: "已确认执行，正在准备独立工作区..." });
+  void processJob(jobId);
 
-  const jobsAhead = jobQueue.enqueue(jobId);
   res.status(202).json({
     jobId,
     status: "pending",
-    message: jobsAhead > 0 ? `已加入队列，前面还有 ${jobsAhead} 个任务` : "已加入队列，即将开始处理",
-    jobsAhead,
+    message: "已确认执行，正在准备独立工作区",
+    jobsAhead: 0,
   });
 });
 
@@ -347,11 +342,23 @@ jobsRouter.post("/:jobId/cancel", async (req, res) => {
 
   try {
     if (job.branch) {
-      await gitService.discardFeatureBranch(job.branch);
+      await gitService.discardFeatureBranch(job.branch, job.worktreePath);
     } else if (job.status === "planning" || job.status === "running") {
-      const currentBranch = await gitService.getCurrentBranch();
+      const currentBranch = job.worktreePath
+        ? await gitService.getCurrentBranch(job.worktreePath)
+        : await gitService.getCurrentBranch();
       if (currentBranch.startsWith("plugin-fix/")) {
-        await gitService.discardFeatureBranch(currentBranch);
+        await gitService.discardFeatureBranch(currentBranch, job.worktreePath);
+      } else if (job.worktreePath) {
+        const reverted = await gitService.discardUncommittedChanges(job.worktreePath);
+        await gitService.removeJobWorktree(job.worktreePath);
+        if (reverted.length > 0) {
+          appendJobEvent(jobId, {
+            type: "stage",
+            phase: "plan_cleanup",
+            text: `取消时已还原 ${reverted.length} 个文件的意外改动`,
+          });
+        }
       } else {
         const reverted = await gitService.discardUncommittedChanges();
         await gitService.restoreBaseBranch();
@@ -370,7 +377,7 @@ jobsRouter.post("/:jobId/cancel", async (req, res) => {
       err instanceof Error ? err.message : String(err)
     );
     try {
-      await gitService.discardUncommittedChanges();
+      await gitService.discardUncommittedChanges(job.worktreePath);
       await gitService.restoreBaseBranch();
     } catch {
       // ignore secondary cleanup errors

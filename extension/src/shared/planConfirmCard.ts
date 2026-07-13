@@ -25,7 +25,7 @@ function confirmCardStatusLabel(status: JobStatusType): string {
     case "failed":
       return "执行失败";
     case "pending":
-      return "已确认，排队中";
+      return "已确认，准备独立工作区";
     case "running":
       return "已确认，执行中";
     case "planning":
@@ -40,7 +40,7 @@ function confirmCardTitle(status: JobStatusType): string {
     case "planning":
       return "Plan 分析中，请稍候...";
     case "pending":
-      return "已确认执行，等待排队";
+      return "已确认执行，准备独立工作区";
     case "running":
       return "已确认执行，正在修改";
     case "completed":

@@ -51,6 +51,8 @@ export interface Job {
   sourceBranch?: string;
   /** 本次任务实际产生的提交，用于发版分支 cherry-pick，避免带入 test 上其他提交 */
   sourceCommitSha?: string;
+  /** 本次任务独立 Git worktree 路径 */
+  worktreePath?: string;
   branch?: string;
   commitSha?: string;
   mergeRequestUrl?: string;

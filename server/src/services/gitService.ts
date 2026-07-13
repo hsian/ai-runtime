@@ -1,5 +1,5 @@
-import { mkdir } from "fs/promises";
-import { resolve } from "path";
+import { mkdir, rm } from "fs/promises";
+import { dirname, resolve } from "path";
 import { simpleGit, type SimpleGit } from "simple-git";
 import { config, getAuthenticatedRepoUrl } from "../config.js";
 
@@ -11,6 +11,18 @@ interface MergeRequestPayload {
 
 interface MergeRequestResult {
   url: string;
+}
+
+export class GitMergeConflictError extends Error {
+  constructor(
+    message: string,
+    readonly files: string[],
+    readonly sourceBranch: string,
+    readonly targetBranch: string
+  ) {
+    super(message);
+    this.name = "GitMergeConflictError";
+  }
 }
 
 function getRepoPathFromUrl(repoUrl: string): { url: URL; path: string } {
@@ -45,7 +57,12 @@ function formatMergeError(err: unknown, sourceBranch: string, targetBranch: stri
     .map((item) => item.trim().replace(/:content$/, ""))
     .filter(Boolean);
   const fileText = files.length > 0 ? files.join(", ") : conflictMatch[1].trim();
-  return new Error(`合并冲突：${sourceBranch} 无法自动合并到 ${targetBranch}。冲突文件：${fileText}`);
+  return new GitMergeConflictError(
+    `合并冲突：${sourceBranch} 无法自动合并到 ${targetBranch}。冲突文件：${fileText}`,
+    files,
+    sourceBranch,
+    targetBranch
+  );
 }
 
 function formatCherryPickError(err: unknown, commitSha: string, targetBranch: string): Error {
@@ -76,10 +93,12 @@ function formatRevertError(err: unknown, commitSha: string, targetBranch: string
 
 export class GitService {
   private repoPath: string;
+  private worktreeRoot: string;
   private git: SimpleGit | null = null;
 
   constructor() {
     this.repoPath = resolve(config.WORKSPACE_DIR);
+    this.worktreeRoot = resolve(config.WORKTREE_DIR);
   }
 
   private async getGit(): Promise<SimpleGit> {
@@ -98,6 +117,53 @@ export class GitService {
     return this.git;
   }
 
+  private async getGitAt(repoPath: string): Promise<SimpleGit> {
+    return simpleGit(repoPath);
+  }
+
+  private getWorktreePath(jobId: string): string {
+    return resolve(this.worktreeRoot, jobId.slice(0, 8));
+  }
+
+  async createJobWorktree(jobId: string, branchName: string): Promise<string> {
+    const git = await this.getGit();
+    const worktreePath = this.getWorktreePath(jobId);
+
+    await git.fetch("origin");
+    await mkdir(dirname(worktreePath), { recursive: true });
+    try {
+      await git.raw([
+        "worktree",
+        "add",
+        "-b",
+        branchName,
+        worktreePath,
+        `origin/${config.GIT_DEFAULT_BRANCH}`,
+      ]);
+    } catch (err) {
+      await git.raw(["worktree", "remove", "--force", worktreePath]).catch(() => {});
+      await rm(worktreePath, { recursive: true, force: true }).catch(() => {});
+      await git.deleteLocalBranch(branchName, true).catch(() => {});
+      throw err;
+    }
+
+    return worktreePath;
+  }
+
+  async removeJobWorktree(worktreePath: string | undefined, branchName?: string): Promise<void> {
+    if (!worktreePath) return;
+    const git = await this.getGit();
+
+    await git.raw(["worktree", "remove", "--force", worktreePath]).catch(async () => {
+      await rm(worktreePath, { recursive: true, force: true }).catch(() => {});
+      await git.raw(["worktree", "prune"]).catch(() => {});
+    });
+
+    if (branchName) {
+      await git.deleteLocalBranch(branchName, true).catch(() => {});
+    }
+  }
+
   /** 拉取远程并切到基线分支，供 Plan 和执行阶段同步最新代码 */
   async prepareBaseBranch(): Promise<SimpleGit> {
     const git = await this.getGit();
@@ -112,14 +178,14 @@ export class GitService {
     await git.checkoutLocalBranch(branchName);
   }
 
-  async getCurrentBranch(): Promise<string> {
-    const git = await this.getGit();
+  async getCurrentBranch(repoPath = this.repoPath): Promise<string> {
+    const git = repoPath === this.repoPath ? await this.getGit() : await this.getGitAt(repoPath);
     return (await git.revparse(["--abbrev-ref", "HEAD"])).trim();
   }
 
-  async commitAndPush(branchName: string, message: string): Promise<string> {
-    const git = await this.getGit();
-    const currentBranch = await this.getCurrentBranch();
+  async commitAndPush(branchName: string, message: string, repoPath = this.repoPath): Promise<string> {
+    const git = repoPath === this.repoPath ? await this.getGit() : await this.getGitAt(repoPath);
+    const currentBranch = await this.getCurrentBranch(repoPath);
 
     if (currentBranch !== branchName) {
       throw new Error(`当前分支是 ${currentBranch}，预期在 ${branchName} 上提交`);
@@ -144,8 +210,8 @@ export class GitService {
     return result.commit;
   }
 
-  async pushFeatureBranch(branchName: string): Promise<void> {
-    const git = await this.getGit();
+  async pushFeatureBranch(branchName: string, repoPath = this.repoPath): Promise<void> {
+    const git = repoPath === this.repoPath ? await this.getGit() : await this.getGitAt(repoPath);
     await git.push("origin", branchName, { "--set-upstream": null });
   }
 
@@ -313,9 +379,9 @@ export class GitService {
     await git.pull("origin", targetBranch);
   }
 
-  async listChangedFilesAgainstDefault(branchName: string): Promise<string[]> {
-    const git = await this.getGit();
-    const output = await git.diff(["--name-only", `${config.GIT_DEFAULT_BRANCH}...${branchName}`]);
+  async listChangedFilesAgainstDefault(branchName: string, repoPath = this.repoPath): Promise<string[]> {
+    const git = repoPath === this.repoPath ? await this.getGit() : await this.getGitAt(repoPath);
+    const output = await git.diff(["--name-only", `origin/${config.GIT_DEFAULT_BRANCH}...${branchName}`]);
     return output
       .split(/\r?\n/)
       .map((line) => line.trim())
@@ -331,9 +397,14 @@ export class GitService {
   }
 
   /** 放弃合并：切回 test 并删除本地 feature 分支，test 保持远端最新 */
-  async discardFeatureBranch(branchName: string): Promise<void> {
+  async discardFeatureBranch(branchName: string, worktreePath?: string): Promise<void> {
     const git = await this.getGit();
     const defaultBranch = config.GIT_DEFAULT_BRANCH;
+
+    if (worktreePath) {
+      await this.removeJobWorktree(worktreePath, branchName);
+      return;
+    }
 
     await git.fetch("origin");
     const current = await this.getCurrentBranch();
@@ -352,8 +423,8 @@ export class GitService {
     return this.repoPath;
   }
 
-  async hasUncommittedChanges(): Promise<boolean> {
-    const git = await this.getGit();
+  async hasUncommittedChanges(repoPath = this.repoPath): Promise<boolean> {
+    const git = repoPath === this.repoPath ? await this.getGit() : await this.getGitAt(repoPath);
     const status = await git.status();
     return status.files.length > 0;
   }
@@ -385,8 +456,8 @@ export class GitService {
   }
 
   /** 丢弃工作区所有未提交改动（Plan 误改或取消后还原） */
-  async discardUncommittedChanges(): Promise<string[]> {
-    const git = await this.getGit();
+  async discardUncommittedChanges(repoPath = this.repoPath): Promise<string[]> {
+    const git = repoPath === this.repoPath ? await this.getGit() : await this.getGitAt(repoPath);
     const status = await git.status();
     const files = [...new Set(status.files.map((f) => f.path))];
     if (files.length === 0) return [];
