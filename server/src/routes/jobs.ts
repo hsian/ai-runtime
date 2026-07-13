@@ -400,13 +400,16 @@ jobsRouter.post("/:jobId/merge", (req, res) => {
     message: createMergeRequest ? "已确认提交 Merge Request，等待排队..." : "已确认合并，等待排队...",
   });
 
-  const jobsAhead = jobQueue.enqueue(jobId, async (queuedJobId) => {
+  const mergeWorker = async (queuedJobId: string) => {
     if (createMergeRequest) {
       await createJobMergeRequest(queuedJobId);
     } else {
       await confirmJobMerge(queuedJobId);
     }
-  });
+  };
+
+  const gateJobsAhead = jobQueue.enqueueGateContinuation(jobId, mergeWorker);
+  const jobsAhead = gateJobsAhead ?? jobQueue.enqueue(jobId, mergeWorker);
 
   res.status(202).json({
     jobId,
@@ -431,7 +434,7 @@ jobsRouter.post("/:jobId/discard-merge", async (req, res) => {
   }
 
   updateJob(jobId, { status: "pending", message: "已确认放弃合并，等待排队..." });
-  const jobsAhead = jobQueue.enqueue(jobId, async (queuedJobId) => {
+  const discardWorker = async (queuedJobId: string) => {
     try {
       await discardJobMerge(queuedJobId);
     } catch (err) {
@@ -440,7 +443,9 @@ jobsRouter.post("/:jobId/discard-merge", async (req, res) => {
       appendJobEvent(queuedJobId, { type: "error", message: error, text: `放弃合并失败: ${error}` });
       throw err;
     }
-  });
+  };
+  const gateJobsAhead = jobQueue.enqueueGateContinuation(jobId, discardWorker);
+  const jobsAhead = gateJobsAhead ?? jobQueue.enqueue(jobId, discardWorker);
   res.status(202).json({
     ok: true,
     status: "pending",

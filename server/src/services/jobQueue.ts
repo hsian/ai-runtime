@@ -51,6 +51,16 @@ class JobQueue {
     return jobsAhead;
   }
 
+  /**
+   * 继续处理当前等待用户确认的任务（例如确认合并/提交 MR/放弃合并）。
+   * awaiting_merge 期间 currentJobId 会保留，其他任务只能继续排队。
+   */
+  enqueueGateContinuation(jobId: string, worker: JobQueueWorker): number | null {
+    if (this.currentJobId !== jobId || this.processing) return null;
+    void this.runGateContinuation(jobId, worker);
+    return 0;
+  }
+
   enqueueAndWait(jobId: string, worker: JobQueueWorker): { jobsAhead: number; done: Promise<void> } {
     let resolveDone!: () => void;
     let rejectDone!: (reason: unknown) => void;
@@ -154,7 +164,7 @@ class JobQueue {
   }
 
   private async pump(): Promise<void> {
-    if (this.processing) return;
+    if (this.processing || this.currentJobId) return;
     this.processing = true;
 
     try {
@@ -173,13 +183,43 @@ class JobQueue {
         } catch (err) {
           console.error(`[JobQueue ${jobId}] 处理异常:`, err);
         } finally {
+          const latest = getJob(jobId);
+          if (latest?.status === "awaiting_merge") {
+            this.syncWaitingJobs();
+            this.broadcastQueueForAll();
+            return;
+          }
           this.currentJobId = null;
           this.broadcastQueueForAll();
         }
       }
     } finally {
       this.processing = false;
-      if (this.waiting.length > 0) {
+      if (!this.currentJobId && this.waiting.length > 0) {
+        void this.pump();
+      }
+    }
+  }
+
+  private async runGateContinuation(jobId: string, worker: JobQueueWorker): Promise<void> {
+    if (this.processing || this.currentJobId !== jobId) return;
+    this.processing = true;
+    this.syncWaitingJobs();
+    this.broadcastQueueForAll();
+
+    try {
+      await worker(jobId);
+    } catch (err) {
+      console.error(`[JobQueue ${jobId}] 续处理异常:`, err);
+    } finally {
+      const latest = getJob(jobId);
+      if (latest?.status !== "awaiting_merge") {
+        this.currentJobId = null;
+      }
+      this.processing = false;
+      this.syncWaitingJobs();
+      this.broadcastQueueForAll();
+      if (!this.currentJobId && this.waiting.length > 0) {
         void this.pump();
       }
     }
