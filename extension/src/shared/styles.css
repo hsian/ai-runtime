@@ -288,9 +288,35 @@ button.secondary:hover {
 }
 
 .settings-dialog {
+  position: relative;
   width: min(100%, 560px);
   max-height: calc(100vh - 32px);
   overflow-y: auto;
+}
+
+.settings-close-btn {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--color-muted);
+  font-size: 20px;
+  font-weight: 400;
+  line-height: 1;
+}
+
+.settings-close-btn:hover {
+  background: var(--color-surface-muted);
+  color: var(--color-text);
 }
 
 .settings-card-embedded {
@@ -610,6 +636,10 @@ body.composer-resizing {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
+}
+
+.attachment-strip[hidden] {
+  display: none;
 }
 
 .attachment-item {
@@ -1079,4 +1109,307 @@ body.composer-resizing {
 .release-merge-select {
   margin-bottom: 10px;
   background: var(--color-surface);
+}
+
+/* Desktop workbench layout */
+.sr-only {
+  position: absolute !important;
+  width: 1px !important;
+  height: 1px !important;
+  padding: 0 !important;
+  overflow: hidden !important;
+  clip: rect(0, 0, 0, 0) !important;
+  white-space: nowrap !important;
+  border: 0 !important;
+}
+
+.runtime-layout {
+  display: flex;
+  width: 100%;
+  height: 100vh;
+  overflow: hidden;
+  background: #fff;
+}
+
+.runtime-sidebar {
+  position: relative;
+  display: flex;
+  flex: 0 0 255px;
+  width: 255px;
+  min-height: 0;
+  flex-direction: column;
+  overflow: hidden;
+  border-right: 1px solid #dedede;
+  background: #ededed;
+}
+
+.runtime-sidebar-resizer {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 10;
+  width: 7px;
+  cursor: col-resize;
+  touch-action: none;
+}
+
+.runtime-sidebar-resizer::after {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 1px;
+  background: transparent;
+  content: "";
+}
+
+.runtime-sidebar-resizer:hover::after,
+body.sidebar-resizing .runtime-sidebar-resizer::after {
+  background: #aeb4bd;
+}
+
+body.sidebar-resizing {
+  cursor: col-resize;
+  user-select: none;
+}
+
+.runtime-content {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
+
+.sidebar-mode-switch {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  flex: 0 0 auto;
+  gap: 0;
+  min-height: 28px;
+  margin: 20px 20px 0;
+  overflow: hidden;
+  border-radius: 16px;
+  background: #dedede;
+}
+
+.sidebar-mode-switch .mode-tab {
+  width: 100%;
+  height: 28px;
+  padding: 0 12px;
+  border-radius: 16px;
+  color: #111;
+  font-size: 13px;
+  font-weight: 400;
+  line-height: 28px;
+}
+
+.sidebar-mode-switch .mode-tab-active,
+.sidebar-mode-switch .mode-tab:disabled.mode-tab-active {
+  background: #fff;
+  color: #111;
+}
+
+.sidebar-settings-btn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 38px;
+  width: 100%;
+  padding: 0 17px;
+  border: 0;
+  border-top: 1px solid #c8c8c8;
+  border-radius: 0;
+  background: transparent;
+  color: #333;
+  font-size: 12px;
+  font-weight: 400;
+  text-align: left;
+}
+
+.sidebar-settings-btn:hover {
+  background: #e3e3e3;
+}
+
+.chat-shell .chat-app {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+}
+
+.runtime-layout .chat-app {
+  height: 100%;
+  background: #fff;
+}
+
+.runtime-layout .chat-header {
+  height: 70px;
+  min-height: 70px;
+  padding: 14px 18px 10px 28px;
+  border-bottom: 1px solid #ededed;
+  background: #fff;
+  box-shadow: none;
+}
+
+.runtime-layout .page-url {
+  margin-top: 0;
+  color: #858585;
+  font-size: 12px;
+}
+
+.runtime-layout .chat-header .subtitle:not(.page-url) {
+  color: #333;
+  font-size: 12px;
+}
+
+.runtime-layout .chat-main {
+  padding: 18px 0;
+  background: #fff;
+}
+
+.runtime-composer-footer {
+  display: flex;
+  flex: 0 0 auto;
+  flex-direction: column;
+  height: 140px;
+  padding: 0 14% 22px;
+  border-top: 0;
+  background: #fff;
+  box-shadow: none;
+}
+
+.runtime-composer-spacer {
+  flex-basis: 8px;
+  min-height: 8px;
+}
+
+.runtime-layout .footer-resizer::before {
+  display: none;
+}
+
+.runtime-composer-shell {
+  position: relative;
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 0;
+  min-height: 110px;
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid #bababa;
+  border-radius: 22px;
+  background: #fff;
+}
+
+.runtime-composer-shell:focus-within {
+  border-color: #777;
+}
+
+.runtime-composer-shell .checkbox.compact {
+  position: absolute;
+  left: 24px;
+  bottom: 9px;
+  z-index: 2;
+  color: #222;
+}
+
+.runtime-composer-shell .checkbox.compact input {
+  accent-color: #8f8f8f;
+}
+
+.runtime-composer-form {
+  display: flex;
+  flex: 1;
+  align-items: stretch;
+  gap: 0;
+  min-width: 0;
+  min-height: 0;
+  width: 100%;
+  padding: 12px 16px 30px;
+}
+
+.runtime-composer-input {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  flex-direction: column;
+  gap: 6px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.runtime-composer-input:focus-within {
+  border: 0;
+  box-shadow: none;
+}
+
+.runtime-composer-input .runtime-composer-textarea,
+.runtime-composer-input .runtime-composer-textarea:focus {
+  flex: 1;
+  width: 100%;
+  min-height: 56px;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  border: 0;
+  border-radius: 0;
+  outline: none;
+  background: transparent;
+  color: #333;
+  font: inherit;
+  font-size: 14px;
+  line-height: 1.5;
+  resize: none;
+  box-shadow: none;
+}
+
+.runtime-composer-shell .runtime-composer-action {
+  position: absolute;
+  right: 16px;
+  bottom: 8px;
+  z-index: 2;
+  width: auto;
+  min-height: 0;
+  padding: 3px 5px;
+  border: 0;
+  background: transparent;
+  color: #2563eb;
+  font-size: 12px;
+  font-weight: 400;
+}
+
+.runtime-composer-shell .runtime-composer-action:hover:not(:disabled) {
+  background: transparent;
+  color: #1d4ed8;
+}
+
+.runtime-composer-shell .runtime-composer-action:disabled {
+  background: transparent;
+  color: #bbb;
+}
+
+.runtime-composer-shell .runtime-composer-action.danger,
+.runtime-composer-shell .runtime-composer-action.is-danger {
+  color: #c24141;
+}
+
+.runtime-content .chat-messages > .msg {
+  width: auto;
+  max-width: 72%;
+  margin-right: 14%;
+  margin-left: 14%;
+}
+
+@media (max-width: 760px) {
+  .runtime-sidebar {
+    flex-basis: 220px;
+    width: 220px;
+  }
+
+  .runtime-composer-footer {
+    padding-right: 20px;
+    padding-left: 20px;
+  }
 }

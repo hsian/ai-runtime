@@ -39,6 +39,7 @@ import {
 } from "../shared/imageCompress.js";
 import { initCodingTaskPicker, refreshTaskDrawer } from "./codingTaskPicker.js";
 import { setupComposerResize } from "./composerResize.js";
+import { setupSidebarResize } from "./sidebarResize.js";
 import { attachJobToCodingTask, saveCodingPromptAsTask } from "../shared/codingTaskStore.js";
 import { createTapdBug, fetchTapdIterations, fetchTapdWorkspaces } from "../shared/tapdApi.js";
 import { mountPlanConfirmCard } from "../shared/planConfirmCard.js";
@@ -94,6 +95,7 @@ const previewMessages = new Map<string, string>();
 let planOutputBuffer = "";
 let planOutputJobId: string | null = null;
 let createMergeRequestOnMerge = false;
+let submitInFlight = false;
 
 function startActionAlert(title: string): void {
   chrome.runtime
@@ -222,8 +224,10 @@ function isCancellableStatus(status: JobStatusType | null): boolean {
 function updateSubmitButton(): void {
   const btn = el<HTMLButtonElement>("submitBtn");
   const cancellable = isCancellableStatus(currentJobStatus);
-  btn.textContent = cancellable ? "取消" : "发送";
+  const hasPrompt = Boolean(el<HTMLTextAreaElement>("prompt").value.trim());
+  btn.textContent = cancellable ? "取消" : "回车发送";
   btn.classList.toggle("danger", cancellable);
+  btn.disabled = submitInFlight || (!cancellable && !hasPrompt);
 }
 
 function stopPendingCancelRetry(): void {
@@ -1947,7 +1951,14 @@ async function handleSubmit(): Promise<void> {
 
   await flushPendingServerCancel(config.serverUrl);
 
-  const pageContext = await fetchPageContext(includeContext);
+  setConnectionStatus("正在读取当前页面…");
+  let pageContext: PageContext | undefined;
+  try {
+    pageContext = await fetchPageContext(includeContext);
+  } catch (err) {
+    setConnectionStatus(err instanceof Error ? err.message : "无法获取当前页面信息");
+    return;
+  }
   if (pageContext) {
     renderPagePreview(pageContext.url, pageContext.title);
   }
@@ -1965,7 +1976,8 @@ async function handleSubmit(): Promise<void> {
   });
   refreshTaskDrawer();
 
-  submitBtn.disabled = true;
+  submitInFlight = true;
+  updateSubmitButton();
   seenEventIds.clear();
   resetPlanOutputBuffer(null);
 
@@ -2037,7 +2049,7 @@ async function handleSubmit(): Promise<void> {
   } catch (err) {
     setConnectionStatus(formatErrorMessage(config.serverUrl, err));
   } finally {
-    submitBtn.disabled = false;
+    submitInFlight = false;
     updateSubmitButton();
   }
 }
@@ -2129,6 +2141,7 @@ function setupSettingsModal(): void {
     void openSettingsModal();
   });
   el<HTMLElement>("settingsBackdrop").addEventListener("click", closeSettingsModal);
+  el<HTMLButtonElement>("settingsClose").addEventListener("click", closeSettingsModal);
   el<HTMLButtonElement>("settingsCancel").addEventListener("click", closeSettingsModal);
   el<HTMLButtonElement>("settingsSave").addEventListener("click", () => {
     void saveSettingsFromModal();
@@ -2155,6 +2168,7 @@ async function init(): Promise<void> {
     onSelect: (task) => {
       el<HTMLTextAreaElement>("prompt").value = task.draftPrompt;
       setConnectionStatus(`已载入任务：${task.title}`);
+      updateSubmitButton();
     },
     onReleaseMerge: handleReleaseMerge,
     onRevertDefault: handleRevertDefault,
@@ -2162,9 +2176,15 @@ async function init(): Promise<void> {
     onStatus: setConnectionStatus,
   });
   el<HTMLElement>("refreshPageBtn").addEventListener("click", refreshPagePreview);
-  el<HTMLButtonElement>("submitBtn").addEventListener("click", handleSubmit);
+  el<HTMLFormElement>("composer").addEventListener("submit", (event) => {
+    event.preventDefault();
+    void handleSubmit();
+  });
   setupAttachmentHandlers();
-  setupComposerResize();
+  setupComposerResize({
+    storageKey: "tapdComposerFooterHeight",
+  });
+  setupSidebarResize();
   setupChatContextMenu();
   setupPageConfirmModal();
   setupReleaseMergeModal();
@@ -2172,11 +2192,12 @@ async function init(): Promise<void> {
   setupTapdBugModal();
 
   el<HTMLTextAreaElement>("prompt").addEventListener("keydown", (e) => {
-    if (e.key === "Enter" && !e.shiftKey) {
+    if (e.key === "Enter" && !e.shiftKey && !e.isComposing) {
       e.preventDefault();
-      void handleSubmit();
+      el<HTMLFormElement>("composer").requestSubmit();
     }
   });
+  el<HTMLTextAreaElement>("prompt").addEventListener("input", updateSubmitButton);
 
   window.addEventListener("focus", () => {
     void refreshPagePreview();

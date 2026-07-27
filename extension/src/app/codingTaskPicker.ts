@@ -12,27 +12,8 @@ export interface CodingTaskPickerOptions {
   onStatus?: (text: string) => void;
 }
 
-const DRAWER_OPEN_KEY = "taskDrawerOpen";
-const DRAWER_WIDTH_KEY = "taskDrawerWidth";
-const MIN_DRAWER_WIDTH = 240;
-const MAX_DRAWER_WIDTH = 560;
-
 let listEl: HTMLElement | null = null;
-let shellEl: HTMLElement | null = null;
-let toggleBtn: HTMLButtonElement | null = null;
-let refreshBtn: HTMLButtonElement | null = null;
-let drawerEl: HTMLElement | null = null;
-let resizerEl: HTMLElement | null = null;
-let isOpen = false;
-let drawerWidth = 300;
-let rafId: number | null = null;
-let queuedWidth: number | null = null;
-
-function closeTaskMenus(): void {
-  listEl?.querySelectorAll<HTMLElement>(".task-picker-menu").forEach((menu) => {
-    menu.hidden = true;
-  });
-}
+let pickerOptions: CodingTaskPickerOptions | null = null;
 
 function escapeHtml(text: string): string {
   return text
@@ -42,7 +23,7 @@ function escapeHtml(text: string): string {
     .replace(/"/g, "&quot;");
 }
 
-function summarize(text: string, max = 72): string {
+function summarize(text: string, max = 120): string {
   const oneLine = text.replace(/\s+/g, " ").trim();
   return oneLine.length > max ? `${oneLine.slice(0, max)}…` : oneLine;
 }
@@ -72,15 +53,6 @@ function canRevertDefault(job?: JobStatus): boolean {
   );
 }
 
-function latestReleaseMergeText(job: JobStatus): string {
-  const latest = job.releaseMerges?.slice().sort(
-    (a, b) => new Date(b.mergedAt).getTime() - new Date(a.mergedAt).getTime()
-  )[0];
-  if (!latest) return "待合并到发版分支";
-  if (latest.status === "completed") return `已合并到 ${latest.targetBranch}`;
-  return `合并到 ${latest.targetBranch} 失败`;
-}
-
 function findJobForTask(task: CodingTask, jobs: JobStatus[]): JobStatus | undefined {
   if (task.jobId) {
     const byId = jobs.find((job) => job.jobId === task.jobId);
@@ -90,337 +62,143 @@ function findJobForTask(task: CodingTask, jobs: JobStatus[]): JobStatus | undefi
   return jobs.find((job) => job.status === "completed" && prompt && job.prompt === prompt);
 }
 
-function renderTaskJobMeta(job?: JobStatus): string {
-  if (!job) return "";
-  const branchText = job.sourceBranch
-    ? `<span class="task-picker-job-line">改动分支：${escapeHtml(summarize(job.sourceBranch, 48))}</span>`
-    : "";
-  const defaultText = job.mergedToDefaultBranch
-    ? `<span class="task-picker-job-line">已合并到：${escapeHtml(job.mergedToDefaultBranch)}</span>`
-    : "";
-  const releaseText = isReleaseMergeCandidate(job)
-    ? `<span class="task-picker-release-status">${escapeHtml(latestReleaseMergeText(job))}</span>`
-    : "";
-  const revertText = job.revertedFromDefaultAt
-    ? `<span class="task-picker-release-status warning">test 已撤回</span>`
-    : job.revertError
-      ? `<span class="task-picker-release-status danger">test 撤回失败</span>`
-      : "";
-  return `${branchText}${defaultText}${releaseText}${revertText}`;
-}
-
 async function renderTaskList(): Promise<void> {
   if (!listEl) return;
-  refreshBtn && (refreshBtn.disabled = true);
 
-  try {
-    const [tasks, config] = await Promise.all([listCodingTasks(), loadConfig()]);
-    let jobs: JobStatus[] = [];
-    if (config.serverUrl) {
-      try {
-        jobs = await listJobs(config.serverUrl);
-      } catch (err) {
-        console.warn("[AI Runtime] 加载任务历史中的服务端任务失败:", err);
-      }
+  const [tasks, config] = await Promise.all([listCodingTasks(), loadConfig()]);
+  let jobs: JobStatus[] = [];
+  if (config.serverUrl) {
+    try {
+      jobs = await listJobs(config.serverUrl);
+    } catch (err) {
+      console.warn("[AI Runtime] 加载任务历史中的服务端任务失败:", err);
     }
+  }
 
-    if (tasks.length === 0) {
-      listEl.innerHTML = `<div class="task-picker-empty">暂无已保存的任务</div>`;
-      return;
-    }
+  if (tasks.length === 0) {
+    listEl.innerHTML = `<div class="task-picker-empty">暂无历史任务</div>`;
+    return;
+  }
 
-    listEl.innerHTML = tasks
-      .map(
-        (task) => {
-          const job = findJobForTask(task, jobs);
-          const canReleaseMerge = job && isReleaseMergeCandidate(job);
-          const canRevert = canRevertDefault(job);
-          const canCreateBug = canCreateTapdBug(job);
-          return `
-        <div class="task-picker-item" data-task-id="${escapeHtml(task.id)}">
-          <button class="task-picker-select" type="button" data-task-id="${escapeHtml(task.id)}">
-            <span class="task-picker-title">${escapeHtml(task.title)}</span>
-            <span class="task-picker-summary">${escapeHtml(summarize(task.draftPrompt))}</span>
-            ${renderTaskJobMeta(job)}
-          </button>
-          <div class="task-picker-more-wrap">
-            <button class="task-picker-more" type="button" data-menu-task-id="${escapeHtml(task.id)}" title="更多操作">⋯</button>
-            <div class="task-picker-menu" data-menu-for="${escapeHtml(task.id)}" hidden>
-              ${
-                canReleaseMerge && job
-                  ? `<button type="button" class="task-picker-menu-item" data-release-job-id="${escapeHtml(job.jobId)}">合并分支</button>`
-                  : ""
-              }
-              ${
-                canRevert && job
-                  ? `<button type="button" class="task-picker-menu-item danger" data-revert-job-id="${escapeHtml(job.jobId)}">撤回 test 提交</button>`
-                  : ""
-              }
-              ${
-                canCreateBug && job
-                  ? `<button type="button" class="task-picker-menu-item" data-create-bug-job-id="${escapeHtml(job.jobId)}">一键提交 bug</button>`
-                  : ""
-              }
-              <button type="button" class="task-picker-menu-item" data-delete-id="${escapeHtml(task.id)}">删除本地任务</button>
+  listEl.innerHTML = tasks
+    .map((task) => {
+      const job = findJobForTask(task, jobs);
+      const canRevert = canRevertDefault(job);
+      const canReleaseMerge = Boolean(job && isReleaseMergeCandidate(job));
+      const canCreateBug = canCreateTapdBug(job);
+      return `
+          <div class="task-picker-item" data-task-id="${escapeHtml(task.id)}">
+            <button class="task-picker-select" type="button" data-select-task-id="${escapeHtml(task.id)}" title="${escapeHtml(task.draftPrompt)}">
+              <span class="task-picker-summary">${escapeHtml(summarize(task.draftPrompt))}</span>
+            </button>
+            <div class="task-picker-actions" aria-label="任务操作">
+              <button type="button" class="task-picker-action" ${
+                canRevert && job ? `data-revert-job-id="${escapeHtml(job.jobId)}"` : "disabled"
+              }>撤回</button>
+              <button type="button" class="task-picker-action" ${
+                canReleaseMerge && job ? `data-release-job-id="${escapeHtml(job.jobId)}"` : "disabled"
+              }>合并</button>
+              <button type="button" class="task-picker-action" ${
+                canCreateBug && job ? `data-create-bug-job-id="${escapeHtml(job.jobId)}"` : "disabled"
+              }>提BUG</button>
+              <button type="button" class="task-picker-action" data-delete-id="${escapeHtml(task.id)}">删除</button>
             </div>
           </div>
-        </div>
-      `;
-        }
-      )
-      .join("");
-  } finally {
-    refreshBtn && (refreshBtn.disabled = false);
+        `;
+    })
+    .join("");
+}
+
+async function findServerJob(jobId: string): Promise<JobStatus | null> {
+  if (!pickerOptions) return null;
+  const config = await loadConfig();
+  if (!config.serverUrl) {
+    pickerOptions.onStatus?.("请先在设置中配置服务端地址");
+    return null;
   }
+  const jobs = await listJobs(config.serverUrl);
+  const job = jobs.find((item) => item.jobId === jobId);
+  if (!job) pickerOptions.onStatus?.("任务不存在或服务已重启");
+  return job ?? null;
 }
 
-function clampWidth(value: number): number {
-  return Math.max(MIN_DRAWER_WIDTH, Math.min(MAX_DRAWER_WIDTH, Math.round(value)));
-}
-
-function applyDrawerWidth(width: number): void {
-  if (!shellEl) return;
-  drawerWidth = clampWidth(width);
-  shellEl.style.setProperty("--task-drawer-width", `${drawerWidth}px`);
-}
-
-function queueApplyDrawerWidth(width: number): void {
-  queuedWidth = width;
-  if (rafId != null) return;
-
-  rafId = requestAnimationFrame(() => {
-    rafId = null;
-    if (queuedWidth == null) return;
-    applyDrawerWidth(queuedWidth);
-    queuedWidth = null;
-  });
-}
-
-function setDrawerOpen(open: boolean): void {
-  if (!shellEl || !toggleBtn || !drawerEl) return;
-
-  isOpen = open;
-  shellEl.classList.toggle("task-drawer-open", open);
-  toggleBtn.setAttribute("aria-expanded", open ? "true" : "false");
-  drawerEl.setAttribute("aria-hidden", open ? "false" : "true");
-
-  if (open) {
-    void renderTaskList();
+async function runJobAction(
+  jobId: string,
+  action: ((job: JobStatus) => void | Promise<void>) | undefined
+): Promise<void> {
+  if (!pickerOptions) return;
+  try {
+    const job = await findServerJob(jobId);
+    if (!job) return;
+    await action?.(job);
+    await renderTaskList();
+  } catch (err) {
+    pickerOptions.onStatus?.(err instanceof Error ? err.message : String(err));
   }
-
-  void chrome.storage.local.set({ [DRAWER_OPEN_KEY]: open });
 }
 
 export function refreshTaskDrawer(): void {
-  if (isOpen) {
-    void renderTaskList();
-  }
+  void renderTaskList();
 }
 
 export function initCodingTaskPicker(options: CodingTaskPickerOptions): void {
-  shellEl = document.getElementById("chatShell");
+  pickerOptions = options;
   listEl = document.getElementById("taskDrawerList");
-  toggleBtn = document.getElementById("taskDrawerToggle") as HTMLButtonElement | null;
-  refreshBtn = document.getElementById("taskDrawerRefresh") as HTMLButtonElement | null;
-  drawerEl = document.getElementById("taskDrawer");
-  resizerEl = document.getElementById("taskDrawerResizer");
+  if (!listEl) return;
 
-  if (!shellEl || !listEl || !toggleBtn || !drawerEl || !resizerEl) return;
+  const positionTaskActions = (target: EventTarget | null): void => {
+    const item = (target as HTMLElement | null)?.closest<HTMLElement>(".task-picker-item");
+    const actions = item?.querySelector<HTMLElement>(".task-picker-actions");
+    if (!item || !actions) return;
+    const rect = item.getBoundingClientRect();
+    actions.style.left = `${Math.round(rect.right)}px`;
+    actions.style.top = `${Math.round(rect.top)}px`;
+  };
 
-  toggleBtn.addEventListener("click", () => {
-    setDrawerOpen(!isOpen);
-  });
-
-  refreshBtn?.addEventListener("click", (event) => {
-    event.stopPropagation();
-    void renderTaskList();
-  });
-
-  resizerEl.addEventListener("pointerdown", (event) => {
-    if (!isOpen) return;
-    if (!shellEl) return;
-
-    event.preventDefault();
-    resizerEl!.setPointerCapture(event.pointerId);
-
-    const startX = event.clientX;
-    const startWidth = drawerWidth;
-    shellEl.classList.add("task-drawer-resizing");
-
-    const handleMove = (moveEvent: PointerEvent): void => {
-      // Drawer is on the right: dragging left increases width
-      const next = startWidth - (moveEvent.clientX - startX);
-      queueApplyDrawerWidth(next);
-    };
-
-    const handleUp = (upEvent: PointerEvent): void => {
-      try {
-        resizerEl!.releasePointerCapture(upEvent.pointerId);
-      } catch {
-        // ignore
-      }
-      shellEl!.classList.remove("task-drawer-resizing");
-      resizerEl!.removeEventListener("pointermove", handleMove);
-      resizerEl!.removeEventListener("pointerup", handleUp);
-      resizerEl!.removeEventListener("pointercancel", handleUp);
-      if (rafId != null) {
-        cancelAnimationFrame(rafId);
-        rafId = null;
-      }
-      if (queuedWidth != null) {
-        applyDrawerWidth(queuedWidth);
-        queuedWidth = null;
-      }
-      void chrome.storage.local.set({ [DRAWER_WIDTH_KEY]: drawerWidth });
-    };
-
-    resizerEl!.addEventListener("pointermove", handleMove);
-    resizerEl!.addEventListener("pointerup", handleUp);
-    resizerEl!.addEventListener("pointercancel", handleUp);
-  });
+  listEl.addEventListener("pointerover", (event) => positionTaskActions(event.target));
+  listEl.addEventListener("focusin", (event) => positionTaskActions(event.target));
 
   listEl.addEventListener("click", (event) => {
     const target = event.target as HTMLElement;
-    const menuTaskId = target.closest<HTMLElement>("[data-menu-task-id]")?.dataset.menuTaskId;
-    if (menuTaskId) {
-      event.stopPropagation();
-      listEl!.querySelectorAll<HTMLElement>(".task-picker-menu").forEach((menu) => {
-        if (menu.dataset.menuFor === menuTaskId) {
-          menu.hidden = !menu.hidden;
-        } else {
-          menu.hidden = true;
-        }
-      });
-      return;
-    }
-
     const createBugJobId = target.closest<HTMLElement>("[data-create-bug-job-id]")?.dataset.createBugJobId;
     if (createBugJobId) {
-      event.stopPropagation();
-      closeTaskMenus();
-      void loadConfig().then(async (config) => {
-        try {
-          if (!config.serverUrl) {
-            options.onStatus?.("请先在设置中配置服务端地址");
-            return;
-          }
-          const jobs = await listJobs(config.serverUrl);
-          const job = jobs.find((item) => item.jobId === createBugJobId);
-          if (!job) {
-            options.onStatus?.("任务不存在或服务已重启");
-            return;
-          }
-          await options.onCreateTapdBug?.(job);
-          await renderTaskList();
-        } catch (err) {
-          options.onStatus?.(err instanceof Error ? err.message : String(err));
-        }
-      });
+      void runJobAction(createBugJobId, options.onCreateTapdBug);
       return;
     }
 
     const revertJobId = target.closest<HTMLElement>("[data-revert-job-id]")?.dataset.revertJobId;
     if (revertJobId) {
-      event.stopPropagation();
-      closeTaskMenus();
-      void loadConfig().then(async (config) => {
-        try {
-          if (!config.serverUrl) {
-            options.onStatus?.("请先在设置中配置服务端地址");
-            return;
-          }
-          const jobs = await listJobs(config.serverUrl);
-          const job = jobs.find((item) => item.jobId === revertJobId);
-          if (!job) {
-            options.onStatus?.("任务不存在或服务已重启");
-            return;
-          }
-          await options.onRevertDefault?.(job);
-          await renderTaskList();
-        } catch (err) {
-          options.onStatus?.(err instanceof Error ? err.message : String(err));
-        }
-      });
+      void runJobAction(revertJobId, options.onRevertDefault);
       return;
     }
 
     const releaseJobId = target.closest<HTMLElement>("[data-release-job-id]")?.dataset.releaseJobId;
     if (releaseJobId) {
-      event.stopPropagation();
-      closeTaskMenus();
-      void loadConfig().then(async (config) => {
-        try {
-          if (!config.serverUrl) {
-            options.onStatus?.("请先在设置中配置服务端地址");
-            return;
-          }
-          const jobs = await listJobs(config.serverUrl);
-          const job = jobs.find((item) => item.jobId === releaseJobId);
-          if (!job) {
-            options.onStatus?.("任务不存在或服务已重启");
-            return;
-          }
-          await options.onReleaseMerge?.(job);
-          await renderTaskList();
-        } catch (err) {
-          options.onStatus?.(err instanceof Error ? err.message : String(err));
-          return;
-        }
-      });
+      void runJobAction(releaseJobId, options.onReleaseMerge);
       return;
     }
 
     const deleteId = target.closest<HTMLElement>("[data-delete-id]")?.dataset.deleteId;
     if (deleteId) {
-      event.stopPropagation();
-      closeTaskMenus();
-      const taskTitle = target
+      const summary = target
         .closest<HTMLElement>(".task-picker-item")
-        ?.querySelector<HTMLElement>(".task-picker-title")
+        ?.querySelector<HTMLElement>(".task-picker-summary")
         ?.textContent
         ?.trim();
       const confirmed = window.confirm(
-        `确认删除本地任务${taskTitle ? `「${taskTitle}」` : ""}？\n\n只会删除任务历史记录，不会影响代码或服务端任务。`
+        `确认删除本地任务${summary ? `「${summarize(summary, 24)}」` : ""}？\n\n只会删除任务历史记录，不会影响代码或服务端任务。`
       );
-      if (!confirmed) return;
-      void deleteCodingTask(deleteId).then(() => renderTaskList());
+      if (confirmed) void deleteCodingTask(deleteId).then(() => renderTaskList());
       return;
     }
 
-    const taskId = target.closest<HTMLElement>("[data-task-id]")?.dataset.taskId;
+    const taskId = target.closest<HTMLElement>("[data-select-task-id]")?.dataset.selectTaskId;
     if (!taskId) return;
-
     void listCodingTasks().then((tasks) => {
       const task = tasks.find((item) => item.id === taskId);
-      if (task) {
-        options.onSelect(task);
-      }
+      if (task) options.onSelect(task);
     });
   });
 
-  document.addEventListener(
-    "pointerdown",
-    (event) => {
-      const target = event.target as HTMLElement | null;
-      if (!target?.closest(".task-picker-more-wrap")) {
-        closeTaskMenus();
-      }
-    },
-    true
-  );
-
-  void chrome.storage.local.get([DRAWER_OPEN_KEY]).then((stored) => {
-    if (stored[DRAWER_OPEN_KEY] === true) {
-      setDrawerOpen(true);
-    }
-  });
-
-  void chrome.storage.local.get([DRAWER_WIDTH_KEY]).then((stored) => {
-    const raw = stored[DRAWER_WIDTH_KEY];
-    if (typeof raw === "number" && Number.isFinite(raw)) {
-      applyDrawerWidth(raw);
-    } else {
-      applyDrawerWidth(drawerWidth);
-    }
-  });
+  void renderTaskList();
 }

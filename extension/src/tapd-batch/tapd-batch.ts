@@ -1,5 +1,6 @@
 import "../shared/styles.css";
 import "./tapd-batch.css";
+import { setupComposerResize } from "../app/composerResize.js";
 import { loadConfig } from "../shared/config.js";
 import { formatErrorMessage, fetchJobEvents, queryJobStatus } from "../shared/api.js";
 import { JobProgressView } from "../shared/jobProgressView.js";
@@ -15,7 +16,6 @@ import { sendTapdBatchCommand } from "../shared/tapdBatchClient.js";
 import { TAPD_BATCH_JOB_EVENT, TAPD_BATCH_JOB_LOG, TAPD_BATCH_STATE } from "../shared/tapdBatchMessages.js";
 import {
   createBatchTask,
-  listCompletedTapdTaskIds,
   loadTapdBatchSession,
   saveTapdBatchSession,
 } from "../shared/tapdBatchStore.js";
@@ -37,7 +37,6 @@ interface PickerRow {
   sourceHtml: string;
   promptEdited: boolean;
   checked: boolean;
-  previouslyCompleted: boolean;
 }
 
 let serverUrl = "";
@@ -55,7 +54,7 @@ let loopRunning = false;
 let progressView: JobProgressView | null = null;
 let activeProgressJobId: string | null = null;
 let createMergeRequestOnMerge = false;
-const expandedPromptTaskIds = new Set<string>();
+let activeEditorKey: string | null = null;
 
 const SELECTED_ITERATION_KEY = "tapdBatchSelectedIterationId";
 const SELECTED_WORKSPACE_KEY = "tapdBatchSelectedWorkspaceId";
@@ -93,15 +92,23 @@ function setActivePickerRows(rows: PickerRow[]): void {
 }
 
 function switchPickerKind(kind: PickerKind): void {
+  if (activeEditorRow()?.kind !== kind) activeEditorKey = null;
   activePickerKind = kind;
   pickerRows = pickerRowsByKind[kind];
+  const tasksBtn = panelRoot?.querySelector<HTMLButtonElement>("#loadTasksBtn");
+  const bugsBtn = panelRoot?.querySelector<HTMLButtonElement>("#loadBugsBtn");
+  tasksBtn?.classList.toggle("is-active", kind === "task");
+  bugsBtn?.classList.toggle("is-active", kind === "bug");
+  tasksBtn?.setAttribute("aria-selected", String(kind === "task"));
+  bugsBtn?.setAttribute("aria-selected", String(kind === "bug"));
 }
 
 function clearPickerRows(): void {
   pickerRowsByKind.task = [];
   pickerRowsByKind.bug = [];
   pickerRows = pickerRowsByKind[activePickerKind];
-  expandedPromptTaskIds.clear();
+  activeEditorKey = null;
+  syncPromptEditor();
 }
 
 function updateSelectionSummary(): void {
@@ -116,17 +123,54 @@ function updateSelectionSummary(): void {
 
   const footerSummary = panelRoot?.querySelector<HTMLElement>("#batchFooterSummary");
   if (footerSummary) {
-    footerSummary.textContent = totalCount
-      ? `已选 ${checkedCount} 个，共 ${totalCount} 个`
-      : "已选 0 个";
+    const queueCount = session?.tasks.length ?? checkedCount;
+    footerSummary.textContent = queueCount > 0 ? `（${queueCount}）` : "";
   }
 }
 
 function updateSideEmptyState(): void {
   const sideEmpty = panelRoot?.querySelector<HTMLElement>("#batchSideEmpty");
-  const queueVisible = !el<HTMLElement>("queueSection").hidden;
   const progressVisible = !el<HTMLElement>("progressSection").hidden;
-  if (sideEmpty) sideEmpty.hidden = queueVisible || progressVisible;
+  if (sideEmpty) sideEmpty.hidden = progressVisible;
+}
+
+function pickerRowKey(row: PickerRow): string {
+  return `${row.kind}:${row.task.id}`;
+}
+
+function activeEditorRow(): PickerRow | undefined {
+  if (!activeEditorKey) return undefined;
+  return [...pickerRowsByKind.task, ...pickerRowsByKind.bug].find(
+    (row) => pickerRowKey(row) === activeEditorKey
+  );
+}
+
+function currentSessionTask(): TapdBatchTask | undefined {
+  if (!session?.currentTaskId) return undefined;
+  return session.tasks.find((task) => task.id === session?.currentTaskId);
+}
+
+function syncPromptEditor(): void {
+  const editor = panelRoot?.querySelector<HTMLTextAreaElement>("#batchPromptEditor");
+  const title = panelRoot?.querySelector<HTMLElement>("#batchCurrentTaskTitle");
+  const restoreBtn = panelRoot?.querySelector<HTMLButtonElement>("#batchRestorePromptBtn");
+  if (!editor || !title || !restoreBtn) return;
+
+  const runningTask = currentSessionTask();
+  const row = activeEditorRow();
+  const busy = isBatchBusy();
+  const prompt = row?.prompt ?? "";
+  const originalPrompt = row ? buildTaskPrompt(row.task) : "";
+  const hasLocalChanges = Boolean(row && row.prompt !== originalPrompt);
+
+  if (editor.value !== prompt) editor.value = prompt;
+  editor.disabled = busy || !row;
+  restoreBtn.hidden = busy || !hasLocalChanges;
+  restoreBtn.disabled = busy || !row;
+  title.textContent =
+    runningTask?.title ??
+    row?.task.name ??
+    "选择任务或 BUG 后可在下方编辑描述";
 }
 
 function escapeHtml(value: string): string {
@@ -331,6 +375,7 @@ function applySession(next: TapdBatchSession | null): void {
   session = next;
   renderQueue();
   updateFooter();
+  syncPromptEditor();
 
   if (!hasActiveBatchSession(next)) {
     if (!next) {
@@ -413,6 +458,7 @@ function renderTaskPicker(): void {
   if (pickerRows.length === 0) {
     container.innerHTML = `<p class="batch-empty">当前迭代没有以 ${TAPD_TASK_PREFIX} 开头的${pickerKindLabel()}</p>`;
     updateSelectionSummary();
+    syncPromptEditor();
     return;
   }
 
@@ -426,124 +472,46 @@ function renderTaskPicker(): void {
 
   container.innerHTML = pickerRows
     .map((row, index) => {
-      const badge = [
-        row.checked ? `<span class="batch-badge order">第 ${executionOrderByIndex.get(index)} 个执行</span>` : "",
-        row.previouslyCompleted ? `<span class="batch-badge done">曾执行</span>` : "",
-      ].join("");
-      const owner = row.task.owner ? ` · ${escapeHtml(row.task.owner)}` : "";
-      const status = row.task.status ? ` · ${escapeHtml(row.task.status)}` : "";
-      const moveUpDisabled = busy || index === 0 ? "disabled" : "";
-      const moveDownDisabled = busy || index === pickerRows.length - 1 ? "disabled" : "";
-      const promptKey = `${row.kind}:${row.task.id}`;
-      const expanded = expandedPromptTaskIds.has(promptKey);
+      const order = row.checked
+        ? `<span class="batch-order-label">${executionOrderByIndex.get(index)}</span>`
+        : "";
+      const promptKey = pickerRowKey(row);
+      const active = promptKey === activeEditorKey;
       return `
-        <div class="batch-task-item${row.previouslyCompleted ? " is-done" : ""}" data-tapd-task-id="${escapeHtml(row.task.id)}">
+        <div class="batch-task-item${active ? " is-active" : ""}" data-tapd-task-id="${escapeHtml(row.task.id)}">
           <div class="batch-task-head">
             <input type="checkbox" data-picker-index="${index}" ${row.checked ? "checked" : ""} ${busy ? "disabled" : ""} />
-            <div class="batch-task-meta">
-              <div class="batch-task-title batch-task-title-toggle" data-prompt-toggle-index="${index}" data-expanded="${expanded ? "true" : "false"}">
-                ${imageIconHtml((row.task.imageCount ?? 0) > 0)}<span class="batch-task-title-text">${escapeHtml(row.task.name)}</span>${badge}
-              </div>
-              <div class="batch-task-sub">#${escapeHtml(row.task.id)}${owner}${status}</div>
-            </div>
-            <div class="batch-task-order-controls" aria-label="调整执行顺序">
-              <button class="batch-order-btn" type="button" data-move-index="${index}" data-move-direction="-1" title="上移" aria-label="上移任务" ${moveUpDisabled}>
-                <svg class="batch-order-icon" width="12" height="12" viewBox="0 0 16 16" aria-hidden="true">
-                  <path d="M4 10l4-4 4 4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
-                </svg>
-              </button>
-              <button class="batch-order-btn" type="button" data-move-index="${index}" data-move-direction="1" title="下移" aria-label="下移任务" ${moveDownDisabled}>
-                <svg class="batch-order-icon" width="12" height="12" viewBox="0 0 16 16" aria-hidden="true">
-                  <path d="M4 6l4 4 4-4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
-                </svg>
-              </button>
-            </div>
-          </div>
-          <div class="batch-prompt-details"${expanded ? "" : " hidden"}>
-            <textarea class="batch-prompt" data-prompt-index="${index}" ${busy ? "disabled" : ""} rows="4">${escapeHtml(row.prompt)}</textarea>
+            ${order}
+            <button class="batch-task-title batch-task-title-toggle" type="button" data-prompt-toggle-index="${index}">
+              ${imageIconHtml((row.task.imageCount ?? 0) > 0)}<span class="batch-task-title-text">${escapeHtml(row.task.name)}</span>
+            </button>
           </div>
         </div>
       `;
     })
     .join("");
   updateSelectionSummary();
-}
-
-function getTaskPickerRects(): Map<string, DOMRect> {
-  const rects = new Map<string, DOMRect>();
-  el<HTMLElement>("taskPickerList")
-    .querySelectorAll<HTMLElement>(".batch-task-item[data-tapd-task-id]")
-    .forEach((node) => {
-      const taskId = node.dataset.tapdTaskId;
-      if (taskId) rects.set(taskId, node.getBoundingClientRect());
-    });
-  return rects;
-}
-
-function animateTaskPickerReorder(previousRects: Map<string, DOMRect>): void {
-  if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
-
-  const movedNodes: HTMLElement[] = [];
-  el<HTMLElement>("taskPickerList")
-    .querySelectorAll<HTMLElement>(".batch-task-item[data-tapd-task-id]")
-    .forEach((node) => {
-      const taskId = node.dataset.tapdTaskId;
-      const previousRect = taskId ? previousRects.get(taskId) : undefined;
-      if (!previousRect) return;
-
-      const nextRect = node.getBoundingClientRect();
-      const deltaX = previousRect.left - nextRect.left;
-      const deltaY = previousRect.top - nextRect.top;
-      if (deltaX === 0 && deltaY === 0) return;
-
-      node.style.transition = "none";
-      node.style.transform = `translate(${deltaX}px, ${deltaY}px)`;
-      movedNodes.push(node);
-    });
-
-  if (movedNodes.length === 0) return;
-
-  requestAnimationFrame(() => {
-    movedNodes.forEach((node) => {
-      node.style.transition = "transform 180ms ease";
-      node.style.transform = "";
-      node.addEventListener(
-        "transitionend",
-        () => {
-          node.style.transition = "";
-        },
-        { once: true }
-      );
-    });
-  });
-}
-
-function movePickerRow(index: number, direction: -1 | 1): void {
-  if (isBatchBusy()) return;
-  const nextIndex = index + direction;
-  if (
-    !Number.isInteger(index) ||
-    index < 0 ||
-    nextIndex < 0 ||
-    index >= pickerRows.length ||
-    nextIndex >= pickerRows.length
-  ) {
-    return;
-  }
-
-  const previousRects = getTaskPickerRects();
-  const nextRows = [...pickerRows];
-  [nextRows[index], nextRows[nextIndex]] = [nextRows[nextIndex], nextRows[index]];
-  setActivePickerRows(nextRows);
-  renderTaskPicker();
-  updateFooter();
-  animateTaskPickerReorder(previousRects);
+  syncPromptEditor();
 }
 
 function renderQueue(): void {
   const section = el<HTMLElement>("queueSection");
   const list = el<HTMLElement>("queueList");
-  if (!session || session.tasks.length === 0) {
+  const queuedTasks = session?.tasks.length
+    ? session.tasks
+    : pickerRows
+        .filter((row) => row.checked)
+        .map((row, order) => ({
+          id: pickerRowKey(row),
+          tapdTaskId: completedKeyFor(row.kind, row.task.id),
+          title: row.task.name,
+          prompt: row.prompt,
+          imageCount: row.task.imageCount,
+          order,
+          status: "pending" as const,
+        }));
+
+  if (queuedTasks.length === 0) {
     section.hidden = true;
     list.innerHTML = "";
     updateSideEmptyState();
@@ -551,7 +519,7 @@ function renderQueue(): void {
   }
 
   section.hidden = false;
-  list.innerHTML = session.tasks
+  list.innerHTML = queuedTasks
     .map((task) => {
       return `
         <div class="batch-queue-item is-${taskQueueClass(task)}">
@@ -566,8 +534,6 @@ function renderQueue(): void {
 
 function updateFooter(): void {
   const primaryActionBtn = el<HTMLButtonElement>("batchPrimaryActionBtn");
-  const confirmMergeBtn = el<HTMLButtonElement>("confirmMergeBtn");
-  const discardMergeBtn = el<HTMLButtonElement>("discardMergeBtn");
   const loadBtn = el<HTMLButtonElement>("loadTasksBtn");
   const loadBugsBtn = el<HTMLButtonElement>("loadBugsBtn");
 
@@ -576,40 +542,26 @@ function updateFooter(): void {
   const active = hasActiveBatchSession(session);
   const terminalBatch = status === "cancelled" || status === "completed";
 
-  confirmMergeBtn.hidden = true;
-  confirmMergeBtn.textContent = createMergeRequestOnMerge ? "提交 Merge Request" : "合并到 test";
-  discardMergeBtn.hidden = true;
   primaryActionBtn.classList.remove("batch-danger");
-  primaryActionBtn.classList.add("batch-primary");
+  primaryActionBtn.classList.remove("is-danger");
   updateSelectionSummary();
   updateSideEmptyState();
+  renderQueue();
+  syncPromptEditor();
 
   if (!active) {
-    primaryActionBtn.textContent = "开始执行";
+    primaryActionBtn.textContent = checkedCount > 0 ? `执行所选（${checkedCount}）` : "请选择任务";
     primaryActionBtn.disabled = loopRunning || checkedCount === 0;
     loadBtn.disabled = loopRunning && !terminalBatch;
     loadBugsBtn.disabled = loopRunning && !terminalBatch;
     return;
   }
 
-  primaryActionBtn.textContent = "终止";
+  primaryActionBtn.textContent = "终止批次";
   primaryActionBtn.disabled = false;
-  primaryActionBtn.classList.remove("batch-primary");
-  primaryActionBtn.classList.add("batch-danger");
+  primaryActionBtn.classList.add("is-danger");
   loadBtn.disabled = true;
   loadBugsBtn.disabled = true;
-
-  switch (status) {
-    case "waiting_confirm":
-    case "waiting_input":
-      break;
-    case "waiting_merge":
-      confirmMergeBtn.hidden = false;
-      discardMergeBtn.hidden = false;
-      break;
-    default:
-      break;
-  }
 }
 
 function buildSessionFromSelection(): TapdBatchSession | null {
@@ -767,7 +719,6 @@ async function loadTapdItems(kind: PickerKind): Promise<void> {
   setStatus(`正在加载${pickerKindLabel(kind)}…`);
 
   try {
-    const completedIds = await listCompletedTapdTaskIds();
     const items = kind === "bug"
       ? (await fetchTapdIterationBugs(serverUrl, iterationId, TAPD_TASK_PREFIX, workspaceId)).bugs
       : (await fetchTapdIterationTasks(serverUrl, iterationId, TAPD_TASK_PREFIX, workspaceId)).tasks;
@@ -777,8 +728,7 @@ async function loadTapdItems(kind: PickerKind): Promise<void> {
       prompt: buildTaskPrompt(task),
       sourceHtml: task.description ?? "",
       promptEdited: false,
-      checked: !completedIds.has(completedKeyFor(kind, task.id)),
-      previouslyCompleted: completedIds.has(completedKeyFor(kind, task.id)),
+      checked: false,
     })));
     renderTaskPicker();
     setStatus(`已加载 ${pickerRows.length} 个以 ${TAPD_TASK_PREFIX} 开头的${pickerKindLabel(kind)}`);
@@ -949,8 +899,6 @@ async function handleRefreshClick(): Promise<void> {
 }
 
 function bindEvents(options?: TapdBatchPanelOptions): void {
-  setupWorkbenchResize();
-
   el<HTMLButtonElement>("backToCodingBtn").addEventListener("click", () => {
     options?.onBack?.();
   });
@@ -992,39 +940,28 @@ function bindEvents(options?: TapdBatchPanelOptions): void {
       event.preventDefault();
       const row = pickerRows[Number(toggle.getAttribute("data-prompt-toggle-index"))];
       if (!row) return;
-      const promptKey = `${row.kind}:${row.task.id}`;
-      if (expandedPromptTaskIds.has(promptKey)) {
-        expandedPromptTaskIds.delete(promptKey);
-      } else {
-        expandedPromptTaskIds.add(promptKey);
-      }
+      activeEditorKey = pickerRowKey(row);
       renderTaskPicker();
       return;
     }
 
-    const button = target.closest<HTMLButtonElement>("button[data-move-index]");
-    if (!button) return;
-
-    event.preventDefault();
-    const index = Number(button.getAttribute("data-move-index"));
-    const direction = button.getAttribute("data-move-direction") === "-1" ? -1 : 1;
-    movePickerRow(index, direction);
   });
 
-  el<HTMLElement>("taskPickerList").addEventListener("input", (event) => {
-    const target = event.target as HTMLElement;
-    const index = target.getAttribute("data-prompt-index");
-    if (index == null || !(target instanceof HTMLTextAreaElement)) return;
-    const row = pickerRows[Number(index)];
+  el<HTMLTextAreaElement>("batchPromptEditor").addEventListener("input", (event) => {
+    const target = event.currentTarget as HTMLTextAreaElement;
+    const row = activeEditorRow();
     if (!row) return;
     row.prompt = target.value;
     row.promptEdited = true;
+    syncPromptEditor();
   });
 
-  el<HTMLButtonElement>("selectPendingBtn").addEventListener("click", () => {
-    setActivePickerRows(pickerRows.map((row) => ({ ...row, checked: !row.previouslyCompleted })));
-    renderTaskPicker();
-    updateFooter();
+  el<HTMLTextAreaElement>("batchPromptEditor").addEventListener("keydown", (event) => {
+    if (event.key !== "Enter" || (!event.ctrlKey && !event.metaKey) || event.isComposing) return;
+    event.preventDefault();
+    if (!el<HTMLButtonElement>("batchPrimaryActionBtn").disabled) {
+      el<HTMLButtonElement>("batchPrimaryActionBtn").click();
+    }
   });
 
   el<HTMLButtonElement>("clearSelectionBtn").addEventListener("click", () => {
@@ -1033,40 +970,20 @@ function bindEvents(options?: TapdBatchPanelOptions): void {
     updateFooter();
   });
 
+  el<HTMLButtonElement>("batchRestorePromptBtn").addEventListener("click", () => {
+    const row = activeEditorRow();
+    if (!row || isBatchBusy()) return;
+    row.prompt = buildTaskPrompt(row.task);
+    row.promptEdited = false;
+    syncPromptEditor();
+  });
+
   el<HTMLButtonElement>("batchPrimaryActionBtn").addEventListener("click", () => {
     if (hasActiveBatchSession(session)) {
       void sendTapdBatchCommand({ type: "TAPD_BATCH_CANCEL" }).then(() => syncStateFromBackground());
       return;
     }
     void startBatch();
-  });
-  el<HTMLButtonElement>("confirmMergeBtn").addEventListener("click", () => {
-    const jobId = session?.activeJobId;
-    if (!jobId) return;
-    void sendTapdBatchCommand<{ ok: boolean; error?: string }>({ type: "TAPD_BATCH_CONFIRM_MERGE" }).then(
-      (result) => {
-        if (result?.ok === false) {
-          setStatus(result.error ?? "合并失败");
-          return;
-        }
-        progressView?.renderMergeCard(jobId, "running");
-        setStatus(createMergeRequestOnMerge ? "正在提交 Merge Request…" : "正在合并到 test…");
-      }
-    );
-  });
-  el<HTMLButtonElement>("discardMergeBtn").addEventListener("click", () => {
-    const jobId = session?.activeJobId;
-    void sendTapdBatchCommand<{ ok: boolean; error?: string }>({ type: "TAPD_BATCH_DISCARD_MERGE" }).then(
-      (result) => {
-        if (result?.ok === false) {
-          setStatus(result.error ?? "放弃合并失败");
-          return;
-        }
-        if (jobId) progressView?.renderMergeCard(jobId, "cancelled");
-        setStatus("已放弃合并");
-        void syncStateFromBackground();
-      }
-    );
   });
 
   chrome.runtime.onMessage.addListener((message) => {
@@ -1129,6 +1046,11 @@ async function initPanel(options?: TapdBatchPanelOptions): Promise<void> {
   const config = await loadConfig();
   serverUrl = config.serverUrl;
   createMergeRequestOnMerge = config.createMergeRequestOnMerge;
+  setupComposerResize({
+    footerId: "batchFooter",
+    resizerId: "batchFooterResizer",
+    storageKey: "tapdComposerFooterHeight",
+  });
   setupTapdResetConfirmModal();
   bindEvents(options);
   await loadWorkspaces();

@@ -7,24 +7,37 @@
   </head>
   <body class="chat-body">
     <div id="codingView" class="shell-view">
-    <div class="chat-shell" id="chatShell">
-      <div class="chat-app">
+      <div class="chat-shell runtime-layout" id="chatShell">
+        <aside class="runtime-sidebar task-drawer" id="taskDrawer" aria-label="任务历史">
+          <div class="sidebar-mode-switch mode-tabs" role="tablist" aria-label="工作模式">
+            <button id="codingModeTab" class="mode-tab mode-tab-active" type="button" role="tab" aria-selected="true">
+              默认模式
+            </button>
+            <button id="tapdBatchBtn" class="mode-tab" type="button" role="tab" aria-selected="false">
+              TAPD任务
+            </button>
+          </div>
+
+          <div class="task-drawer-header">
+            <h2 class="task-drawer-title">历史任务</h2>
+          </div>
+          <div class="task-drawer-body" id="taskDrawerList"></div>
+
+          <button id="settingsBtn" class="sidebar-settings-btn" type="button">
+            <span aria-hidden="true">⚙</span>
+            <span>设置</span>
+          </button>
+          <div class="runtime-sidebar-resizer" title="拖动调整侧栏宽度" aria-hidden="true"></div>
+        </aside>
+
+        <div class="chat-app runtime-content">
         <header class="chat-header">
           <div class="header-left">
-            <div class="mode-tabs" role="tablist" aria-label="工作模式">
-              <button id="codingModeTab" class="mode-tab mode-tab-active" type="button" role="tab" aria-selected="true">
-                默认模式
-              </button>
-              <button id="tapdBatchBtn" class="mode-tab" type="button" role="tab" aria-selected="false">
-                TAPD 任务
-              </button>
-            </div>
             <p class="subtitle page-url" id="pageUrl">加载中...</p>
             <p class="subtitle" id="connectionStatus">就绪</p>
           </div>
           <div class="header-actions">
             <button id="refreshPageBtn" class="icon-btn" type="button" title="刷新">⟳</button>
-            <button id="settingsBtn" class="icon-btn" type="button" title="设置">⚙</button>
           </div>
         </header>
 
@@ -32,158 +45,133 @@
           <div class="chat-messages" id="chatMessages"></div>
         </main>
 
-        <footer class="chat-footer" id="chatFooter">
-          <div class="footer-resizer" id="footerResizer" title="拖动调整输入区高度"></div>
-          <div class="chat-footer-body">
+        <footer class="chat-footer runtime-composer-footer" id="chatFooter">
+          <div class="footer-resizer runtime-composer-spacer" id="footerResizer" title="拖动调整输入区高度"></div>
+          <div class="chat-footer-body runtime-composer-shell">
             <label class="checkbox compact">
               <input type="checkbox" id="usePlanMode" checked />
-              先 Plan（读仓库出方案），确认后再执行改代码
+              Plan
             </label>
-            <div class="composer" id="composer">
-              <div class="composer-input">
+            <form class="composer runtime-composer-form" id="composer">
+              <div class="composer-input runtime-composer-input">
                 <div class="attachment-strip" id="attachmentStrip" hidden></div>
                 <textarea
+                  class="runtime-composer-textarea"
                   id="prompt"
                   rows="1"
                   placeholder="描述要修改的内容；可粘贴或拖拽截图（最多 3 张）"
                 ></textarea>
               </div>
-              <button id="submitBtn" class="primary send-btn" type="button">发送</button>
-            </div>
+              <button id="submitBtn" class="primary send-btn runtime-composer-action" type="submit" disabled>回车发送</button>
+            </form>
           </div>
         </footer>
+        </div>
       </div>
-
-      <div class="task-drawer-aside">
-        <div
-          id="taskDrawerResizer"
-          class="task-drawer-resizer"
-          role="separator"
-          aria-orientation="vertical"
-          aria-label="调整任务面板宽度"
-          tabindex="0"
-        ></div>
-        <aside class="task-drawer" id="taskDrawer" aria-hidden="true">
-          <div class="task-drawer-header">
-            <h2 class="task-drawer-title">任务历史</h2>
-            <button id="taskDrawerRefresh" class="task-drawer-refresh" type="button" title="刷新任务历史">⟳</button>
-          </div>
-          <div class="task-drawer-body" id="taskDrawerList"></div>
-        </aside>
-        <button
-          id="taskDrawerToggle"
-          class="task-drawer-handle"
-          type="button"
-          title="任务历史"
-          aria-expanded="false"
-          aria-controls="taskDrawer"
-        >
-          <span class="task-drawer-tab">
-            <svg class="task-drawer-chevron" width="10" height="10" viewBox="0 0 10 10" aria-hidden="true">
-              <path d="M6.5 2L3 5l3.5 3" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
-            </svg>
-          </span>
-        </button>
-      </div>
-    </div>
     </div>
 
     <div id="tapdBatchPanel" class="shell-view" hidden>
-      <div class="batch-app">
-        <header class="batch-header">
-          <div class="batch-header-main">
-            <div class="mode-tabs" role="tablist" aria-label="工作模式">
+      <div class="batch-app runtime-layout">
+        <aside class="runtime-sidebar batch-sidebar">
+          <div class="sidebar-mode-switch mode-tabs" role="tablist" aria-label="工作模式">
               <button id="backToCodingBtn" class="mode-tab" type="button" role="tab" aria-selected="false">
                 默认模式
               </button>
               <button id="batchTapdModeTab" class="mode-tab mode-tab-active" type="button" role="tab" aria-selected="true">
-                TAPD 任务
+                TAPD任务
               </button>
-            </div>
-            <p class="batch-status" id="batchStatus">就绪</p>
           </div>
-          <div class="batch-header-actions">
-            <button id="batchRefreshBtn" class="icon-btn" type="button" title="刷新">⟳</button>
-            <button id="batchSettingsBtn" class="icon-btn" type="button" title="设置">⚙</button>
-          </div>
-        </header>
 
-        <main class="batch-main">
           <section class="batch-toolbar">
             <label class="batch-field batch-workspace-field">
-              <span>项目</span>
+              <span class="sr-only">项目</span>
               <select id="workspaceSelect">
-                <option value="">加载中…</option>
+                <option value="">选择项目</option>
               </select>
             </label>
             <label class="batch-field">
-              <span>迭代</span>
+              <span class="sr-only">迭代</span>
               <select id="iterationSelect">
-                <option value="">加载中…</option>
+                <option value="">选择迭代</option>
               </select>
             </label>
-            <div class="batch-load-actions">
-              <button id="loadTasksBtn" class="batch-secondary" type="button">加载 AI 任务</button>
-              <button id="loadBugsBtn" class="batch-secondary" type="button">加载 AI BUG</button>
+          </section>
+
+          <section class="batch-task-panel">
+            <div class="batch-list-heading">
+              <div class="batch-kind-tabs" role="tablist" aria-label="TAPD条目类型">
+                <button id="loadTasksBtn" class="batch-kind-tab is-active" type="button" role="tab" aria-selected="true">AI任务</button>
+                <span aria-hidden="true">|</span>
+                <button id="loadBugsBtn" class="batch-kind-tab" type="button" role="tab" aria-selected="false">AI BUG</button>
+              </div>
+              <button id="clearSelectionBtn" class="batch-clear-selection" type="button">清空</button>
+            </div>
+            <p class="sr-only" id="taskSelectionSummary">未选择任务</p>
+            <div id="taskPickerList" class="batch-task-list">
+              <p class="batch-empty">请先选择项目和迭代</p>
             </div>
           </section>
 
-          <div class="batch-workbench">
-            <section class="batch-card batch-task-panel">
-              <div class="batch-card-head">
-                <div>
-                  <h2>勾选任务 / BUG</h2>
-                  <p class="batch-card-subtitle" id="taskSelectionSummary">未选择任务</p>
-                </div>
-                <div class="batch-card-actions">
-                  <button id="selectPendingBtn" class="batch-link-btn" type="button">全选未完成</button>
-                  <button id="clearSelectionBtn" class="batch-link-btn" type="button">清空勾选</button>
-                </div>
-              </div>
-              <div id="taskPickerList" class="batch-task-list">
-                <p class="batch-empty">请先选择迭代并加载任务或 BUG</p>
-              </div>
-              <div
-                class="batch-workbench-resizer"
-                id="batchWorkbenchResizer"
-                role="separator"
-                aria-orientation="vertical"
-                aria-label="调整任务列表宽度"
-                tabindex="0"
-              ></div>
+          <section class="batch-queue-panel" id="queueSection" hidden>
+            <div class="batch-list-heading">
+              <h2>执行队列</h2>
+              <span class="batch-queue-count" id="batchFooterSummary">已选 0 个</span>
+            </div>
+            <div id="queueList" class="batch-queue-list"></div>
+          </section>
+
+          <button id="batchSettingsBtn" class="sidebar-settings-btn" type="button">
+            <span aria-hidden="true">⚙</span>
+            <span>设置</span>
+          </button>
+          <div class="runtime-sidebar-resizer" title="拖动调整侧栏宽度" aria-hidden="true"></div>
+        </aside>
+
+        <div class="runtime-content batch-content">
+          <header class="batch-header">
+            <div class="batch-header-main">
+              <p class="batch-current-title" id="batchCurrentTaskTitle">选择任务后可在下方编辑描述</p>
+              <p class="batch-status" id="batchStatus">就绪</p>
+            </div>
+            <div class="batch-header-actions">
+              <button id="batchRefreshBtn" class="icon-btn" type="button" title="刷新">⟳</button>
+            </div>
+          </header>
+
+          <main class="batch-conversation">
+            <section class="batch-progress-section" id="progressSection" hidden>
+              <div id="jobProgressLog" class="batch-progress-log chat-messages"></div>
             </section>
+            <section class="batch-side-empty" id="batchSideEmpty">
+              <p>选择左侧任务或 BUG，在下方编辑描述后开始执行。</p>
+            </section>
+          </main>
 
-            <aside class="batch-side-panel">
-              <section class="batch-card" id="queueSection" hidden>
-                <div class="batch-card-head">
-                  <h2>执行队列</h2>
+          <footer class="batch-footer runtime-composer-footer" id="batchFooter">
+            <div
+              class="footer-resizer runtime-composer-spacer"
+              id="batchFooterResizer"
+              title="拖动调整输入区高度"
+            ></div>
+            <div class="batch-composer runtime-composer-shell">
+              <div class="runtime-composer-form">
+                <div class="runtime-composer-input">
+                  <textarea
+                    class="runtime-composer-textarea"
+                    id="batchPromptEditor"
+                    rows="4"
+                    placeholder="编辑当前任务的执行描述"
+                    disabled
+                  ></textarea>
                 </div>
-                <div id="queueList" class="batch-queue-list"></div>
-              </section>
-
-              <section class="batch-card" id="progressSection" hidden>
-                <div class="batch-card-head">
-                  <h2>当前任务进度</h2>
-                  <div class="batch-card-actions batch-run-actions">
-                    <button id="confirmMergeBtn" class="batch-primary batch-compact-action" type="button" hidden>合并到 test</button>
-                    <button id="discardMergeBtn" class="batch-secondary batch-compact-action" type="button" hidden>放弃合并</button>
-                  </div>
-                </div>
-                <div id="jobProgressLog" class="batch-progress-log chat-messages"></div>
-              </section>
-
-              <section class="batch-side-empty" id="batchSideEmpty">
-                <h2>执行状态</h2>
-                <p>开始批量任务后，这里会显示执行队列和当前任务进度。</p>
-              </section>
-            </aside>
-          </div>
-        </main>
-
-        <footer class="batch-footer">
-          <div class="batch-footer-summary" id="batchFooterSummary">已选 0 个</div>
-          <button id="batchPrimaryActionBtn" class="batch-primary" type="button" disabled>开始执行</button>
-        </footer>
+                <button id="batchRestorePromptBtn" class="batch-restore-prompt" type="button" hidden>
+                  恢复原始描述
+                </button>
+                <button id="batchPrimaryActionBtn" class="batch-send-action runtime-composer-action" type="button" disabled>请选择任务</button>
+              </div>
+            </div>
+          </footer>
+        </div>
       </div>
     </div>
 
@@ -219,6 +207,7 @@
     <div id="settingsModal" class="page-confirm-modal" hidden>
       <div class="page-confirm-backdrop" id="settingsBackdrop"></div>
       <div class="page-confirm-dialog settings-dialog" role="dialog" aria-labelledby="settingsHeading">
+        <button id="settingsClose" class="settings-close-btn" type="button" aria-label="关闭设置" title="关闭">×</button>
         <h2 id="settingsHeading" class="page-confirm-heading">设置</h2>
         <p class="page-confirm-lead">不常修改的配置项</p>
 
