@@ -218,6 +218,24 @@ function removeMessageByKey(key: string): void {
   el<HTMLElement>("chatMessages").querySelector<HTMLElement>(`[data-key="${key}"]`)?.remove();
 }
 
+function hasExistingGateCard(jobId: string): boolean {
+  const container = el<HTMLElement>("chatMessages");
+  return Boolean(
+    container.querySelector(`[data-key="${CONFIRM_CARD_KEY}-${jobId}"]`) ||
+    container.querySelector(`[data-key="${MERGE_CARD_KEY}-${jobId}"]`)
+  );
+}
+
+function updateExistingGateCards(jobId: string, status: JobStatusType): void {
+  const container = el<HTMLElement>("chatMessages");
+  if (container.querySelector(`[data-key="${CONFIRM_CARD_KEY}-${jobId}"]`)) {
+    upsertConfirmCard(jobId, status);
+  }
+  if (container.querySelector(`[data-key="${MERGE_CARD_KEY}-${jobId}"]`)) {
+    upsertMergeConfirmCard(jobId, status);
+  }
+}
+
 function isCancellableStatus(status: JobStatusType | null): boolean {
   return status === "planning" || status === "pending" || status === "running";
 }
@@ -821,6 +839,7 @@ function updateQueueCard(event: JobEvent): void {
   const node = ensureMessageElement(`${QUEUE_CARD_KEY}-${event.jobId}`, "msg msg-queue");
   const running = event.running;
   const waiting = event.waiting ?? [];
+  const stateClass = running ? "queue-card--running" : "queue-card--waiting";
 
   const runningHtml = running
     ? `<li class="queue-running"><span>执行中</span> ${escapeHtml(running.prompt)}</li>`
@@ -832,20 +851,33 @@ function updateQueueCard(event: JobEvent): void {
 
   node.innerHTML = `
     <div class="msg-meta">${formatTime(event.timestamp)} · 任务队列</div>
-    <div class="queue-card">
+    <div class="queue-card ${stateClass}">
       <div class="queue-title">${escapeHtml(event.text ?? "")}</div>
       <ul class="queue-list">${runningHtml}${waitingHtml}</ul>
     </div>
   `;
 }
 
+function stageStateClass(event: JobEvent): string {
+  if (event.phase === "release_merge_done" || event.phase === "default_revert_done") {
+    return "msg-stage--success";
+  }
+  if (event.phase === "plan_done" || event.phase === "plan_need_more" || event.phase === "execute_ready") {
+    return "msg-stage--waiting";
+  }
+  return "msg-stage--running";
+}
+
 function appendStageBubble(event: JobEvent): void {
   const node = document.createElement("div");
-  node.className = "msg msg-stage";
+  node.className = `msg msg-stage ${stageStateClass(event)}`;
   node.dataset.key = event.id;
   node.innerHTML = `
-    <div class="msg-meta">${formatTime(event.timestamp)}</div>
-    <div class="stage-text">${linkifyText(event.text ?? "")}</div>
+    <time class="stage-time">${formatTime(event.timestamp)}</time>
+    <div class="stage-bubble">
+      <span class="stage-marker" aria-hidden="true"></span>
+      <div class="stage-text">${linkifyText(event.text ?? "")}</div>
+    </div>
   `;
   el<HTMLElement>("chatMessages").appendChild(node);
 }
@@ -916,6 +948,36 @@ function mergeCardStatusLabel(status: JobStatusType): string {
   }
 }
 
+function gateStatusTone(status: JobStatusType): string {
+  switch (status) {
+    case "completed":
+      return "completed";
+    case "cancelled":
+      return "cancelled";
+    case "failed":
+      return "failed";
+    case "awaiting_confirm":
+    case "awaiting_input":
+    case "awaiting_merge":
+      return "waiting";
+    default:
+      return "running";
+  }
+}
+
+function gateStatusIcon(status: JobStatusType): string {
+  switch (status) {
+    case "completed":
+      return "✓";
+    case "failed":
+      return "!";
+    case "cancelled":
+      return "";
+    default:
+      return "●";
+  }
+}
+
 function upsertMergeConfirmCard(
   jobId: string,
   status: JobStatusType = currentJobStatus ?? "awaiting_merge",
@@ -927,9 +989,6 @@ function upsertMergeConfirmCard(
   const node = ensureMessageElement(`${MERGE_CARD_KEY}-${jobId}`, "msg msg-queue");
   const readonly = status !== "awaiting_merge";
   const statusLabel = mergeCardStatusLabel(status);
-  const confirmTitle = createMergeRequestOnMerge
-    ? "修改已完成：是否提交 Merge Request？"
-    : "修改已完成：是否合并到 test？";
   const actionTitle = createMergeRequestOnMerge
     ? "修改已完成：是否提交 Merge Request？"
     : "修改已完成：是否合并到 test 并提交？";
@@ -945,12 +1004,14 @@ function upsertMergeConfirmCard(
       : "";
 
   if (readonly) {
+    const icon = gateStatusIcon(status);
     node.innerHTML = `
-      <div class="msg-meta">合并确认</div>
-      <div class="queue-card">
-        <div class="queue-title">${confirmTitle}</div>
-        ${previewHtml}
-        <div class="confirm-status">${escapeHtml(statusLabel)}</div>
+      <div class="result-card result-card--${gateStatusTone(status)}">
+        ${icon ? `<span class="result-icon" aria-hidden="true">${icon}</span>` : ""}
+        <div class="result-content">
+          <div class="result-title">${escapeHtml(statusLabel)}</div>
+          ${previewHtml ? `<div class="result-detail">${previewHtml}</div>` : ""}
+        </div>
       </div>
     `;
     moveMessageToBottom(`${MERGE_CARD_KEY}-${jobId}`);
@@ -959,7 +1020,7 @@ function upsertMergeConfirmCard(
 
   node.innerHTML = `
     <div class="msg-meta">等待确认合并</div>
-    <div class="queue-card">
+    <div class="queue-card queue-card--waiting queue-card--confirm">
       <div class="queue-title">${actionTitle}</div>
       <div class="confirm-actions">
         <button class="primary" data-action="merge">${actionLabel}</button>
@@ -1366,6 +1427,7 @@ function handleJobEvent(event: JobEvent, options?: { skipPersist?: boolean }): v
         updateSubmitButton();
       } else if (event.phase === "execute_ready") {
         currentJobStatus = "awaiting_merge";
+        removeMessageByKey(`${CONFIRM_CARD_KEY}-${event.jobId}`);
         upsertMergeConfirmCard(event.jobId, "awaiting_merge", event.previewUrl, event.previewMessage);
         setConnectionStatus("等待确认合并");
         startActionAlert(
@@ -1420,9 +1482,8 @@ function handleJobEvent(event: JobEvent, options?: { skipPersist?: boolean }): v
       break;
     case "done":
       currentJobStatus = "completed";
-      appendDoneBubble(event);
-      upsertConfirmCard(event.jobId, "completed");
-      upsertMergeConfirmCard(event.jobId, "completed");
+      if (!hasExistingGateCard(event.jobId)) appendDoneBubble(event);
+      updateExistingGateCards(event.jobId, "completed");
       setConnectionStatus("任务已完成");
       stopActionAlert();
       stopProgressIdleNotice();
@@ -1434,9 +1495,8 @@ function handleJobEvent(event: JobEvent, options?: { skipPersist?: boolean }): v
     case "cancelled":
       resetPlanOutputBuffer(null);
       currentJobStatus = "cancelled";
-      appendCancelledBubble(event);
-      upsertConfirmCard(event.jobId, "cancelled");
-      upsertMergeConfirmCard(event.jobId, "cancelled");
+      if (!hasExistingGateCard(event.jobId)) appendCancelledBubble(event);
+      updateExistingGateCards(event.jobId, "cancelled");
       setConnectionStatus("任务已取消");
       stopActionAlert();
       stopProgressIdleNotice();
@@ -1449,15 +1509,15 @@ function handleJobEvent(event: JobEvent, options?: { skipPersist?: boolean }): v
       resetPlanOutputBuffer(null);
       if (isCancelledEvent(event)) {
         currentJobStatus = "cancelled";
-        appendCancelledBubble(event);
-        upsertConfirmCard(event.jobId, "cancelled");
-        upsertMergeConfirmCard(event.jobId, "cancelled");
+        if (!hasExistingGateCard(event.jobId)) appendCancelledBubble(event);
+        updateExistingGateCards(event.jobId, "cancelled");
         setConnectionStatus("任务已取消");
         stopActionAlert();
         stopProgressIdleNotice();
       } else {
         currentJobStatus = "failed";
-        appendErrorBubble(event);
+        if (!hasExistingGateCard(event.jobId)) appendErrorBubble(event);
+        updateExistingGateCards(event.jobId, "failed");
         setConnectionStatus("任务失败");
         stopActionAlert();
         stopProgressIdleNotice();

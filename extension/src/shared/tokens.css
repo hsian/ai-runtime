@@ -32,6 +32,13 @@
   --desktop-disabled: #bbbbbb;
   --desktop-hover: #e5e5e5;
 
+  --chat-bubble-incoming: #f1f3f5;
+  --chat-bubble-user: #d9f5cc;
+  --chat-bubble-border: #e1e5ea;
+  --chat-task-bubble: #f8fafc;
+  --chat-bubble-radius: 12px;
+  --chat-bubble-padding-x: 16px;
+
   --menu-bg: #252525;
   --menu-border: #333333;
   --menu-text: #f2f2f2;

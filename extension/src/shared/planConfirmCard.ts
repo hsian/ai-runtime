@@ -54,6 +54,36 @@ function confirmCardTitle(status: JobStatusType): string {
   }
 }
 
+function statusTone(status: JobStatusType): string {
+  switch (status) {
+    case "completed":
+      return "completed";
+    case "cancelled":
+      return "cancelled";
+    case "failed":
+      return "failed";
+    case "awaiting_confirm":
+    case "awaiting_input":
+    case "awaiting_merge":
+      return "waiting";
+    default:
+      return "running";
+  }
+}
+
+function statusIcon(status: JobStatusType): string {
+  switch (status) {
+    case "completed":
+      return "✓";
+    case "failed":
+      return "!";
+    case "cancelled":
+      return "";
+    default:
+      return "●";
+  }
+}
+
 export function mountPlanConfirmCard(
   node: HTMLElement,
   jobId: string,
@@ -64,11 +94,16 @@ export function mountPlanConfirmCard(
   const needsInput = status === "awaiting_input";
 
   if (!interactive) {
+    const title = confirmCardTitle(status);
+    const statusLabel = confirmCardStatusLabel(status);
+    const icon = statusIcon(status);
     node.innerHTML = `
-      <div class="msg-meta">Plan 确认</div>
-      <div class="queue-card">
-        <div class="queue-title">${escapeHtml(confirmCardTitle(status))}</div>
-        <div class="confirm-status">${escapeHtml(confirmCardStatusLabel(status))}</div>
+      <div class="result-card result-card--${statusTone(status)}">
+        ${icon ? `<span class="result-icon" aria-hidden="true">${icon}</span>` : ""}
+        <div class="result-content">
+          <div class="result-title">${escapeHtml(title)}</div>
+          ${statusLabel && statusLabel !== title ? `<div class="result-meta">${escapeHtml(statusLabel)}</div>` : ""}
+        </div>
       </div>
     `;
     return;
@@ -76,7 +111,7 @@ export function mountPlanConfirmCard(
 
   node.innerHTML = `
     <div class="msg-meta">${needsInput ? "需要补充信息" : "等待确认"}</div>
-    <div class="queue-card">
+    <div class="queue-card queue-card--waiting queue-card--confirm">
       <div class="queue-title">${
         needsInput
           ? "需求信息不足，请重新提交更具体的需求"
@@ -153,9 +188,6 @@ export function mountMergeConfirmCard(
 ): void {
   const interactive = status === "awaiting_merge";
   const useMergeRequest = handlers.createMergeRequestOnMerge === true;
-  const title = useMergeRequest
-    ? "修改已完成：是否提交 Merge Request？"
-    : "修改已完成：是否合并到 test？";
   const actionTitle = useMergeRequest
     ? "修改已完成：是否提交 Merge Request？"
     : "修改已完成：是否合并到 test 并提交？";
@@ -170,12 +202,15 @@ export function mountMergeConfirmCard(
     : "";
 
   if (!interactive) {
+    const statusLabel = mergeCardStatusLabel(status, useMergeRequest);
+    const icon = statusIcon(status);
     node.innerHTML = `
-      <div class="msg-meta">合并确认</div>
-      <div class="queue-card">
-        <div class="queue-title">${title}</div>
-        ${previewHtml}
-        <div class="confirm-status">${escapeHtml(mergeCardStatusLabel(status, useMergeRequest))}</div>
+      <div class="result-card result-card--${statusTone(status)}">
+        ${icon ? `<span class="result-icon" aria-hidden="true">${icon}</span>` : ""}
+        <div class="result-content">
+          <div class="result-title">${escapeHtml(statusLabel)}</div>
+          ${previewHtml ? `<div class="result-detail">${previewHtml}</div>` : ""}
+        </div>
       </div>
     `;
     return;
@@ -183,7 +218,7 @@ export function mountMergeConfirmCard(
 
   node.innerHTML = `
     <div class="msg-meta">等待确认合并</div>
-    <div class="queue-card">
+    <div class="queue-card queue-card--waiting queue-card--confirm">
       <div class="queue-title">${actionTitle}</div>
       <div class="confirm-actions">
         <button class="primary" data-action="merge">${actionLabel}</button>

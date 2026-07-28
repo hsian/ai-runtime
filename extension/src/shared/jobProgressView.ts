@@ -57,6 +57,16 @@ function progressDetailText(event: JobEvent): string {
   return detail ? `${action} ${name}: ${detail}` : `${action} ${name}`;
 }
 
+function stageStateClass(event: JobEvent): string {
+  if (event.phase === "release_merge_done" || event.phase === "default_revert_done") {
+    return "msg-stage--success";
+  }
+  if (event.phase === "plan_done" || event.phase === "plan_need_more" || event.phase === "execute_ready") {
+    return "msg-stage--waiting";
+  }
+  return "msg-stage--running";
+}
+
 export interface JobProgressViewOptions {
   onStatus?: (text: string) => void;
   onConfirmExecute?: (jobId: string, planSummary: string) => void;
@@ -192,6 +202,9 @@ export class JobProgressView {
   renderMergeCard(jobId: string, status: JobStatusType, previewUrl?: string, previewMessage?: string): void {
     if (previewUrl) this.previewUrls.set(jobId, previewUrl);
     if (previewMessage) this.previewMessages.set(jobId, previewMessage);
+    if (status === "awaiting_merge") {
+      this.container.querySelector(`[data-key="${CONFIRM_KEY}-${jobId}"]`)?.remove();
+    }
     const node = this.ensure(`${MERGE_KEY}-${jobId}`, "msg msg-queue");
     mountMergeConfirmCard(node, jobId, status, {
       onMerge: (id) => {
@@ -205,6 +218,20 @@ export class JobProgressView {
       previewMessage: this.previewMessages.get(jobId),
     });
     this.scrollToBottom();
+  }
+
+  private hasGateCard(jobId: string): boolean {
+    return Boolean(
+      this.container.querySelector(`[data-key="${CONFIRM_KEY}-${jobId}"]`) ||
+      this.container.querySelector(`[data-key="${MERGE_KEY}-${jobId}"]`)
+    );
+  }
+
+  private updateExistingGateCards(jobId: string, status: JobStatusType): void {
+    const hasConfirm = Boolean(this.container.querySelector(`[data-key="${CONFIRM_KEY}-${jobId}"]`));
+    const hasMerge = Boolean(this.container.querySelector(`[data-key="${MERGE_KEY}-${jobId}"]`));
+    if (hasConfirm) this.renderConfirmCard(jobId, status);
+    if (hasMerge) this.renderMergeCard(jobId, status);
   }
 
   clearGateCards(): void {
@@ -223,9 +250,15 @@ export class JobProgressView {
       case "stage":
         if (event.text) {
           const node = document.createElement("div");
-          node.className = "msg msg-stage";
+          node.className = `msg msg-stage ${stageStateClass(event)}`;
           node.dataset.key = event.id;
-          node.innerHTML = linkifyText(event.text);
+          node.innerHTML = `
+            <time class="stage-time">${formatTime(event.timestamp)}</time>
+            <div class="stage-bubble">
+              <span class="stage-marker" aria-hidden="true"></span>
+              <div class="stage-text">${linkifyText(event.text)}</div>
+            </div>
+          `;
           this.container.appendChild(node);
         }
         if (event.phase === "plan_done") {
@@ -268,29 +301,38 @@ export class JobProgressView {
         }
         break;
       case "done": {
-        const node = document.createElement("div");
-        node.className = "msg msg-done";
-        node.dataset.key = event.id;
-        node.innerHTML = `<div class="msg-meta">${formatTime(event.timestamp)}</div><div class="msg-bubble">${escapeHtml(event.message ?? "任务完成")}</div>`;
-        this.container.appendChild(node);
+        if (!this.hasGateCard(event.jobId)) {
+          const node = document.createElement("div");
+          node.className = "msg msg-done";
+          node.dataset.key = event.id;
+          node.innerHTML = `<div class="msg-meta">${formatTime(event.timestamp)}</div><div class="msg-bubble">${escapeHtml(event.message ?? "任务完成")}</div>`;
+          this.container.appendChild(node);
+        }
+        this.updateExistingGateCards(event.jobId, "completed");
         this.options.onStatus?.("任务已完成");
         break;
       }
       case "error": {
-        const node = document.createElement("div");
-        node.className = "msg msg-error";
-        node.dataset.key = event.id;
-        node.innerHTML = `<div class="msg-meta">${formatTime(event.timestamp)}</div><div class="msg-bubble">${escapeHtml(event.message ?? event.text ?? "任务失败")}</div>`;
-        this.container.appendChild(node);
+        if (!this.hasGateCard(event.jobId)) {
+          const node = document.createElement("div");
+          node.className = "msg msg-error";
+          node.dataset.key = event.id;
+          node.innerHTML = `<div class="msg-meta">${formatTime(event.timestamp)}</div><div class="msg-bubble">${escapeHtml(event.message ?? event.text ?? "任务失败")}</div>`;
+          this.container.appendChild(node);
+        }
+        this.updateExistingGateCards(event.jobId, "failed");
         this.options.onStatus?.("任务失败");
         break;
       }
       case "cancelled": {
-        const node = document.createElement("div");
-        node.className = "msg msg-cancelled";
-        node.dataset.key = event.id;
-        node.innerHTML = `<div class="msg-meta">${formatTime(event.timestamp)}</div><div class="msg-bubble">${escapeHtml(event.message ?? "任务已取消")}</div>`;
-        this.container.appendChild(node);
+        if (!this.hasGateCard(event.jobId)) {
+          const node = document.createElement("div");
+          node.className = "msg msg-cancelled";
+          node.dataset.key = event.id;
+          node.innerHTML = `<div class="msg-meta">${formatTime(event.timestamp)}</div><div class="msg-bubble">${escapeHtml(event.message ?? "任务已取消")}</div>`;
+          this.container.appendChild(node);
+        }
+        this.updateExistingGateCards(event.jobId, "cancelled");
         this.options.onStatus?.("任务已取消");
         break;
       }
