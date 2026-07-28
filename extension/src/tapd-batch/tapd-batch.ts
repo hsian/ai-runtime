@@ -19,6 +19,7 @@ import {
   loadTapdBatchSession,
   saveTapdBatchSession,
 } from "../shared/tapdBatchStore.js";
+import { refreshCustomSelect } from "../shared/customSelect.js";
 import type {
   JobEvent,
   TapdBatchSession,
@@ -1060,6 +1061,7 @@ async function initPanel(options?: TapdBatchPanelOptions): Promise<void> {
   const storedSession = await loadTapdBatchSession();
   if (storedSession?.workspaceId && workspaces.some((item) => item.id === storedSession.workspaceId)) {
     el<HTMLSelectElement>("workspaceSelect").value = storedSession.workspaceId;
+    refreshCustomSelect(el<HTMLSelectElement>("workspaceSelect"));
     await loadIterations();
   }
   if (
@@ -1068,6 +1070,7 @@ async function initPanel(options?: TapdBatchPanelOptions): Promise<void> {
     iterations.some((item) => item.id === storedSession.iterationId)
   ) {
     el<HTMLSelectElement>("iterationSelect").value = storedSession.iterationId;
+    refreshCustomSelect(el<HTMLSelectElement>("iterationSelect"));
   }
 
   const iterationId = el<HTMLSelectElement>("iterationSelect").value;

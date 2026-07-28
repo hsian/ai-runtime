@@ -91,17 +91,17 @@ async function renderTaskList(): Promise<void> {
             <button class="task-picker-select" type="button" data-select-task-id="${escapeHtml(task.id)}" title="${escapeHtml(task.draftPrompt)}">
               <span class="task-picker-summary">${escapeHtml(summarize(task.draftPrompt))}</span>
             </button>
-            <div class="task-picker-actions" aria-label="任务操作">
-              <button type="button" class="task-picker-action" ${
+            <div class="task-picker-actions system-context-menu" aria-label="任务操作">
+              <button type="button" class="task-picker-action system-context-menu-item" ${
                 canRevert && job ? `data-revert-job-id="${escapeHtml(job.jobId)}"` : "disabled"
               }>撤回</button>
-              <button type="button" class="task-picker-action" ${
+              <button type="button" class="task-picker-action system-context-menu-item" ${
                 canReleaseMerge && job ? `data-release-job-id="${escapeHtml(job.jobId)}"` : "disabled"
               }>合并</button>
-              <button type="button" class="task-picker-action" ${
+              <button type="button" class="task-picker-action system-context-menu-item" ${
                 canCreateBug && job ? `data-create-bug-job-id="${escapeHtml(job.jobId)}"` : "disabled"
               }>提BUG</button>
-              <button type="button" class="task-picker-action" data-delete-id="${escapeHtml(task.id)}">删除</button>
+              <button type="button" class="task-picker-action system-context-menu-item system-context-menu-separator" data-delete-id="${escapeHtml(task.id)}">删除</button>
             </div>
           </div>
         `;

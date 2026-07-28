@@ -43,6 +43,7 @@ import { setupSidebarResize } from "./sidebarResize.js";
 import { attachJobToCodingTask, saveCodingPromptAsTask } from "../shared/codingTaskStore.js";
 import { createTapdBug, fetchTapdIterations, fetchTapdWorkspaces } from "../shared/tapdApi.js";
 import { mountPlanConfirmCard } from "../shared/planConfirmCard.js";
+import { enhanceSelects, refreshCustomSelect } from "../shared/customSelect.js";
 import {
   appendCodingJobEvent,
   clearCodingJobSession,
@@ -462,9 +463,9 @@ function isServerRestartedJob(job: JobStatus): boolean {
 function setupChatContextMenu(): void {
   const menu = document.createElement("div");
   menu.id = "chatContextMenu";
-  menu.className = "chat-context-menu";
+  menu.className = "chat-context-menu system-context-menu";
   menu.hidden = true;
-  menu.innerHTML = `<button type="button" class="chat-context-item" data-action="clear">清屏</button>`;
+  menu.innerHTML = `<button type="button" class="chat-context-item system-context-menu-item" data-action="clear">清屏</button>`;
   document.body.appendChild(menu);
 
   const hideMenu = (): void => {
@@ -1821,6 +1822,7 @@ function showTapdBugModal(input: {
 
     const defaultWorkspace = input.workspaces.find((workspace) => workspace.id === input.defaultWorkspaceId);
     workspaceEl.value = defaultWorkspace?.id ?? input.workspaces[0]?.id ?? "";
+    refreshCustomSelect(workspaceEl);
     tapdBugLoadIterations = async (workspaceId: string) => {
       if (!workspaceId) {
         renderTapdBugIterations([]);
@@ -2175,6 +2177,7 @@ function setupSettingsModal(): void {
 async function init(): Promise<void> {
   const config = await loadConfig();
   createMergeRequestOnMerge = config.createMergeRequestOnMerge;
+  enhanceSelects(document.querySelectorAll<HTMLSelectElement>("select"));
 
   await refreshPagePreview();
 
