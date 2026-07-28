@@ -1079,11 +1079,22 @@ function upsertProgressCard(jobId: string, text: string, detail?: string): void 
       <div class="progress-card">
         <div class="progress-main"></div>
         <details class="progress-details">
-          <summary>详细日志</summary>
+          <summary>
+            <span class="progress-details-label">详细日志</span>
+            <span class="progress-latest" hidden></span>
+          </summary>
           <div class="progress-log"></div>
         </details>
       </div>
     `;
+    const details = node.querySelector<HTMLDetailsElement>(".progress-details")!;
+    const log = node.querySelector<HTMLElement>(".progress-log")!;
+    details.addEventListener("toggle", () => {
+      if (!details.open) return;
+      requestAnimationFrame(() => {
+        log.scrollTop = log.scrollHeight;
+      });
+    });
   }
 
   const main = node.querySelector<HTMLElement>(".progress-main")!;
@@ -1093,10 +1104,18 @@ function upsertProgressCard(jobId: string, text: string, detail?: string): void 
 
   if (detail) {
     const log = node.querySelector<HTMLElement>(".progress-log")!;
+    const latest = node.querySelector<HTMLElement>(".progress-latest")!;
     const line = document.createElement("div");
     line.className = "progress-log-line";
     line.textContent = detail;
     log.appendChild(line);
+    latest.textContent = detail;
+    latest.hidden = false;
+    if (node.querySelector<HTMLDetailsElement>(".progress-details")?.open) {
+      requestAnimationFrame(() => {
+        log.scrollTop = log.scrollHeight;
+      });
+    }
   }
 
   moveMessageToBottom(`${AGENT_PROGRESS_KEY}-${jobId}`);
