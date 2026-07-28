@@ -146,17 +146,41 @@ export function initCodingTaskPicker(options: CodingTaskPickerOptions): void {
   listEl = document.getElementById("taskDrawerList");
   if (!listEl) return;
 
-  const positionTaskActions = (target: EventTarget | null): void => {
-    const item = (target as HTMLElement | null)?.closest<HTMLElement>(".task-picker-item");
-    const actions = item?.querySelector<HTMLElement>(".task-picker-actions");
-    if (!item || !actions) return;
-    const rect = item.getBoundingClientRect();
-    actions.style.left = `${Math.round(rect.right)}px`;
-    actions.style.top = `${Math.round(rect.top)}px`;
+  let activeActions: HTMLElement | null = null;
+
+  const hideTaskActions = (): void => {
+    activeActions?.classList.remove("is-open");
+    activeActions = null;
   };
 
-  listEl.addEventListener("pointerover", (event) => positionTaskActions(event.target));
-  listEl.addEventListener("focusin", (event) => positionTaskActions(event.target));
+  listEl.addEventListener("contextmenu", (event) => {
+    const item = (event.target as HTMLElement | null)?.closest<HTMLElement>(".task-picker-item");
+    const actions = item?.querySelector<HTMLElement>(".task-picker-actions");
+    if (!item || !actions) return;
+
+    event.preventDefault();
+    hideTaskActions();
+    activeActions = actions;
+    actions.classList.add("is-open");
+
+    const padding = 8;
+    const maxX = Math.max(padding, window.innerWidth - actions.offsetWidth - padding);
+    const maxY = Math.max(padding, window.innerHeight - actions.offsetHeight - padding);
+    actions.style.left = `${Math.max(padding, Math.min(event.clientX, maxX))}px`;
+    actions.style.top = `${Math.max(padding, Math.min(event.clientY, maxY))}px`;
+  });
+
+  listEl.addEventListener("scroll", hideTaskActions);
+  document.addEventListener("click", hideTaskActions);
+  document.addEventListener("contextmenu", (event) => {
+    if (!(event.target as HTMLElement | null)?.closest(".task-picker-item")) {
+      hideTaskActions();
+    }
+  });
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") hideTaskActions();
+  });
+  window.addEventListener("blur", hideTaskActions);
 
   listEl.addEventListener("click", (event) => {
     const target = event.target as HTMLElement;

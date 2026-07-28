@@ -11,6 +11,7 @@ export interface ComposerResizeOptions {
   footerId?: string;
   resizerId?: string;
   storageKey?: string;
+  scrollContainerId?: string;
 }
 
 export function setupComposerResize(options: ComposerResizeOptions = {}): void {
@@ -18,6 +19,21 @@ export function setupComposerResize(options: ComposerResizeOptions = {}): void {
   const resizer = document.getElementById(options.resizerId ?? "footerResizer");
   const storageKey = options.storageKey ?? "composerFooterHeight";
   if (!footer || !resizer) return;
+
+  const scrollContainer = options.scrollContainerId
+    ? document.getElementById(options.scrollContainerId)
+    : null;
+  if (scrollContainer) {
+    const alignWithScrollContent = (): void => {
+      const scrollbarWidth = Math.max(0, scrollContainer.offsetWidth - scrollContainer.clientWidth);
+      footer.style.marginRight = `${scrollbarWidth}px`;
+    };
+    const resizeObserver = new ResizeObserver(alignWithScrollContent);
+    const mutationObserver = new MutationObserver(alignWithScrollContent);
+    resizeObserver.observe(scrollContainer);
+    mutationObserver.observe(scrollContainer, { childList: true, subtree: true });
+    alignWithScrollContent();
+  }
 
   const applyHeight = (height: number): void => {
     footer.style.height = `${clampFooterHeight(height)}px`;

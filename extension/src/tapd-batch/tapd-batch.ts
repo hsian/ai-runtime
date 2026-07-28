@@ -1050,6 +1050,7 @@ async function initPanel(options?: TapdBatchPanelOptions): Promise<void> {
     footerId: "batchFooter",
     resizerId: "batchFooterResizer",
     storageKey: "tapdComposerFooterHeight",
+    scrollContainerId: "jobProgressLog",
   });
   setupTapdResetConfirmModal();
   bindEvents(options);

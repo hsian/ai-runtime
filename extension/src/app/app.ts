@@ -2175,7 +2175,6 @@ async function init(): Promise<void> {
     onCreateTapdBug: handleCreateTapdBug,
     onStatus: setConnectionStatus,
   });
-  el<HTMLElement>("refreshPageBtn").addEventListener("click", refreshPagePreview);
   el<HTMLFormElement>("composer").addEventListener("submit", (event) => {
     event.preventDefault();
     void handleSubmit();
@@ -2183,6 +2182,7 @@ async function init(): Promise<void> {
   setupAttachmentHandlers();
   setupComposerResize({
     storageKey: "tapdComposerFooterHeight",
+    scrollContainerId: "chatMain",
   });
   setupSidebarResize();
   setupChatContextMenu();
