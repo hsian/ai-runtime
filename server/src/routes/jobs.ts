@@ -1,5 +1,11 @@
 import { Router } from "express";
-import { createJob, getJob, listJobs, updateJob } from "../services/jobStore.js";
+import {
+  createJob,
+  getConversationContextStats,
+  getJob,
+  listJobs,
+  updateJob,
+} from "../services/jobStore.js";
 import { jobQueue } from "../services/jobQueue.js";
 import { processJob } from "../services/jobProcessor.js";
 import { appendJobEvent, getJobEvents, subscribeJobEvents } from "../services/jobEvents.js";
@@ -632,6 +638,15 @@ jobsRouter.post("/:jobId/revert-default", async (req, res) => {
   } catch (err) {
     res.status(400).json({ error: err instanceof Error ? err.message : String(err), job: getJob(jobId) });
   }
+});
+
+jobsRouter.get("/context-stats/:conversationId", (req, res) => {
+  res.json(
+    getConversationContextStats(
+      getRequestOwnerId(req),
+      req.params.conversationId
+    )
+  );
 });
 
 jobsRouter.get("/:jobId/events", (req, res) => {

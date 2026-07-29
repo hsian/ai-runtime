@@ -4,6 +4,7 @@ import { initTapdBatchPanel } from "../tapd-batch/tapd-batch.js";
 import { loadConfig, saveConfig } from "../shared/config.js";
 import {
   fetchCurrentTabPreview,
+  fetchConversationContextStats,
   fetchPageContext,
   fetchJobEvents,
   formatErrorMessage,
@@ -264,6 +265,38 @@ function updateSubmitButton(): void {
   btn.disabled = submitInFlight || (!cancellable && !hasPrompt);
 }
 
+function formatContextTitle(
+  usedJobs: number,
+  maxJobs: number,
+  usedChars: number,
+  maxChars: number
+): string {
+  return `会话上下文：${usedJobs.toLocaleString("zh-CN")} / ${maxJobs.toLocaleString("zh-CN")} 轮，${usedChars.toLocaleString("zh-CN")} / ${maxChars.toLocaleString("zh-CN")} 字`;
+}
+
+async function refreshSubmitButtonContextTitle(serverUrl?: string): Promise<void> {
+  const conversationId = activeConversationId;
+  const button = el<HTMLButtonElement>("submitBtn");
+  button.title = formatContextTitle(0, 10, 0, 16_000);
+  if (!conversationId) return;
+
+  const resolvedServerUrl = serverUrl ?? (await loadConfig()).serverUrl;
+  if (!resolvedServerUrl) return;
+
+  try {
+    const stats = await fetchConversationContextStats(resolvedServerUrl, conversationId);
+    if (activeConversationId !== conversationId) return;
+    button.title = formatContextTitle(
+      stats.usedJobs,
+      stats.maxJobs,
+      stats.usedChars,
+      stats.maxChars
+    );
+  } catch {
+    // 服务暂不可用时保留默认额度提示，不影响发送。
+  }
+}
+
 function stopPendingCancelRetry(): void {
   if (!pendingCancelRetryTimer) return;
   clearInterval(pendingCancelRetryTimer);
@@ -495,6 +528,7 @@ async function openCodingConversation(
   }
 
   const config = await loadConfig();
+  void refreshSubmitButtonContextTitle(config.serverUrl);
   if (!config.serverUrl || conversation.jobIds.length === 0) {
     setConnectionStatus(conversation.jobIds.length === 0 ? "新会话" : "请先配置服务端地址");
     updateSubmitButton();
@@ -1668,6 +1702,14 @@ function handleJobEvent(
 
   if (!options?.skipPersist) {
     persistJobEvent(event);
+  }
+
+  if (
+    event.type === "done" ||
+    (event.type === "stage" &&
+      ["plan_done", "plan_need_more", "execute_ready"].includes(event.phase ?? ""))
+  ) {
+    void refreshSubmitButtonContextTitle();
   }
 
   scrollChatToBottom();

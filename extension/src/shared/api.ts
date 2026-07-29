@@ -1,4 +1,10 @@
-import type { JobStatus, PageContext, SubmitRequest, SubmitResponse } from "./types.js";
+import type {
+  ConversationContextStats,
+  JobStatus,
+  PageContext,
+  SubmitRequest,
+  SubmitResponse,
+} from "./types.js";
 import { normalizeServerUrl } from "./config.js";
 import { getClientId, getClientIdSync, withClientId } from "./clientIdentity.js";
 import {
@@ -147,6 +153,21 @@ export async function listJobs(serverUrl: string): Promise<JobStatus[]> {
     throw new Error(data.error ?? `查询失败: ${res.status}`);
   }
   return Array.isArray(data.jobs) ? data.jobs : [];
+}
+
+export async function fetchConversationContextStats(
+  serverUrl: string,
+  conversationId: string
+): Promise<ConversationContextStats> {
+  const res = await fetch(
+    `${normalizeServerUrl(serverUrl)}/api/jobs/context-stats/${encodeURIComponent(conversationId)}`,
+    { headers: await clientHeaders() }
+  );
+  const data = (await res.json()) as ConversationContextStats & { error?: string };
+  if (!res.ok) {
+    throw new Error(data.error ?? `查询上下文失败: ${res.status}`);
+  }
+  return data;
 }
 
 export async function fetchReleaseBranches(serverUrl: string, jobId: string): Promise<string[]> {

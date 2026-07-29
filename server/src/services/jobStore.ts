@@ -5,6 +5,13 @@ const jobs = new Map<string, Job>();
 const MAX_HISTORY_JOBS = 10;
 const MAX_HISTORY_CHARS = 16_000;
 
+export interface ConversationContextStats {
+  usedJobs: number;
+  maxJobs: number;
+  usedChars: number;
+  maxChars: number;
+}
+
 function buildConversationHistory(request: JobRequest): ConversationHistoryMessage[] | undefined {
   if (!request.conversationId || request.submittedBy === "tapd-batch") return undefined;
 
@@ -44,6 +51,20 @@ function buildConversationHistory(request: JobRequest): ConversationHistoryMessa
     total += turnLength;
   }
   return limited;
+}
+
+export function getConversationContextStats(
+  ownerId: string,
+  conversationId: string
+): ConversationContextStats {
+  const history =
+    buildConversationHistory({ prompt: "", ownerId, conversationId }) ?? [];
+  return {
+    usedJobs: history.filter((message) => message.role === "user").length,
+    maxJobs: MAX_HISTORY_JOBS,
+    usedChars: history.reduce((sum, message) => sum + message.content.length, 0),
+    maxChars: MAX_HISTORY_CHARS,
+  };
 }
 
 export function getJobsMap(): Map<string, Job> {

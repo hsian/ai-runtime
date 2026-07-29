@@ -61,6 +61,13 @@ export interface JobStatus {
   updatedAt: string;
 }
 
+export interface ConversationContextStats {
+  usedJobs: number;
+  maxJobs: number;
+  usedChars: number;
+  maxChars: number;
+}
+
 export interface ReleaseMergeRecord {
   targetBranch: string;
   commitSha?: string;
