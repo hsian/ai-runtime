@@ -14,6 +14,7 @@ const submitFieldsSchema = z.object({
   prompt: z.string().min(1, "prompt 不能为空"),
   pageContext: pageContextSchema.optional(),
   submittedBy: z.string().optional(),
+  conversationId: z.string().min(1).max(128).optional(),
 });
 
 function parsePageContextField(raw: unknown): unknown {
@@ -45,6 +46,7 @@ export function parseJobSubmitBody(req: Request): { data?: JobRequest; error?: s
     prompt: req.body?.prompt,
     pageContext: pageContextRaw,
     submittedBy: req.body?.submittedBy,
+    conversationId: req.body?.conversationId,
   });
 
   if (!parsed.success) {

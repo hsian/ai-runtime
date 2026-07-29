@@ -140,6 +140,7 @@ export async function processJob(jobId: string): Promise<void> {
         jobId,
         attachments: stagedAttachments,
         confirmedPlan: job.requiresConfirm ? job.planSummary : undefined,
+        conversationHistory: job.conversationHistory,
       }
     );
     if (await abortIfCancelled(jobId, "agent", repoPath)) return;

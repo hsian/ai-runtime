@@ -10,6 +10,7 @@ export interface SubmitRequest {
   prompt: string;
   pageContext?: PageContext;
   submittedBy?: string;
+  conversationId?: string;
   images?: Blob[];
 }
 
@@ -36,6 +37,8 @@ export interface JobStatus {
   jobId: string;
   status: JobStatusType;
   prompt?: string;
+  conversationId?: string;
+  requiresConfirm?: boolean;
   message?: string;
   jobsAhead?: number;
   branch?: string;
@@ -116,10 +119,20 @@ export interface StorageConfig {
 export interface CodingTask {
   id: string;
   jobId?: string;
+  conversationId?: string;
   title: string;
   pageUrl: string;
   rawContent: string;
   draftPrompt: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CodingConversation {
+  id: string;
+  title: string;
+  jobIds: string[];
+  pageContext?: PageContext;
   createdAt: string;
   updatedAt: string;
 }

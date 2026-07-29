@@ -1,4 +1,8 @@
-import type { JobAttachment, PageContext } from "../../types.js";
+import type {
+  ConversationHistoryMessage,
+  JobAttachment,
+  PageContext,
+} from "../../types.js";
 
 export interface AgentResult {
   summary: string;
@@ -50,11 +54,24 @@ ${lines}
 不要向用户追问截图是否上传或文件在哪个目录。`;
 }
 
+function buildConversationHistorySection(history?: ConversationHistoryMessage[]): string {
+  if (!history?.length) return "";
+  const lines = history
+    .map((message) => `${message.role === "user" ? "用户" : "助手"}：${message.content}`)
+    .join("\n\n");
+  return `
+【当前手动会话的历史上下文】
+以下内容仅用于理解“刚才、这个、前面提到的”等指代，不得据此扩大当前任务范围：
+${lines}
+`;
+}
+
 export function buildClaudeTaskPrompt(
   prompt: string,
   pageContext?: PageContext,
   attachments?: JobAttachment[],
-  confirmedPlan?: string
+  confirmedPlan?: string,
+  conversationHistory?: ConversationHistoryMessage[]
 ): string {
   const routePath = extractRoutePath(pageContext?.url);
 
@@ -69,6 +86,7 @@ ${pageContext.selectedSelector ? `- 用户选中元素: ${pageContext.selectedSe
     : "";
 
   const attachmentPart = buildAttachmentSection(attachments);
+  const historyPart = buildConversationHistorySection(conversationHistory);
 
   const planPart = confirmedPlan?.trim()
     ? `
@@ -84,7 +102,7 @@ ${confirmedPlan.trim()}
   return `【代码修改任务 - Claude Code 执行阶段】
 
 Plan 已确认，请按方案在 Git 工作区内直接修改源代码。
-${planPart}
+${historyPart}${planPart}
 ${contextPart}${attachmentPart}
 
 【开发任务】
@@ -100,12 +118,13 @@ export const PLAN_SYSTEM_PROMPT =
   "你是 Claude Code 的 Plan 模式助手，在 Git 工作区内分析代码。只允许阅读、搜索、分析代码，严禁修改、创建或删除任何文件。根据用户描述和当前测试页面 URL 定位相关源码，但最终输出必须是一份给测试/产品人员看的简单修改方案。若任务附带截图/UI 原型，必须先 Read 查看图片再写方案；弹窗类需求必须严格按截图字段与布局设计，禁止把列表整表塞进弹窗。严禁编造对话历史。若信息严重不足无法出方案，说明缺什么后停止；否则直接给出完整方案，不要向用户提问或写「告诉我」「如需调整请说」等收尾。";
 
 export const QUESTION_SYSTEM_PROMPT =
-  "你是项目代码问答助手。只允许阅读、搜索和分析当前 Git 仓库，严禁修改、创建或删除任何文件，也不要生成修改方案或尝试执行用户描述中的改动。请直接回答用户关于项目实现、接口调用位置、页面结构、样式尺寸、数据流等问题；结论应基于实际代码，必要时给出文件路径和关键位置。若用户要求修改代码，明确提示必须勾选 Plan 模式后提交。";
+  "你是项目代码问答助手。只允许阅读、搜索和分析当前 Git 仓库，严禁修改、创建或删除任何文件，也不要生成修改方案或尝试执行用户描述中的改动。请直接回答用户关于项目实现、接口调用位置、页面结构、样式尺寸、数据流等问题；结论应基于实际代码，必要时给出文件路径和关键位置。若用户要求修改代码，明确提示必须勾选「修改代码」后提交。";
 
 export function buildClaudeQuestionPrompt(
   prompt: string,
   pageContext?: PageContext,
-  attachments?: JobAttachment[]
+  attachments?: JobAttachment[],
+  conversationHistory?: ConversationHistoryMessage[]
 ): string {
   const routePath = extractRoutePath(pageContext?.url);
 
@@ -120,11 +139,12 @@ ${pageContext.selectedSelector ? `- 用户选中元素: ${pageContext.selectedSe
     : "";
 
   const attachmentPart = buildAttachmentSection(attachments);
+  const historyPart = buildConversationHistorySection(conversationHistory);
 
   return `【项目问答 - 只读分析，禁止改代码】
 
 请阅读和搜索当前仓库后直接回答问题。
-${contextPart}${attachmentPart}
+${historyPart}${contextPart}${attachmentPart}
 
 【用户问题】
 ${prompt}
@@ -133,13 +153,14 @@ ${prompt}
 1. 只能读取、搜索和分析，禁止修改、创建或删除文件
 2. 基于实际代码回答，不确定时明确说明
 3. 可列出相关文件路径、调用关系、样式值或关键代码位置
-4. 用户要求修改时不要执行，提示其勾选 Plan 模式后重新提交`;
+4. 用户要求修改时不要执行，提示其勾选「修改代码」后重新提交`;
 }
 
 export function buildClaudePlanPrompt(
   prompt: string,
   pageContext?: PageContext,
-  attachments?: JobAttachment[]
+  attachments?: JobAttachment[],
+  conversationHistory?: ConversationHistoryMessage[]
 ): string {
   const routePath = extractRoutePath(pageContext?.url);
 
@@ -153,13 +174,14 @@ ${pageContext.selectedText ? `- 用户选中文字: ${pageContext.selectedText}`
     : "";
 
   const attachmentPart = buildAttachmentSection(attachments);
+  const historyPart = buildConversationHistorySection(conversationHistory);
 
   return `【Claude Code Plan - 在 Git 仓库内分析，禁止改代码】
 
 这是编码模式的 Plan 阶段：结合下方需求与当前测试页面，在仓库中定位文件并给出改动方案。
 （需求模式的文字整理已完成；此处才需要读代码。）
 
-${contextPart}${attachmentPart}
+${historyPart}${contextPart}${attachmentPart}
 
 【开发任务描述】
 ${prompt}
@@ -169,12 +191,13 @@ ${prompt}
 2. 结合页面 URL/路由在仓库中搜索定位
 3. 有截图时按编号 Read（「如图N」= 图N 附件）；先逐张复述各图 UI 字段与按钮，再搜代码；弹窗只列截图中的字段，禁止擅自扩展成完整数据表
 4. 需求简单明确时直接给完整方案，不要追问用户
-5. 仅在关键信息缺失、无法判断改哪里时才说明缺什么，然后停止
-6. 方案可执行时不要写「请确认」「告诉我」「如需调整」等让用户回复的收尾句
-7. 必须把完整方案直接输出在回复正文中，不要只写入计划文件或只返回「已写入计划文件」类短提示
-8. 输出对象是测试和产品人员，要求通俗、短句、少术语
-9. 不要写文件路径、文件名、函数名、变量名、代码片段、命令、技术实现细节
-10. 用下面格式输出：
+5. 当前描述是「改吧」「执行吧」「按这个改」「就这样」等确认语时，结合会话历史采用最近一条尚未执行的用户修改要求作为本次范围
+6. 仅在结合会话历史后仍缺少关键修改目标、无法判断改哪里时，才说明缺什么并停止
+7. 方案可执行时不要写「请确认」「告诉我」「如需调整」等让用户回复的收尾句
+8. 必须把完整方案直接输出在回复正文中，不要只写入计划文件或只返回「已写入计划文件」类短提示
+9. 输出对象是测试和产品人员，要求通俗、短句、少术语
+10. 不要写文件路径、文件名、函数名、变量名、代码片段、命令、技术实现细节
+11. 用下面格式输出：
 【修改目标】
 用 1-2 句话说明这次要解决什么问题。
 

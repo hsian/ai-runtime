@@ -49,6 +49,7 @@ async function postJob(
           prompt: body.prompt,
           pageContext: body.pageContext,
           submittedBy: body.submittedBy,
+          conversationId: body.conversationId,
         }),
       });
 
@@ -67,6 +68,9 @@ function buildSubmitFormData(body: SubmitRequest): FormData {
   }
   if (body.submittedBy) {
     form.append("submittedBy", body.submittedBy);
+  }
+  if (body.conversationId) {
+    form.append("conversationId", body.conversationId);
   }
   for (const [index, image] of (body.images ?? []).entries()) {
     form.append("images", image, `screenshot-${index + 1}.webp`);

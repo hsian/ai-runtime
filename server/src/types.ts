@@ -17,8 +17,14 @@ export interface JobRequest {
   prompt: string;
   pageContext?: PageContext;
   submittedBy?: string;
+  conversationId?: string;
   ownerId?: string;
   attachments?: JobAttachment[];
+}
+
+export interface ConversationHistoryMessage {
+  role: "user" | "assistant";
+  content: string;
 }
 
 export type JobStatus =
@@ -39,6 +45,8 @@ export interface Job {
   prompt: string;
   pageContext?: PageContext;
   submittedBy?: string;
+  conversationId?: string;
+  conversationHistory?: ConversationHistoryMessage[];
   attachments?: JobAttachment[];
   message?: string;
   /** 前面还有多少任务（含正在执行的），0 表示即将/正在处理 */

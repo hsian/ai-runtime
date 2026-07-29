@@ -1,7 +1,50 @@
 import { v4 as uuidv4 } from "uuid";
-import type { Job, JobRequest } from "../types.js";
+import type { ConversationHistoryMessage, Job, JobRequest } from "../types.js";
 
 const jobs = new Map<string, Job>();
+const MAX_HISTORY_JOBS = 10;
+const MAX_HISTORY_CHARS = 16_000;
+
+function buildConversationHistory(request: JobRequest): ConversationHistoryMessage[] | undefined {
+  if (!request.conversationId || request.submittedBy === "tapd-batch") return undefined;
+
+  const related = Array.from(jobs.values())
+    .filter(
+      (job) =>
+        job.ownerId === (request.ownerId ?? "anonymous") &&
+        job.conversationId === request.conversationId &&
+        job.submittedBy !== "tapd-batch" &&
+        ["completed", "awaiting_confirm", "awaiting_input", "awaiting_merge"].includes(
+          job.status
+        )
+    )
+    .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime())
+    .slice(-MAX_HISTORY_JOBS);
+
+  const turns: ConversationHistoryMessage[][] = [];
+  for (const job of related) {
+    const plan = job.planSummary?.trim();
+    const result = job.message?.trim();
+    const answer = [plan ? `已确认方案：\n${plan}` : "", result ? `任务结果：\n${result}` : ""]
+      .filter(Boolean)
+      .join("\n\n");
+    if (!answer) continue;
+    turns.push([
+      { role: "user", content: job.prompt },
+      { role: "assistant", content: answer },
+    ]);
+  }
+
+  let total = 0;
+  const limited: ConversationHistoryMessage[] = [];
+  for (const turn of turns.reverse()) {
+    const turnLength = turn.reduce((sum, message) => sum + message.content.length, 0);
+    if (limited.length > 0 && total + turnLength > MAX_HISTORY_CHARS) break;
+    limited.unshift(...turn);
+    total += turnLength;
+  }
+  return limited;
+}
 
 export function getJobsMap(): Map<string, Job> {
   return jobs;
@@ -20,6 +63,8 @@ export function createJob(request: JobRequest): Job {
     prompt: request.prompt,
     pageContext: request.pageContext,
     submittedBy: request.submittedBy,
+    conversationId: request.conversationId,
+    conversationHistory: buildConversationHistory(request),
     attachments: request.attachments,
     requiresConfirm: false,
     createdAt: now,

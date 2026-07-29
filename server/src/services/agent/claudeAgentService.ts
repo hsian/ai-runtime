@@ -1,6 +1,10 @@
 import { spawn, type ChildProcess } from "child_process";
 import { config } from "../../config.js";
-import type { PageContext, JobAttachment } from "../../types.js";
+import type {
+  ConversationHistoryMessage,
+  PageContext,
+  JobAttachment,
+} from "../../types.js";
 import {
   buildClaudePlanPrompt,
   buildClaudeQuestionPrompt,
@@ -293,6 +297,7 @@ export async function runClaudeAgent(
     jobId?: string;
     attachments?: JobAttachment[];
     confirmedPlan?: string;
+    conversationHistory?: ConversationHistoryMessage[];
   }
 ): Promise<AgentResult> {
   const isPlan = options?.mode === "plan";
@@ -305,10 +310,26 @@ export async function runClaudeAgent(
     options?.systemPrompt ??
     (isPlan ? PLAN_SYSTEM_PROMPT : isQuestion ? QUESTION_SYSTEM_PROMPT : SYSTEM_PROMPT);
   const userPrompt = isPlan
-    ? buildClaudePlanPrompt(prompt, pageContext, options?.attachments)
+    ? buildClaudePlanPrompt(
+        prompt,
+        pageContext,
+        options?.attachments,
+        options?.conversationHistory
+      )
     : isQuestion
-      ? buildClaudeQuestionPrompt(prompt, pageContext, options?.attachments)
-      : buildClaudeTaskPrompt(prompt, pageContext, options?.attachments, options?.confirmedPlan);
+      ? buildClaudeQuestionPrompt(
+          prompt,
+          pageContext,
+          options?.attachments,
+          options?.conversationHistory
+        )
+      : buildClaudeTaskPrompt(
+          prompt,
+          pageContext,
+          options?.attachments,
+          options?.confirmedPlan,
+          options?.conversationHistory
+        );
 
   const args = [
     "-p",

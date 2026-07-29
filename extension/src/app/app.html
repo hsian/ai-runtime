@@ -8,7 +8,7 @@
   <body class="chat-body">
     <div id="codingView" class="shell-view">
       <div class="chat-shell runtime-layout" id="chatShell">
-        <aside class="runtime-sidebar task-drawer" id="taskDrawer" aria-label="任务历史">
+        <aside class="runtime-sidebar task-drawer" id="taskDrawer" aria-label="任务">
           <div class="sidebar-mode-switch mode-tabs" role="tablist" aria-label="工作模式">
             <button id="codingModeTab" class="mode-tab mode-tab-active" type="button" role="tab" aria-selected="true">
               默认模式
@@ -19,7 +19,14 @@
           </div>
 
           <div class="task-drawer-header">
-            <h2 class="task-drawer-title">历史任务</h2>
+            <h2 class="task-drawer-title">任务</h2>
+            <button
+              id="newConversationBtn"
+              class="task-drawer-new"
+              type="button"
+              title="新建会话"
+              aria-label="新建会话"
+            >＋</button>
           </div>
           <div class="task-drawer-body" id="taskDrawerList"></div>
 

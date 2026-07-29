@@ -17,6 +17,7 @@ import {
   mergeJob,
   mergeJobToReleaseBranch,
   revertJobFromDefaultBranch,
+  listJobs,
   queryJobStatus,
   queryJobStatusWithRetry,
   submitPlan,
@@ -40,13 +41,26 @@ import {
 import { initCodingTaskPicker, refreshTaskDrawer } from "./codingTaskPicker.js";
 import { setupComposerResize } from "./composerResize.js";
 import { setupSidebarResize } from "./sidebarResize.js";
-import { attachJobToCodingTask, saveCodingPromptAsTask } from "../shared/codingTaskStore.js";
+import {
+  attachConversationToCodingTask,
+  attachJobToCodingTask,
+  listCodingTasks,
+  saveCodingPromptAsTask,
+} from "../shared/codingTaskStore.js";
+import {
+  addExistingConversation,
+  addJobToCodingConversation,
+  createCodingConversation,
+  getActiveCodingConversation,
+  getCodingConversation,
+  setCodingConversationPageContext,
+  setActiveCodingConversation,
+} from "../shared/codingConversationStore.js";
 import { createTapdBug, fetchTapdIterations, fetchTapdWorkspaces } from "../shared/tapdApi.js";
 import { mountPlanConfirmCard } from "../shared/planConfirmCard.js";
 import { enhanceSelects, refreshCustomSelect } from "../shared/customSelect.js";
 import {
   appendCodingJobEvent,
-  clearCodingJobSession,
   clearPendingServerCancel,
   getCodingJobSession,
   getPendingServerCancelJobId,
@@ -97,6 +111,7 @@ let planOutputBuffer = "";
 let planOutputJobId: string | null = null;
 let createMergeRequestOnMerge = false;
 let submitInFlight = false;
+let activeConversationId = "";
 
 function startActionAlert(title: string): void {
   chrome.runtime
@@ -408,12 +423,6 @@ function clearChatDom(): void {
   lastLocalUserBubble = null;
 }
 
-function clearChatScreen(): void {
-  clearChatDom();
-  void clearCodingJobSession();
-  void chrome.storage.local.remove(["lastJobId"]);
-}
-
 function persistJobEvent(event: JobEvent): void {
   appendCodingJobEvent(event.jobId, event, {
     status: currentJobStatus ?? undefined,
@@ -444,6 +453,121 @@ async function restoreChatFromSession(): Promise<CodingJobSession | null> {
   return session;
 }
 
+async function migrateLegacyTaskConversations(): Promise<void> {
+  const tasks = await listCodingTasks();
+  for (const task of tasks) {
+    if (task.conversationId) continue;
+    const conversation = await addExistingConversation({
+      title: task.title || task.draftPrompt || "历史任务",
+      jobId: task.jobId,
+      pageUrl: task.pageUrl,
+      pageTitle: task.title,
+    });
+    await attachConversationToCodingTask(task.id, conversation.id);
+  }
+}
+
+function detachConversationView(): void {
+  stopJobRecovery();
+  activeStream?.close();
+  activeStream = null;
+  activeJobId = null;
+  currentJobStatus = null;
+  resetPlanOutputBuffer(null);
+}
+
+async function openCodingConversation(
+  conversationId: string,
+  anchorJobId?: string
+): Promise<void> {
+  const conversation = await getCodingConversation(conversationId);
+  if (!conversation) return;
+
+  detachConversationView();
+  clearChatDom();
+  activeConversationId = conversation.id;
+  await setActiveCodingConversation(conversation.id);
+  refreshTaskDrawer();
+  if (conversation.pageContext) {
+    renderPagePreview(conversation.pageContext.url, conversation.pageContext.title);
+  } else {
+    await refreshPagePreview();
+  }
+
+  const config = await loadConfig();
+  if (!config.serverUrl || conversation.jobIds.length === 0) {
+    setConnectionStatus(conversation.jobIds.length === 0 ? "新会话" : "请先配置服务端地址");
+    updateSubmitButton();
+    return;
+  }
+
+  try {
+    const jobs = await listJobs(config.serverUrl);
+    const jobsById = new Map(jobs.map((job) => [job.jobId, job]));
+    const visibleJobs = conversation.jobIds
+      .map((jobId) => jobsById.get(jobId))
+      .filter((job): job is JobStatus => Boolean(job));
+
+    if (visibleJobs.length === 0) {
+      const session = await getCodingJobSession();
+      if (session && conversation.jobIds.includes(session.jobId)) {
+        await restoreChatFromSession();
+      } else {
+        setConnectionStatus("会话任务已过期（服务端可能已重启）");
+      }
+      updateSubmitButton();
+      return;
+    }
+
+    for (const job of visibleJobs) {
+      currentJobStatus = job.status;
+      resetPlanOutputBuffer(job.jobId);
+      const events = await fetchJobEvents(config.serverUrl, job.jobId);
+      for (const event of events) {
+        handleJobEvent(event, {
+          skipPersist: true,
+          allowOtherJobs: true,
+          replay: true,
+        });
+      }
+      applyServerJobState(job);
+    }
+
+    const latestJob = visibleJobs[visibleJobs.length - 1];
+    activeJobId = latestJob.jobId;
+    currentJobStatus = latestJob.status;
+    applyHeaderStatusFromJob(latestJob);
+    await initCodingJobSession(latestJob.jobId, latestJob.status);
+    await chrome.storage.local.set({ lastJobId: latestJob.jobId });
+
+    if (isStreamRecoverableStatus(latestJob.status)) {
+      connectJobStream(config.serverUrl, latestJob.jobId, latestJob.status);
+    } else {
+      updateSubmitButton();
+    }
+
+    if (anchorJobId) {
+      requestAnimationFrame(() => {
+        el<HTMLElement>("chatMessages")
+          .querySelector<HTMLElement>(`[data-job-id="${anchorJobId}"]`)
+          ?.scrollIntoView({ block: "center" });
+      });
+    } else {
+      scrollChatToBottom();
+    }
+  } catch (err) {
+    setConnectionStatus(formatErrorMessage(config.serverUrl, err));
+    updateSubmitButton();
+  }
+}
+
+async function createAndOpenConversation(): Promise<void> {
+  const conversation = await createCodingConversation();
+  el<HTMLTextAreaElement>("prompt").value = "";
+  await openCodingConversation(conversation.id);
+  el<HTMLTextAreaElement>("prompt").focus();
+}
+
 function isStreamRecoverableStatus(status: JobStatusType): boolean {
   return status === "planning" || status === "running";
 }
@@ -470,43 +594,6 @@ function scheduleJobRecovery(serverUrl: string, jobId: string, delayMs: number):
 
 function isServerRestartedJob(job: JobStatus): boolean {
   return job.status === "cancelled" && (job.message?.includes("重启") ?? false);
-}
-
-function setupChatContextMenu(): void {
-  const menu = document.createElement("div");
-  menu.id = "chatContextMenu";
-  menu.className = "chat-context-menu system-context-menu";
-  menu.hidden = true;
-  menu.innerHTML = `<button type="button" class="chat-context-item system-context-menu-item" data-action="clear">清屏</button>`;
-  document.body.appendChild(menu);
-
-  const hideMenu = (): void => {
-    menu.hidden = true;
-  };
-
-  el<HTMLElement>("chatMain").addEventListener("contextmenu", (event) => {
-    event.preventDefault();
-    const padding = 8;
-    const maxX = window.innerWidth - menu.offsetWidth - padding;
-    const maxY = window.innerHeight - menu.offsetHeight - padding;
-    menu.style.left = `${Math.min(event.clientX, maxX)}px`;
-    menu.style.top = `${Math.min(event.clientY, maxY)}px`;
-    menu.hidden = false;
-  });
-
-  menu.addEventListener("click", (event) => {
-    const target = event.target as HTMLElement;
-    if (target.dataset.action === "clear") {
-      clearChatScreen();
-      hideMenu();
-    }
-  });
-
-  document.addEventListener("click", hideMenu);
-  document.addEventListener("keydown", (event) => {
-    if (event.key === "Escape") hideMenu();
-  });
-  window.addEventListener("blur", hideMenu);
 }
 
 function setConnectionStatus(text: string): void {
@@ -782,6 +869,7 @@ function appendUserBubble(event: JobEvent, imageUrls?: string[]): void {
   const node = document.createElement("div");
   node.className = "msg msg-user";
   node.dataset.key = event.id;
+  node.dataset.jobId = event.jobId;
   node.innerHTML = `
     <div class="msg-meta">${formatTime(event.timestamp)}</div>
     <div class="msg-bubble">${escapeHtml(event.text ?? "")}</div>
@@ -803,6 +891,7 @@ function tryReconcileServerUserEvent(event: JobEvent): boolean {
     );
     if (localNode) {
       localNode.dataset.key = event.id;
+      localNode.dataset.jobId = event.jobId;
       lastLocalUserBubble = null;
       return true;
     }
@@ -824,6 +913,7 @@ function mergePendingLocalUserBubble(event: JobEvent): boolean {
       lastLocalUserBubble = null;
     }
     node.dataset.key = event.id;
+    node.dataset.jobId = event.jobId;
     return true;
   }
   return false;
@@ -957,6 +1047,17 @@ function gateStatusTone(status: JobStatusType): string {
     default:
       return "running";
   }
+}
+
+async function refreshActiveConversationPagePreview(): Promise<void> {
+  if (activeConversationId) {
+    const conversation = await getCodingConversation(activeConversationId);
+    if (conversation?.pageContext) {
+      renderPagePreview(conversation.pageContext.url, conversation.pageContext.title);
+      return;
+    }
+  }
+  await refreshPagePreview();
 }
 
 function gateStatusIcon(status: JobStatusType): string {
@@ -1196,16 +1297,16 @@ function appendToolLine(event: JobEvent): void {
   noteProgressActivity(text);
 }
 
-function finalizeAgentStream(): void {
-  if (!activeJobId) return;
-  const key = `${AGENT_STREAM_KEY}-${activeJobId}`;
+function finalizeAgentStream(jobId = activeJobId): void {
+  if (!jobId) return;
+  const key = `${AGENT_STREAM_KEY}-${jobId}`;
   const node = el<HTMLElement>("chatMessages").querySelector<HTMLElement>(`[data-key="${key}"]`);
   const meta = node?.querySelector<HTMLElement>(".msg-meta");
   if (meta) meta.textContent = "输出";
 }
 
 function appendDoneBubble(event: JobEvent): void {
-  finalizeAgentStream();
+  finalizeAgentStream(event.jobId);
   const node = document.createElement("div");
   node.className = "msg msg-done";
   node.dataset.key = event.id;
@@ -1233,7 +1334,7 @@ function appendCancelledBubble(event: JobEvent): void {
 }
 
 function appendErrorBubble(event: JobEvent): void {
-  finalizeAgentStream();
+  finalizeAgentStream(event.jobId);
   const node = document.createElement("div");
   node.className = "msg msg-error";
   node.dataset.key = event.id;
@@ -1375,13 +1476,50 @@ function setupAttachmentHandlers(): void {
   });
 }
 
-function handleJobEvent(event: JobEvent, options?: { skipPersist?: boolean }): void {
-  if (activeJobId && event.jobId !== activeJobId) return;
+function handleJobEvent(
+  event: JobEvent,
+  options?: { skipPersist?: boolean; allowOtherJobs?: boolean; replay?: boolean }
+): void {
+  if (!options?.allowOtherJobs && activeJobId && event.jobId !== activeJobId) return;
   if (seenEventIds.has(event.id)) return;
   seenEventIds.add(event.id);
   lastEventAt = Date.now();
   if (event.previewUrl) previewUrls.set(event.jobId, event.previewUrl);
   if (event.previewMessage) previewMessages.set(event.jobId, event.previewMessage);
+
+  if (options?.replay) {
+    switch (event.type) {
+      case "user":
+        appendUserBubble(event);
+        break;
+      case "queue":
+        updateQueueCard(event);
+        break;
+      case "stage":
+        appendStageBubble(event);
+        break;
+      case "agent_text":
+        if (event.delta) appendAgentDelta(event.delta, event.jobId);
+        break;
+      case "agent_status":
+        upsertAgentStatus(event);
+        break;
+      case "agent_tool":
+        appendToolLine(event);
+        break;
+      case "done":
+        appendDoneBubble(event);
+        break;
+      case "cancelled":
+        appendCancelledBubble(event);
+        break;
+      case "error":
+        appendErrorBubble(event);
+        break;
+    }
+    scrollChatToBottom();
+    return;
+  }
 
   switch (event.type) {
     case "user":
@@ -1638,7 +1776,7 @@ function showPageConfirmModal(pageContext: PageContext | undefined): Promise<boo
     } else {
       titleEl.textContent = pageContext.title?.trim() || "当前页面";
       urlEl.textContent = pageContext.url;
-      hintEl.textContent = "Plan 会结合当前页面 URL 定位源码，请确认这就是你要改的那个页面。";
+      hintEl.textContent = "默认会根据当前页面定位源码，请确认这就是你要改的页面。";
       okBtn.disabled = false;
     }
 
@@ -2015,13 +2153,12 @@ async function handleSubmit(): Promise<void> {
   }
 
   const prompt = el<HTMLTextAreaElement>("prompt").value.trim();
-  const includeContext = true;
   const usePlanMode = el<HTMLInputElement>("usePlanMode")?.checked ?? false;
   const submitBtn = el<HTMLButtonElement>("submitBtn");
   const config = await loadConfig();
 
   if (!prompt) {
-    setConnectionStatus("请输入修改需求");
+    setConnectionStatus("请输入");
     return;
   }
   if (!config.serverUrl) {
@@ -2031,30 +2168,35 @@ async function handleSubmit(): Promise<void> {
 
   await flushPendingServerCancel(config.serverUrl);
 
-  setConnectionStatus("正在读取当前页面…");
-  let pageContext: PageContext | undefined;
-  try {
-    pageContext = await fetchPageContext(includeContext);
-  } catch (err) {
-    setConnectionStatus(err instanceof Error ? err.message : "无法获取当前页面信息");
-    return;
+  if (!activeConversationId) {
+    activeConversationId = (await getActiveCodingConversation()).id;
   }
-  if (pageContext) {
+  const conversation = await getCodingConversation(activeConversationId);
+  let pageContext = conversation?.pageContext;
+
+  if (!pageContext) {
+    setConnectionStatus("正在读取当前页面…");
+    try {
+      pageContext = await fetchPageContext(true);
+    } catch (err) {
+      setConnectionStatus(err instanceof Error ? err.message : "无法获取当前页面信息");
+      return;
+    }
+    if (pageContext) {
+      renderPagePreview(pageContext.url, pageContext.title);
+    }
+
+    const confirmed = await showPageConfirmModal(pageContext);
+    if (!confirmed) {
+      setConnectionStatus("已取消发送");
+      return;
+    }
+    if (pageContext) {
+      await setCodingConversationPageContext(activeConversationId, pageContext);
+    }
+  } else {
     renderPagePreview(pageContext.url, pageContext.title);
   }
-
-  const confirmed = await showPageConfirmModal(pageContext);
-  if (!confirmed) {
-    setConnectionStatus("已取消发送");
-    return;
-  }
-
-  const savedTask = await saveCodingPromptAsTask({
-    prompt,
-    pageUrl: pageContext?.url,
-    pageTitle: pageContext?.title,
-  });
-  refreshTaskDrawer();
 
   submitInFlight = true;
   updateSubmitButton();
@@ -2069,6 +2211,7 @@ async function handleSubmit(): Promise<void> {
     const body: SubmitRequest = {
       prompt,
       pageContext,
+      conversationId: activeConversationId,
       images: imageBlobs.length > 0 ? imageBlobs : undefined,
     };
     const effectivePlan = usePlanMode;
@@ -2115,7 +2258,16 @@ async function handleSubmit(): Promise<void> {
     }
 
     el<HTMLTextAreaElement>("prompt").value = "";
-    await attachJobToCodingTask(savedTask.id, data.jobId);
+    await addJobToCodingConversation(activeConversationId, data.jobId, prompt);
+    if (effectivePlan) {
+      const savedTask = await saveCodingPromptAsTask({
+        prompt,
+        pageUrl: pageContext?.url,
+        pageTitle: pageContext?.title,
+        conversationId: activeConversationId,
+      });
+      await attachJobToCodingTask(savedTask.id, data.jobId);
+    }
     refreshTaskDrawer();
     await initCodingJobSession(data.jobId, data.status as JobStatusType);
     await chrome.storage.local.set({ lastJobId: data.jobId });
@@ -2234,8 +2386,10 @@ async function init(): Promise<void> {
   const config = await loadConfig();
   createMergeRequestOnMerge = config.createMergeRequestOnMerge;
   enhanceSelects(document.querySelectorAll<HTMLSelectElement>("select"));
+  await migrateLegacyTaskConversations();
+  activeConversationId = (await getActiveCodingConversation()).id;
 
-  await refreshPagePreview();
+  await refreshActiveConversationPagePreview();
 
   setupSettingsModal();
   switchAppView("coding");
@@ -2243,15 +2397,15 @@ async function init(): Promise<void> {
     switchAppView("batch");
   });
   initCodingTaskPicker({
-    onSelect: (task) => {
-      el<HTMLTextAreaElement>("prompt").value = task.draftPrompt;
-      setConnectionStatus(`已载入任务：${task.title}`);
-      updateSubmitButton();
-    },
+    onSelectConversation: openCodingConversation,
+    onConversationDeleted: openCodingConversation,
     onReleaseMerge: handleReleaseMerge,
     onRevertDefault: handleRevertDefault,
     onCreateTapdBug: handleCreateTapdBug,
     onStatus: setConnectionStatus,
+  });
+  el<HTMLButtonElement>("newConversationBtn").addEventListener("click", () => {
+    void createAndOpenConversation();
   });
   el<HTMLFormElement>("composer").addEventListener("submit", (event) => {
     event.preventDefault();
@@ -2263,7 +2417,6 @@ async function init(): Promise<void> {
     scrollContainerId: "chatMain",
   });
   setupSidebarResize();
-  setupChatContextMenu();
   setupPageConfirmModal();
   setupReleaseMergeModal();
   setupRevertDefaultModal();
@@ -2278,7 +2431,7 @@ async function init(): Promise<void> {
   el<HTMLTextAreaElement>("prompt").addEventListener("input", updateSubmitButton);
 
   window.addEventListener("focus", () => {
-    void refreshPagePreview();
+    void refreshActiveConversationPagePreview();
     void loadConfig().then((cfg) => {
       createMergeRequestOnMerge = cfg.createMergeRequestOnMerge;
       if (cfg.serverUrl) void tryFlushPendingServerCancel(cfg.serverUrl);
@@ -2291,68 +2444,7 @@ async function init(): Promise<void> {
     void ensurePendingCancelRetry(config.serverUrl);
   }
 
-  const session = await restoreChatFromSession();
-  const jobId = session?.jobId ?? (await chrome.storage.local.get(["lastJobId"])).lastJobId as string | undefined;
-
-  if (!jobId || !config.serverUrl) {
-    if (session?.status) {
-      applyHeaderStatusFromJob({
-        jobId: session.jobId,
-        status: session.status,
-        createdAt: session.updatedAt,
-        updatedAt: session.updatedAt,
-      });
-      updateSubmitButton();
-    }
-    return;
-  }
-
-  try {
-    const job = await queryJobStatus(config.serverUrl, jobId);
-
-    if (isServerRestartedJob(job)) {
-      dismissStaleJob(session?.status ?? "cancelled");
-      return;
-    }
-
-    if (job.status === "pending") {
-      dismissStaleJob("cancelled");
-      setConnectionStatus("连接已断开，排队任务已失效，请重新提交");
-      return;
-    }
-
-    await syncMissedJobEvents(config.serverUrl, job.jobId);
-    applyServerJobState(job);
-
-    if (isTerminalStatus(job.status)) {
-      applyHeaderStatusFromJob(job);
-      updateSubmitButton();
-      return;
-    }
-
-    if (isStaticRecoverableStatus(job.status)) {
-      activeJobId = job.jobId;
-      await chrome.storage.local.set({ lastJobId: job.jobId });
-      updateSubmitButton();
-      return;
-    }
-
-    if (isStreamRecoverableStatus(job.status)) {
-      activeJobId = job.jobId;
-      await chrome.storage.local.set({ lastJobId: job.jobId });
-      connectJobStream(config.serverUrl, job.jobId, job.status);
-      return;
-    }
-
-    dismissStaleJob(session?.status);
-  } catch (err) {
-    if (isNotFoundError(err)) {
-      dismissStaleJob(session?.status);
-      return;
-    }
-    void chrome.storage.local.remove(["lastJobId"]);
-    setConnectionStatus(formatErrorMessage(config.serverUrl, err));
-  }
+  await openCodingConversation(activeConversationId);
 
   if (location.hash === "#batch") {
     switchAppView("batch");

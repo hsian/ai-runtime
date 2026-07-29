@@ -10,6 +10,8 @@ function normalizeTask(raw: unknown): CodingTask | null {
   return {
     id: task.id,
     jobId: typeof task.jobId === "string" ? task.jobId : undefined,
+    conversationId:
+      typeof task.conversationId === "string" ? task.conversationId : undefined,
     title: typeof task.title === "string" ? task.title : "",
     pageUrl:
       typeof task.pageUrl === "string"
@@ -75,15 +77,24 @@ export async function saveCodingPromptAsTask(input: {
   prompt: string;
   pageUrl?: string;
   pageTitle?: string;
+  conversationId: string;
 }): Promise<CodingTask> {
   const task = createCodingTask({
     title: buildCodingTaskTitle(input.prompt, input.pageTitle),
     pageUrl: input.pageUrl ?? "",
     rawContent: input.prompt,
     draftPrompt: input.prompt,
+    conversationId: input.conversationId,
   });
   await saveCodingTask(task, { forceNew: true });
   return task;
+}
+
+export async function deleteCodingTasksByConversation(conversationId: string): Promise<void> {
+  const tasks = await readTasks();
+  await chrome.storage.local.set({
+    [TASKS_KEY]: tasks.filter((task) => task.conversationId !== conversationId),
+  });
 }
 
 export async function attachJobToCodingTask(taskId: string, jobId: string): Promise<void> {
@@ -103,10 +114,12 @@ export function createCodingTask(input: {
   pageUrl: string;
   rawContent: string;
   draftPrompt: string;
+  conversationId?: string;
 }): CodingTask {
   const now = new Date().toISOString();
   return {
     id: crypto.randomUUID(),
+    conversationId: input.conversationId,
     title: input.title,
     pageUrl: input.pageUrl,
     rawContent: input.rawContent,
@@ -114,4 +127,19 @@ export function createCodingTask(input: {
     createdAt: now,
     updatedAt: now,
   };
+}
+
+export async function attachConversationToCodingTask(
+  taskId: string,
+  conversationId: string
+): Promise<void> {
+  const tasks = await readTasks();
+  const index = tasks.findIndex((task) => task.id === taskId);
+  if (index < 0) return;
+  tasks[index] = {
+    ...tasks[index],
+    conversationId,
+    updatedAt: new Date().toISOString(),
+  };
+  await chrome.storage.local.set({ [TASKS_KEY]: tasks });
 }

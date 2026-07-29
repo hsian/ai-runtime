@@ -17,6 +17,7 @@ import { isMultipartSubmit, parseJobSubmitBody } from "../middleware/parseJobSub
 import { confirmJobMerge, createJobMergeRequest, discardJobMerge, mergeCompletedJobToBranch, revertCompletedJobFromDefaultBranch } from "../services/jobMergeService.js";
 import type { JobRequest } from "../types.js";
 import { resolvePlanSummary } from "../services/agent/planSummaryResolver.js";
+import { isNonActionablePlanInput } from "../services/agent/planInputGuard.js";
 
 function getRequestOwnerId(req: import("express").Request): string {
   const headerValue = req.get("x-ai-runtime-client-id");
@@ -68,8 +69,7 @@ async function runPlan(jobId: string): Promise<void> {
   let shouldCleanupWorkspace = false;
 
   const trimmed = job.prompt.trim();
-  const looksLikeGreeting = /^(你好|您好|hi|hello|test|测试|在吗|在不在)\b/i.test(trimmed) || trimmed.length < 4;
-  if (looksLikeGreeting) {
+  if (isNonActionablePlanInput(trimmed)) {
     updateJob(jobId, {
       status: "awaiting_input",
       planSummary: "需求过于简单（例如仅“你好/测试”），无法判断要改什么。请补充：要改哪个模块？具体要改成什么效果？期望页面/按钮/字段是什么？",
@@ -133,7 +133,12 @@ async function runPlan(jobId: string): Promise<void> {
           });
         }
       },
-      { mode: "plan", jobId, attachments: stagedAttachments }
+      {
+        mode: "plan",
+        jobId,
+        attachments: stagedAttachments,
+        conversationHistory: job.conversationHistory,
+      }
     );
 
     await revertPlanWorkspaceChanges(jobId, "Plan 结束后检测到意外文件改动");
@@ -229,7 +234,12 @@ async function runQuestion(jobId: string): Promise<void> {
           });
         }
       },
-      { mode: "question", jobId, attachments: stagedAttachments }
+      {
+        mode: "question",
+        jobId,
+        attachments: stagedAttachments,
+        conversationHistory: job.conversationHistory,
+      }
     );
 
     const current = getJob(jobId);
@@ -427,6 +437,17 @@ jobsRouter.post("/:jobId/cancel", async (req, res) => {
 
   if (job.status === "planning" || job.status === "running") {
     killAgentForJob(jobId);
+  }
+
+  if (job.status === "running" && !job.requiresConfirm) {
+    await cleanupStagedAttachmentsForAgent(gitService.getRepoPath(), jobId).catch(() => {});
+    appendJobEvent(jobId, {
+      type: "cancelled",
+      message: "任务已取消",
+      text: "任务已取消",
+    });
+    res.json({ ok: true });
+    return;
   }
 
   try {
