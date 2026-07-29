@@ -1399,6 +1399,37 @@ body.sidebar-resizing {
   font-weight: var(--font-weight-regular);
 }
 
+.chat-footer .runtime-composer-shell {
+  overflow: visible;
+}
+
+.chat-footer .runtime-composer-action::before {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 50%;
+  z-index: 10;
+  padding: 6px 9px;
+  border-radius: 6px;
+  background: #262626;
+  color: #fff;
+  content: attr(data-context-title);
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.4;
+  white-space: nowrap;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateX(-50%) translateY(2px);
+  transition:
+    opacity 120ms ease,
+    transform 120ms ease;
+}
+
+.chat-footer .runtime-composer-action:hover::before {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+}
+
 .runtime-composer-shell .runtime-composer-action:hover:not(:disabled) {
   background: transparent;
   color: #1d4ed8;

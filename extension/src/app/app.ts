@@ -277,7 +277,7 @@ function formatContextTitle(
 async function refreshSubmitButtonContextTitle(serverUrl?: string): Promise<void> {
   const conversationId = activeConversationId;
   const button = el<HTMLButtonElement>("submitBtn");
-  button.title = formatContextTitle(0, 10, 0, 16_000);
+  button.dataset.contextTitle = formatContextTitle(0, 10, 0, 16_000);
   if (!conversationId) return;
 
   const resolvedServerUrl = serverUrl ?? (await loadConfig()).serverUrl;
@@ -286,7 +286,7 @@ async function refreshSubmitButtonContextTitle(serverUrl?: string): Promise<void
   try {
     const stats = await fetchConversationContextStats(resolvedServerUrl, conversationId);
     if (activeConversationId !== conversationId) return;
-    button.title = formatContextTitle(
+    button.dataset.contextTitle = formatContextTitle(
       stats.usedJobs,
       stats.maxJobs,
       stats.usedChars,
