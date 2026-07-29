@@ -20,7 +20,7 @@ import {
   queryJobStatus,
   queryJobStatusWithRetry,
   submitPlan,
-  submitJob,
+  submitQuestion,
 } from "../shared/api.js";
 import type {
   JobEvent,
@@ -386,12 +386,6 @@ async function cancelActiveJob(): Promise<void> {
   }
 }
 
-function shouldAutoSkipPlan(prompt: string): boolean {
-  const text = prompt.trim();
-  // 典型“简单可执行”指令：标题加/追加固定短串（如 123）
-  return /(标题|title).*(加|追加|后面加|末尾加|加个)\s*([0-9a-zA-Z_-]{1,12})/i.test(text);
-}
-
 function el<T extends HTMLElement>(id: string): T {
   return document.getElementById(id) as T;
 }
@@ -526,7 +520,7 @@ function applyHeaderStatusFromJob(job: JobStatus): void {
     awaiting_merge: "等待确认合并",
     awaiting_input: "需要补充信息",
     pending: job.jobsAhead ? `排队中，前面 ${job.jobsAhead} 个任务` : "准备执行",
-    running: "执行中",
+    running: job.requiresConfirm ? "执行中" : "项目分析中",
     completed: "任务已完成",
     failed: "任务失败",
     cancelled: "任务已取消",
@@ -1469,6 +1463,11 @@ function handleJobEvent(event: JobEvent, options?: { skipPersist?: boolean }): v
         setConnectionStatus("Plan 分析中");
         stopActionAlert();
         updateSubmitButton();
+      } else if (event.phase === "question") {
+        currentJobStatus = "running";
+        setConnectionStatus("项目分析中（只读）");
+        stopActionAlert();
+        updateSubmitButton();
       }
       break;
     case "agent_text":
@@ -2072,10 +2071,7 @@ async function handleSubmit(): Promise<void> {
       pageContext,
       images: imageBlobs.length > 0 ? imageBlobs : undefined,
     };
-    const effectivePlan = usePlanMode && !shouldAutoSkipPlan(prompt);
-    if (usePlanMode && !effectivePlan) {
-      setConnectionStatus("已识别为简单改动：跳过 Plan，直接执行…");
-    }
+    const effectivePlan = usePlanMode;
 
     // 立即显示用户消息，避免等待接口期间“没反应”
     const localId = `local-${Date.now()}`;
@@ -2100,11 +2096,11 @@ async function handleSubmit(): Promise<void> {
     };
     scrollChatToBottom();
 
-    let data: Awaited<ReturnType<typeof submitJob>>;
+    let data: Awaited<ReturnType<typeof submitQuestion>>;
     try {
       data = effectivePlan
         ? await submitPlan(config.serverUrl, body)
-        : await submitJob(config.serverUrl, body);
+        : await submitQuestion(config.serverUrl, body);
     } catch (submitErr) {
       for (const [index, blob] of imageBlobs.entries()) {
         pendingAttachments.push({
@@ -2126,7 +2122,7 @@ async function handleSubmit(): Promise<void> {
     resetPlanOutputBuffer(data.jobId);
 
     connectJobStream(config.serverUrl, data.jobId, data.status as JobStatusType);
-    setConnectionStatus(effectivePlan ? "Plan 分析中…" : data.message || "正在准备独立工作区");
+    setConnectionStatus(effectivePlan ? "Plan 分析中…" : data.message || "正在只读分析项目");
   } catch (err) {
     setConnectionStatus(formatErrorMessage(config.serverUrl, err));
   } finally {

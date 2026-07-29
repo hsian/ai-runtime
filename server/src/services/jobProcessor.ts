@@ -101,8 +101,12 @@ export async function processJob(jobId: string): Promise<void> {
   });
   if (!job) return;
 
-  if (job.requiresConfirm && job.status !== "running") {
-    // defensive: should not happen because queue only enqueues pending jobs
+  if (!job.requiresConfirm || !job.planSummary?.trim()) {
+    finishJob(jobId, {
+      status: "failed",
+      error: "禁止绕过 Plan 直接修改代码",
+      message: "代码修改必须先完成并确认 Plan",
+    });
     return;
   }
 

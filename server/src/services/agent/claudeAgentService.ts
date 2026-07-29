@@ -3,8 +3,10 @@ import { config } from "../../config.js";
 import type { PageContext, JobAttachment } from "../../types.js";
 import {
   buildClaudePlanPrompt,
+  buildClaudeQuestionPrompt,
   buildClaudeTaskPrompt,
   PLAN_SYSTEM_PROMPT,
+  QUESTION_SYSTEM_PROMPT,
   summarizeToolInput,
   SYSTEM_PROMPT,
   type AgentEventHandler,
@@ -266,7 +268,7 @@ function runClaudeCommand(
 
       if (code === 0) {
         const output = pickPlanOutput(finalSummary, streamedText);
-        resolve(output || "已完成代码修改");
+        resolve(output);
         return;
       }
 
@@ -287,21 +289,26 @@ export async function runClaudeAgent(
   options?: {
     permissionMode?: string;
     systemPrompt?: string;
-    mode?: "plan" | "execute";
+    mode?: "plan" | "question" | "execute";
     jobId?: string;
     attachments?: JobAttachment[];
     confirmedPlan?: string;
   }
 ): Promise<AgentResult> {
   const isPlan = options?.mode === "plan";
-  const permissionMode = isPlan
+  const isQuestion = options?.mode === "question";
+  const isReadOnly = isPlan || isQuestion;
+  const permissionMode = isReadOnly
     ? "dontAsk"
     : (options?.permissionMode ?? config.CLAUDE_PERMISSION_MODE);
   const systemPrompt =
-    options?.systemPrompt ?? (isPlan ? PLAN_SYSTEM_PROMPT : SYSTEM_PROMPT);
+    options?.systemPrompt ??
+    (isPlan ? PLAN_SYSTEM_PROMPT : isQuestion ? QUESTION_SYSTEM_PROMPT : SYSTEM_PROMPT);
   const userPrompt = isPlan
     ? buildClaudePlanPrompt(prompt, pageContext, options?.attachments)
-    : buildClaudeTaskPrompt(prompt, pageContext, options?.attachments, options?.confirmedPlan);
+    : isQuestion
+      ? buildClaudeQuestionPrompt(prompt, pageContext, options?.attachments)
+      : buildClaudeTaskPrompt(prompt, pageContext, options?.attachments, options?.confirmedPlan);
 
   const args = [
     "-p",
@@ -318,13 +325,15 @@ export async function runClaudeAgent(
     "--include-partial-messages",
   ];
 
-  // Plan 模式严禁跳过权限；执行模式可按配置跳过
-  if (config.CLAUDE_SKIP_PERMISSIONS && !isPlan) {
+  // 只读模式严禁跳过权限；执行模式可按配置跳过
+  if (config.CLAUDE_SKIP_PERMISSIONS && !isReadOnly) {
     args.splice(1, 0, "--dangerously-skip-permissions");
   }
 
   if (isPlan) {
     args.push("--allowedTools", "Read,Grep,Glob,WebFetch,WebSearch");
+  } else if (isQuestion) {
+    args.push("--allowedTools", "Read,Grep,Glob");
   }
 
   if (config.CLAUDE_MODEL) {
@@ -332,7 +341,13 @@ export async function runClaudeAgent(
   }
 
   console.log(
-    `[AI Runtime] Claude Code CLI，模式: ${isPlan ? "plan（读仓库出方案）" : "execute（改代码）"}，目录: ${repoPath}`
+    `[AI Runtime] Claude Code CLI，模式: ${
+      isPlan
+        ? "plan（读仓库出方案）"
+        : isQuestion
+          ? "question（只读项目问答）"
+          : "execute（改代码）"
+    }，目录: ${repoPath}`
   );
   console.log(`[AI Runtime] 任务: ${prompt}`);
 
@@ -346,6 +361,6 @@ export async function runClaudeAgent(
   );
 
   return {
-    summary: output || (isPlan ? "Plan 分析完成" : "已完成代码修改"),
+    summary: output || (isPlan ? "Plan 分析完成" : isQuestion ? "未获得有效回答" : "已完成代码修改"),
   };
 }

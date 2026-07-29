@@ -6,7 +6,13 @@ import { appendJobEvent, getJobEvents, subscribeJobEvents } from "../services/jo
 import { gitService } from "../services/gitService.js";
 import { runAgent, killAgentForJob, AgentAbortedError } from "../services/agent/index.js";
 import { config } from "../config.js";
-import { finalizeJobAttachments, jobImagesUpload, multerErrorMessage, stageAttachmentsForAgent } from "../services/uploadService.js";
+import {
+  cleanupStagedAttachmentsForAgent,
+  finalizeJobAttachments,
+  jobImagesUpload,
+  multerErrorMessage,
+  stageAttachmentsForAgent,
+} from "../services/uploadService.js";
 import { isMultipartSubmit, parseJobSubmitBody } from "../middleware/parseJobSubmit.js";
 import { confirmJobMerge, createJobMergeRequest, discardJobMerge, mergeCompletedJobToBranch, revertCompletedJobFromDefaultBranch } from "../services/jobMergeService.js";
 import type { JobRequest } from "../types.js";
@@ -174,6 +180,89 @@ async function runQueuedPlan(jobId: string): Promise<void> {
   }
 }
 
+async function runQuestion(jobId: string): Promise<void> {
+  const job = updateJob(jobId, {
+    status: "running",
+    message: "正在只读分析项目...",
+    jobsAhead: undefined,
+  });
+  if (!job) return;
+
+  const repoPath = gitService.getRepoPath();
+
+  try {
+    appendJobEvent(jobId, {
+      type: "stage",
+      phase: "question",
+      text: "问答模式：正在读取和分析项目（不会修改代码）...",
+    });
+
+    const stagedAttachments = await stageAttachmentsForAgent(
+      job.attachments,
+      repoPath,
+      jobId
+    );
+    const result = await runAgent(
+      repoPath,
+      job.prompt,
+      job.pageContext,
+      (event) => {
+        if (event.type === "agent_text" && event.delta) {
+          appendJobEvent(jobId, { type: "agent_text", delta: event.delta });
+        } else if (event.type === "agent_status" && event.statusText) {
+          updateJob(jobId, { message: event.statusText });
+          appendJobEvent(jobId, {
+            type: "agent_status",
+            statusText: event.statusText,
+            text: event.statusText,
+          });
+        } else if (event.type === "agent_tool" && event.toolName) {
+          appendJobEvent(jobId, {
+            type: "agent_tool",
+            toolAction: event.toolAction ?? "start",
+            toolName: event.toolName,
+            toolDetail: event.toolDetail,
+            text:
+              event.toolAction === "done"
+                ? `✓ ${event.toolName}`
+                : `▶ ${event.toolName}${event.toolDetail ? `: ${event.toolDetail}` : ""}`,
+          });
+        }
+      },
+      { mode: "question", jobId, attachments: stagedAttachments }
+    );
+
+    const current = getJob(jobId);
+    if (!current || current.status === "cancelled") return;
+
+    updateJob(jobId, {
+      status: "completed",
+      message: result.summary,
+    });
+    appendJobEvent(jobId, {
+      type: "done",
+      text: result.summary,
+      message: result.summary,
+    });
+  } catch (err) {
+    const current = getJob(jobId);
+    if (current?.status === "cancelled" || err instanceof AgentAbortedError) return;
+
+    updateJob(jobId, {
+      status: "failed",
+      error: String(err),
+      message: "项目问答失败",
+    });
+    appendJobEvent(jobId, {
+      type: "error",
+      message: String(err),
+      text: "项目问答失败",
+    });
+  } finally {
+    await cleanupStagedAttachmentsForAgent(repoPath, jobId).catch(() => {});
+  }
+}
+
 function handleJobImagesUpload(
   req: import("express").Request,
   res: import("express").Response,
@@ -251,12 +340,12 @@ jobsRouter.post("/", handleJobImagesUpload, (req, res) => {
   const { job, data } = created;
   emitUserSubmitEvents(job.jobId, data);
 
-  void processJob(job.jobId);
+  void runQuestion(job.jobId);
 
   res.status(202).json({
     jobId: job.jobId,
-    status: job.status,
-    message: "任务已创建，正在准备独立工作区",
+    status: "running",
+    message: "已进入项目问答（只读，不修改代码）",
     jobsAhead: 0,
   });
 });

@@ -1,5 +1,5 @@
 import { mkdirSync, renameSync } from "fs";
-import { copyFile, mkdir } from "fs/promises";
+import { copyFile, mkdir, rm } from "fs/promises";
 import { extname, join, resolve } from "path";
 import multer from "multer";
 import { config } from "../config.js";
@@ -78,6 +78,15 @@ export async function stageAttachmentsForAgent(
   }
 
   return staged;
+}
+
+/** 仅清理本任务复制到 Git 工作区内的附件，不触碰其他工作区文件。 */
+export async function cleanupStagedAttachmentsForAgent(
+  repoPath: string,
+  jobId: string
+): Promise<void> {
+  const agentDir = resolve(repoPath, ".ai-runtime", "uploads", jobId);
+  await rm(agentDir, { recursive: true, force: true });
 }
 
 export function multerErrorMessage(err: unknown): string {

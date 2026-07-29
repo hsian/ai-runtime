@@ -1244,6 +1244,11 @@ body.sidebar-resizing {
   background: var(--desktop-hover);
 }
 
+.sidebar-settings-btn > span:first-child {
+  font-size: 16px;
+  line-height: 1;
+}
+
 .chat-shell .chat-app {
   flex: 1;
   min-width: 0;

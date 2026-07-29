@@ -99,6 +99,43 @@ ${prompt}
 export const PLAN_SYSTEM_PROMPT =
   "你是 Claude Code 的 Plan 模式助手，在 Git 工作区内分析代码。只允许阅读、搜索、分析代码，严禁修改、创建或删除任何文件。根据用户描述和当前测试页面 URL 定位相关源码，但最终输出必须是一份给测试/产品人员看的简单修改方案。若任务附带截图/UI 原型，必须先 Read 查看图片再写方案；弹窗类需求必须严格按截图字段与布局设计，禁止把列表整表塞进弹窗。严禁编造对话历史。若信息严重不足无法出方案，说明缺什么后停止；否则直接给出完整方案，不要向用户提问或写「告诉我」「如需调整请说」等收尾。";
 
+export const QUESTION_SYSTEM_PROMPT =
+  "你是项目代码问答助手。只允许阅读、搜索和分析当前 Git 仓库，严禁修改、创建或删除任何文件，也不要生成修改方案或尝试执行用户描述中的改动。请直接回答用户关于项目实现、接口调用位置、页面结构、样式尺寸、数据流等问题；结论应基于实际代码，必要时给出文件路径和关键位置。若用户要求修改代码，明确提示必须勾选 Plan 模式后提交。";
+
+export function buildClaudeQuestionPrompt(
+  prompt: string,
+  pageContext?: PageContext,
+  attachments?: JobAttachment[]
+): string {
+  const routePath = extractRoutePath(pageContext?.url);
+
+  const contextPart = pageContext
+    ? `
+【当前页面信息】
+- 访问地址: ${pageContext.url}
+- 浏览器标题: ${pageContext.title}
+${routePath ? `- 路由路径: /${routePath}（可优先搜索与此路径相关的页面、路由、组件文件）` : ""}
+${pageContext.selectedText ? `- 用户选中文字: ${pageContext.selectedText}` : ""}
+${pageContext.selectedSelector ? `- 用户选中元素: ${pageContext.selectedSelector}` : ""}`
+    : "";
+
+  const attachmentPart = buildAttachmentSection(attachments);
+
+  return `【项目问答 - 只读分析，禁止改代码】
+
+请阅读和搜索当前仓库后直接回答问题。
+${contextPart}${attachmentPart}
+
+【用户问题】
+${prompt}
+
+【回答要求】
+1. 只能读取、搜索和分析，禁止修改、创建或删除文件
+2. 基于实际代码回答，不确定时明确说明
+3. 可列出相关文件路径、调用关系、样式值或关键代码位置
+4. 用户要求修改时不要执行，提示其勾选 Plan 模式后重新提交`;
+}
+
 export function buildClaudePlanPrompt(
   prompt: string,
   pageContext?: PageContext,

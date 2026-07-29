@@ -74,7 +74,7 @@ function buildSubmitFormData(body: SubmitRequest): FormData {
   return form;
 }
 
-export async function submitJob(
+export async function submitQuestion(
   serverUrl: string,
   body: SubmitRequest
 ): Promise<SubmitResponse> {
