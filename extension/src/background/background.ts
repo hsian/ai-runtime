@@ -1,4 +1,3 @@
-import type { PageContext } from "../shared/types.js";
 import { isActionAlertNotification, startActionAlert, stopActionAlert } from "../shared/actionAlert.js";
 import { handleTapdBatchCommand, initTapdBatchControllerFromStorage } from "../shared/tapdBatchController.js";
 import { TAPD_BATCH_STATE } from "../shared/tapdBatchMessages.js";
@@ -59,35 +58,6 @@ async function captureFocusedBrowserTab(): Promise<void> {
   const tab = focused?.tabs?.find((t) => t.active && isBrowserTab(t));
   if (tab?.id) {
     lastBrowserTabId = tab.id;
-  }
-}
-
-async function getTargetTab(): Promise<chrome.tabs.Tab | undefined> {
-  if (lastBrowserTabId !== null) {
-    try {
-      const tab = await chrome.tabs.get(lastBrowserTabId);
-      if (isBrowserTab(tab)) return tab;
-    } catch {
-      lastBrowserTabId = null;
-    }
-  }
-
-  const windows = await chrome.windows.getAll({ populate: true, windowTypes: ["normal"] });
-  const focused = windows.find((w) => w.focused) ?? windows[0];
-  return focused?.tabs?.find((t) => t.active && isBrowserTab(t));
-}
-
-async function readPageContext(tabId: number): Promise<PageContext> {
-  try {
-    const response = await chrome.tabs.sendMessage(tabId, { type: "GET_PAGE_CONTEXT" });
-    return response as PageContext;
-  } catch {
-    const tab = await chrome.tabs.get(tabId);
-    return {
-      url: tab.url ?? "",
-      title: tab.title ?? "",
-      viewport: { width: 0, height: 0 },
-    };
   }
 }
 
@@ -230,36 +200,4 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     return true;
   }
 
-  if (message.type === "GET_PAGE_CONTEXT") {
-    void (async () => {
-      await captureFocusedBrowserTab();
-      const tab = await getTargetTab();
-      if (!tab?.id) {
-        sendResponse({ ok: false, error: "未找到可访问的浏览器页面，请先打开测试页面" });
-        return;
-      }
-      const data = await readPageContext(tab.id);
-      sendResponse({ ok: true, data });
-    })();
-    return true;
-  }
-
-  if (message.type === "GET_TAB_PREVIEW") {
-    void (async () => {
-      const tab = await getTargetTab();
-      if (!tab?.id) {
-        sendResponse({ ok: false, error: "未找到浏览器页面" });
-        return;
-      }
-      sendResponse({
-        ok: true,
-        data: {
-          url: tab.url ?? "",
-          title: tab.title ?? "",
-          viewport: { width: 0, height: 0 },
-        },
-      });
-    })();
-    return true;
-  }
 });

@@ -2,6 +2,7 @@ import { Router } from "express";
 import { getTapdConfig, isTapdConfigured } from "../config.js";
 import {
   createBug,
+  getBug,
   getIterationWorkItems,
   getStory,
   getTask,
@@ -14,6 +15,7 @@ import {
   countImagesInHtml,
   downloadImagesFromHtml,
 } from "../services/tapd/tapdDescriptionImages.js";
+import { tapdHtmlToPlainText } from "../services/tapd/tapdContext.js";
 
 export const tapdRouter = Router();
 
@@ -184,6 +186,52 @@ tapdRouter.get("/parse-url", (req, res) => {
   res.json(parseTapdUrl(url));
 });
 
+tapdRouter.post("/context/resolve", async (req, res) => {
+  if (tapdNotConfigured(req, res)) return;
+  const url = typeof req.body?.url === "string" ? req.body.url.trim() : "";
+  if (!url) {
+    res.status(400).json({ error: "请输入 TAPD 链接" });
+    return;
+  }
+
+  const parsed = parseTapdUrl(url);
+  if (!parsed.workspaceId || !parsed.itemType || !parsed.itemId) {
+    res.status(400).json({ error: "无法从链接中识别 TAPD 项目、条目类型和 ID" });
+    return;
+  }
+
+  try {
+    const item =
+      parsed.itemType === "story"
+        ? await getStory(parsed.itemId, parsed.workspaceId)
+        : parsed.itemType === "task"
+          ? await getTask(parsed.itemId, parsed.workspaceId)
+          : await getBug(parsed.itemId, parsed.workspaceId);
+    if (!item) {
+      res.status(404).json({ error: "TAPD 条目不存在或当前应用无权访问" });
+      return;
+    }
+    const title = "title" in item ? item.title ?? item.name : item.name;
+    const owner = "current_owner" in item ? item.current_owner ?? item.owner : item.owner;
+    res.json({
+      context: {
+        workspaceId: parsed.workspaceId,
+        itemType: parsed.itemType,
+        itemId: item.id,
+        storyId: parsed.itemType === "story" ? item.id : undefined,
+        url,
+        title: title || `${parsed.itemType} ${item.id}`,
+        description: tapdHtmlToPlainText(item.description ?? ""),
+        status: item.status,
+        owner,
+        fetchedAt: new Date().toISOString(),
+      },
+    });
+  } catch (err) {
+    res.status(502).json({ error: err instanceof Error ? err.message : "获取 TAPD 需求失败" });
+  }
+});
+
 tapdRouter.get("/stories/:storyId", async (req, res) => {
   if (tapdNotConfigured(req, res)) return;
   try {
@@ -213,5 +261,21 @@ tapdRouter.get("/tasks/:taskId", async (req, res) => {
     res.json({ workspaceId, task });
   } catch (err) {
     res.status(502).json({ error: err instanceof Error ? err.message : "获取 Task 失败" });
+  }
+});
+
+tapdRouter.get("/bugs/:bugId", async (req, res) => {
+  if (tapdNotConfigured(req, res)) return;
+  try {
+    const workspaceId =
+      typeof req.query.workspaceId === "string" ? req.query.workspaceId : getTapdConfig().workspaceId;
+    const bug = await getBug(req.params.bugId, workspaceId);
+    if (!bug) {
+      res.status(404).json({ error: "Bug 不存在" });
+      return;
+    }
+    res.json({ workspaceId, bug });
+  } catch (err) {
+    res.status(502).json({ error: err instanceof Error ? err.message : "获取 Bug 失败" });
   }
 });

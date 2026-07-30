@@ -11,7 +11,6 @@ export default defineConfig({
         app: resolve(__dirname, "src/app/app.html"),
         settings: resolve(__dirname, "src/settings/settings.html"),
         background: resolve(__dirname, "src/background/background.ts"),
-        content: resolve(__dirname, "src/content/content.ts"),
       },
       output: {
         entryFileNames: (chunk) => {

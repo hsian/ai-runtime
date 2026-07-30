@@ -3,9 +3,7 @@ import "../shared/shellView.css";
 import { initTapdBatchPanel } from "../tapd-batch/tapd-batch.js";
 import { loadConfig, saveConfig } from "../shared/config.js";
 import {
-  fetchCurrentTabPreview,
   fetchConversationContextStats,
-  fetchPageContext,
   fetchJobEvents,
   formatErrorMessage,
   isNotFoundError,
@@ -30,6 +28,7 @@ import type {
   JobStatusType,
   PageContext,
   SubmitRequest,
+  TapdContext,
   TapdIteration,
   TapdWorkspace,
 } from "../shared/types.js";
@@ -54,10 +53,15 @@ import {
   createCodingConversation,
   getActiveCodingConversation,
   getCodingConversation,
-  setCodingConversationPageContext,
+  setCodingConversationTapdContext,
   setActiveCodingConversation,
 } from "../shared/codingConversationStore.js";
-import { createTapdBug, fetchTapdIterations, fetchTapdWorkspaces } from "../shared/tapdApi.js";
+import {
+  createTapdBug,
+  fetchTapdIterations,
+  fetchTapdWorkspaces,
+  resolveTapdContext,
+} from "../shared/tapdApi.js";
 import { mountPlanConfirmCard } from "../shared/planConfirmCard.js";
 import { enhanceSelects, refreshCustomSelect } from "../shared/customSelect.js";
 import {
@@ -113,6 +117,9 @@ let planOutputJobId: string | null = null;
 let createMergeRequestOnMerge = false;
 let submitInFlight = false;
 let activeConversationId = "";
+let activeTapdContext: TapdContext | null = null;
+let mentionTriggerIndex: number | null = null;
+let tapdContextLoading = false;
 
 function startActionAlert(title: string): void {
   chrome.runtime
@@ -493,8 +500,6 @@ async function migrateLegacyTaskConversations(): Promise<void> {
     const conversation = await addExistingConversation({
       title: task.title || task.draftPrompt || "历史任务",
       jobId: task.jobId,
-      pageUrl: task.pageUrl,
-      pageTitle: task.title,
     });
     await attachConversationToCodingTask(task.id, conversation.id);
   }
@@ -519,13 +524,10 @@ async function openCodingConversation(
   detachConversationView();
   clearChatDom();
   activeConversationId = conversation.id;
+  activeTapdContext = conversation.tapdContext ?? null;
+  renderTapdContext();
   await setActiveCodingConversation(conversation.id);
   refreshTaskDrawer();
-  if (conversation.pageContext) {
-    renderPagePreview(conversation.pageContext.url, conversation.pageContext.title);
-  } else {
-    await refreshPagePreview();
-  }
 
   const config = await loadConfig();
   void refreshSubmitButtonContextTitle(config.serverUrl);
@@ -847,31 +849,6 @@ async function recoverJobConnection(serverUrl: string, jobId: string): Promise<v
   }
 }
 
-function renderPagePreview(url: string, title?: string): void {
-  const pageUrlEl = el<HTMLElement>("pageUrl");
-  if (!url) {
-    pageUrlEl.textContent = "未找到浏览器页面，请先打开测试环境页面";
-    return;
-  }
-  const pageTitle = title?.trim();
-  pageUrlEl.textContent = pageTitle ? `${pageTitle} ｜ ${url}` : url;
-}
-
-async function refreshPagePreview(): Promise<void> {
-  const pageUrlEl = el<HTMLElement>("pageUrl");
-  pageUrlEl.textContent = "刷新中...";
-  try {
-    const preview = await fetchCurrentTabPreview();
-    if (!preview) {
-      renderPagePreview("");
-      return;
-    }
-    renderPagePreview(preview.url, preview.title);
-  } catch {
-    renderPagePreview("");
-  }
-}
-
 function formatTime(iso: string): string {
   try {
     return new Date(iso).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
@@ -1081,17 +1058,6 @@ function gateStatusTone(status: JobStatusType): string {
     default:
       return "running";
   }
-}
-
-async function refreshActiveConversationPagePreview(): Promise<void> {
-  if (activeConversationId) {
-    const conversation = await getCodingConversation(activeConversationId);
-    if (conversation?.pageContext) {
-      renderPagePreview(conversation.pageContext.url, conversation.pageContext.title);
-      return;
-    }
-  }
-  await refreshPagePreview();
 }
 
 function gateStatusIcon(status: JobStatusType): string {
@@ -1510,6 +1476,214 @@ function setupAttachmentHandlers(): void {
   });
 }
 
+function tapdItemTypeLabel(itemType: TapdContext["itemType"]): string {
+  if (itemType === "task") return "任务";
+  if (itemType === "bug") return "Bug";
+  return "需求";
+}
+
+function renderTapdContext(): void {
+  const strip = el<HTMLElement>("tapdContextStrip");
+  strip.replaceChildren();
+  if (!activeTapdContext) {
+    strip.hidden = true;
+    return;
+  }
+
+  const chip = document.createElement("div");
+  chip.className = "tapd-context-chip";
+  chip.title = activeTapdContext.url;
+
+  const title = document.createElement("span");
+  title.className = "tapd-context-chip-title";
+  title.textContent = `TAPD ${tapdItemTypeLabel(activeTapdContext.itemType)} · ${activeTapdContext.title}`;
+
+  const remove = document.createElement("button");
+  remove.className = "tapd-context-chip-remove";
+  remove.type = "button";
+  remove.title = "移除 TAPD 上下文";
+  remove.setAttribute("aria-label", "移除 TAPD 上下文");
+  remove.textContent = "×";
+  remove.addEventListener("click", () => {
+    void (async () => {
+      activeTapdContext = null;
+      await setCodingConversationTapdContext(activeConversationId);
+      renderTapdContext();
+      setConnectionStatus("已移除 TAPD 需求上下文");
+    })();
+  });
+
+  chip.append(title, remove);
+  strip.append(chip);
+  strip.hidden = false;
+}
+
+function buildLegacyTapdTransportContext(
+  tapdContext: TapdContext | null
+): PageContext | undefined {
+  if (!tapdContext || tapdContext.transportMode === "structured") {
+    return undefined;
+  }
+
+  const tapdReference = [
+    "【当前对话关联的 TAPD 条目】",
+    `类型：${tapdItemTypeLabel(tapdContext.itemType)}`,
+    `标题：${tapdContext.title}`,
+    `条目 ID：${tapdContext.itemId}`,
+    tapdContext.status ? `状态：${tapdContext.status}` : "",
+    tapdContext.owner ? `负责人：${tapdContext.owner}` : "",
+    `地址：${tapdContext.url}`,
+    "",
+    "【需求描述】",
+    tapdContext.description || "（TAPD 需求未填写描述）",
+  ]
+    .filter((line) => line !== "")
+    .join("\n");
+
+  return {
+    url: "",
+    title: "TAPD 需求上下文",
+    selectedText: tapdReference,
+    viewport: { width: 0, height: 0 },
+  };
+}
+
+function closeMentionMenu(): void {
+  el<HTMLElement>("mentionMenu").hidden = true;
+  mentionTriggerIndex = null;
+}
+
+function updateMentionMenu(): void {
+  const prompt = el<HTMLTextAreaElement>("prompt");
+  const caret = prompt.selectionStart ?? prompt.value.length;
+  const triggerIndex = caret - 1;
+  const isBoundary = triggerIndex === 0 || /\s/.test(prompt.value[triggerIndex - 1] ?? "");
+  if (triggerIndex >= 0 && prompt.value[triggerIndex] === "@" && isBoundary) {
+    mentionTriggerIndex = triggerIndex;
+    el<HTMLElement>("mentionMenu").hidden = false;
+    return;
+  }
+  closeMentionMenu();
+}
+
+function openTapdContextModal(): void {
+  const modal = el<HTMLElement>("tapdContextModal");
+  const input = el<HTMLInputElement>("tapdContextUrl");
+  el<HTMLElement>("tapdContextHint").textContent = "";
+  input.value = activeTapdContext?.url ?? "";
+  modal.hidden = false;
+  requestAnimationFrame(() => {
+    input.focus();
+    input.select();
+  });
+}
+
+function closeTapdContextModal(): void {
+  if (tapdContextLoading) return;
+  el<HTMLElement>("tapdContextModal").hidden = true;
+}
+
+function selectTapdMention(): void {
+  const prompt = el<HTMLTextAreaElement>("prompt");
+  if (mentionTriggerIndex !== null) {
+    const start = mentionTriggerIndex;
+    const caret = prompt.selectionStart ?? start + 1;
+    prompt.value = `${prompt.value.slice(0, start)}${prompt.value.slice(caret)}`;
+    prompt.setSelectionRange(start, start);
+  }
+  closeMentionMenu();
+  updateSubmitButton();
+  openTapdContextModal();
+}
+
+async function attachTapdContextFromModal(): Promise<void> {
+  if (tapdContextLoading) return;
+  const url = el<HTMLInputElement>("tapdContextUrl").value.trim();
+  const hint = el<HTMLElement>("tapdContextHint");
+  const okButton = el<HTMLButtonElement>("tapdContextOk");
+  if (!url) {
+    hint.textContent = "请输入 TAPD 链接";
+    return;
+  }
+
+  const config = await loadConfig();
+  if (!config.serverUrl) {
+    hint.textContent = "请先在设置中配置服务端地址";
+    return;
+  }
+
+  const targetConversationId = activeConversationId;
+  tapdContextLoading = true;
+  okButton.disabled = true;
+  okButton.textContent = "正在获取…";
+  hint.textContent = "正在远程获取 TAPD 条目描述…";
+  try {
+    const context = await resolveTapdContext(config.serverUrl, url);
+    await setCodingConversationTapdContext(targetConversationId, context);
+    if (activeConversationId === targetConversationId) {
+      activeTapdContext = context;
+      renderTapdContext();
+    }
+    el<HTMLElement>("tapdContextModal").hidden = true;
+    setConnectionStatus(`已关联 TAPD：${context.title}`);
+    el<HTMLTextAreaElement>("prompt").focus();
+  } catch (err) {
+    hint.textContent = err instanceof Error ? err.message : "获取 TAPD 条目失败";
+  } finally {
+    tapdContextLoading = false;
+    okButton.disabled = false;
+    okButton.textContent = "关联";
+  }
+}
+
+function setupTapdContextMention(): void {
+  const prompt = el<HTMLTextAreaElement>("prompt");
+  const menu = el<HTMLElement>("mentionMenu");
+
+  prompt.addEventListener("input", updateMentionMenu);
+  prompt.addEventListener("click", () => {
+    if (!menu.hidden) updateMentionMenu();
+  });
+  prompt.addEventListener("keydown", (event) => {
+    if (menu.hidden) return;
+    if (event.key === "Enter" || event.key === "Tab") {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      selectTapdMention();
+    } else if (event.key === "Escape") {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      closeMentionMenu();
+    }
+  });
+
+  el<HTMLButtonElement>("mentionTapdOption").addEventListener("click", selectTapdMention);
+  document.addEventListener("pointerdown", (event) => {
+    const target = event.target;
+    if (!(target instanceof Node)) return;
+    if (!menu.hidden && !menu.contains(target) && target !== prompt) {
+      closeMentionMenu();
+    }
+  });
+
+  el<HTMLButtonElement>("tapdContextOk").addEventListener("click", () => {
+    void attachTapdContextFromModal();
+  });
+  el<HTMLButtonElement>("tapdContextCancel").addEventListener("click", closeTapdContextModal);
+  el<HTMLElement>("tapdContextBackdrop").addEventListener("click", closeTapdContextModal);
+  el<HTMLInputElement>("tapdContextUrl").addEventListener("keydown", (event) => {
+    if (event.key === "Enter" && !event.isComposing) {
+      event.preventDefault();
+      void attachTapdContextFromModal();
+    }
+  });
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && !el<HTMLElement>("tapdContextModal").hidden) {
+      closeTapdContextModal();
+    }
+  });
+}
+
 function handleJobEvent(
   event: JobEvent,
   options?: { skipPersist?: boolean; allowOtherJobs?: boolean; replay?: boolean }
@@ -1788,66 +1962,6 @@ function connectJobStream(serverUrl: string, jobId: string, initialStatus?: JobS
 
 function isTerminalStatus(status: JobStatusType | null): boolean {
   return status === "completed" || status === "failed" || status === "cancelled";
-}
-
-let pageConfirmResolver: ((confirmed: boolean) => void) | null = null;
-
-function closePageConfirmModal(confirmed: boolean): void {
-  const modal = document.getElementById("pageConfirmModal");
-  if (modal) modal.hidden = true;
-  const resolver = pageConfirmResolver;
-  pageConfirmResolver = null;
-  resolver?.(confirmed);
-}
-
-function showPageConfirmModal(pageContext: PageContext | undefined): Promise<boolean> {
-  return new Promise((resolve) => {
-    const modal = el<HTMLElement>("pageConfirmModal");
-    const titleEl = el<HTMLElement>("pageConfirmTitle");
-    const urlEl = el<HTMLElement>("pageConfirmUrl");
-    const hintEl = el<HTMLElement>("pageConfirmHint");
-    const okBtn = el<HTMLButtonElement>("pageConfirmOk");
-
-    pageConfirmResolver = resolve;
-
-    if (!pageContext?.url) {
-      titleEl.textContent = "未找到浏览器页面";
-      urlEl.textContent = "请先在浏览器打开要修改的测试页面";
-      hintEl.textContent = "无法获取页面上下文时不能发送任务。";
-      okBtn.disabled = true;
-    } else {
-      titleEl.textContent = pageContext.title?.trim() || "当前页面";
-      urlEl.textContent = pageContext.url;
-      hintEl.textContent = "默认会根据当前页面定位源码，请确认这就是你要改的页面。";
-      okBtn.disabled = false;
-    }
-
-    modal.hidden = false;
-    if (!okBtn.disabled) {
-      okBtn.focus();
-    } else {
-      el<HTMLButtonElement>("pageConfirmCancel").focus();
-    }
-  });
-}
-
-function setupPageConfirmModal(): void {
-  el<HTMLButtonElement>("pageConfirmOk").addEventListener("click", () => {
-    closePageConfirmModal(true);
-  });
-  el<HTMLButtonElement>("pageConfirmCancel").addEventListener("click", () => {
-    closePageConfirmModal(false);
-  });
-  el<HTMLElement>("pageConfirmBackdrop").addEventListener("click", () => {
-    closePageConfirmModal(false);
-  });
-  document.addEventListener("keydown", (event) => {
-    if (event.key !== "Escape") return;
-    const modal = document.getElementById("pageConfirmModal");
-    if (modal && !modal.hidden) {
-      closePageConfirmModal(false);
-    }
-  });
 }
 
 let releaseMergeResolver: ((targetBranch: string | null) => void) | null = null;
@@ -2213,32 +2327,6 @@ async function handleSubmit(): Promise<void> {
   if (!activeConversationId) {
     activeConversationId = (await getActiveCodingConversation()).id;
   }
-  const conversation = await getCodingConversation(activeConversationId);
-  let pageContext = conversation?.pageContext;
-
-  if (!pageContext) {
-    setConnectionStatus("正在读取当前页面…");
-    try {
-      pageContext = await fetchPageContext(true);
-    } catch (err) {
-      setConnectionStatus(err instanceof Error ? err.message : "无法获取当前页面信息");
-      return;
-    }
-    if (pageContext) {
-      renderPagePreview(pageContext.url, pageContext.title);
-    }
-
-    const confirmed = await showPageConfirmModal(pageContext);
-    if (!confirmed) {
-      setConnectionStatus("已取消发送");
-      return;
-    }
-    if (pageContext) {
-      await setCodingConversationPageContext(activeConversationId, pageContext);
-    }
-  } else {
-    renderPagePreview(pageContext.url, pageContext.title);
-  }
 
   submitInFlight = true;
   updateSubmitButton();
@@ -2250,9 +2338,13 @@ async function handleSubmit(): Promise<void> {
     updateSubmitButton();
 
     const { blobs: imageBlobs, previewUrls } = detachPendingAttachments();
+    const usesStructuredTapdContext = activeTapdContext?.transportMode === "structured";
     const body: SubmitRequest = {
       prompt,
-      pageContext,
+      pageContext: usesStructuredTapdContext
+        ? undefined
+        : buildLegacyTapdTransportContext(activeTapdContext),
+      tapdContext: usesStructuredTapdContext ? activeTapdContext ?? undefined : undefined,
       conversationId: activeConversationId,
       images: imageBlobs.length > 0 ? imageBlobs : undefined,
     };
@@ -2267,7 +2359,6 @@ async function handleSubmit(): Promise<void> {
         timestamp: new Date().toISOString(),
         type: "user",
         text: prompt,
-        pageUrl: pageContext?.url,
         attachmentCount: previewUrls.length > 0 ? previewUrls.length : undefined,
       },
       previewUrls
@@ -2275,7 +2366,6 @@ async function handleSubmit(): Promise<void> {
     lastLocalUserBubble = {
       localId,
       text: prompt,
-      pageUrl: pageContext?.url,
       createdAtMs: Date.now(),
       imageUrls: previewUrls,
     };
@@ -2304,8 +2394,6 @@ async function handleSubmit(): Promise<void> {
     if (effectivePlan) {
       const savedTask = await saveCodingPromptAsTask({
         prompt,
-        pageUrl: pageContext?.url,
-        pageTitle: pageContext?.title,
         conversationId: activeConversationId,
       });
       await attachJobToCodingTask(savedTask.id, data.jobId);
@@ -2431,8 +2519,6 @@ async function init(): Promise<void> {
   await migrateLegacyTaskConversations();
   activeConversationId = (await getActiveCodingConversation()).id;
 
-  await refreshActiveConversationPagePreview();
-
   setupSettingsModal();
   switchAppView("coding");
   el<HTMLButtonElement>("tapdBatchBtn").addEventListener("click", () => {
@@ -2454,17 +2540,18 @@ async function init(): Promise<void> {
     void handleSubmit();
   });
   setupAttachmentHandlers();
+  setupTapdContextMention();
   setupComposerResize({
     storageKey: "tapdComposerFooterHeight",
     scrollContainerId: "chatMain",
   });
   setupSidebarResize();
-  setupPageConfirmModal();
   setupReleaseMergeModal();
   setupRevertDefaultModal();
   setupTapdBugModal();
 
   el<HTMLTextAreaElement>("prompt").addEventListener("keydown", (e) => {
+    if (e.defaultPrevented) return;
     if (e.key === "Enter" && !e.shiftKey && !e.isComposing) {
       e.preventDefault();
       el<HTMLFormElement>("composer").requestSubmit();
@@ -2473,7 +2560,6 @@ async function init(): Promise<void> {
   el<HTMLTextAreaElement>("prompt").addEventListener("input", updateSubmitButton);
 
   window.addEventListener("focus", () => {
-    void refreshActiveConversationPagePreview();
     void loadConfig().then((cfg) => {
       createMergeRequestOnMerge = cfg.createMergeRequestOnMerge;
       if (cfg.serverUrl) void tryFlushPendingServerCancel(cfg.serverUrl);

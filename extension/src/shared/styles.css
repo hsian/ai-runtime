@@ -1347,6 +1347,7 @@ body.sidebar-resizing {
 }
 
 .runtime-composer-input {
+  position: relative;
   display: flex;
   flex: 1;
   min-width: 0;
@@ -1357,6 +1358,109 @@ body.sidebar-resizing {
   border: 0;
   border-radius: 0;
   box-shadow: none;
+}
+
+.mention-menu {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 0;
+  z-index: 30;
+  width: 168px;
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid var(--color-border-soft);
+  border-radius: 10px;
+  background: var(--color-surface);
+  box-shadow: var(--shadow-md);
+}
+
+.mention-menu[hidden] {
+  display: none;
+}
+
+.mention-menu-option {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 9px;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--color-text);
+  font-size: var(--font-size-ui);
+  font-weight: var(--font-weight-medium);
+  text-align: left;
+}
+
+.mention-menu-option:hover,
+.mention-menu-option.is-active {
+  background: var(--color-surface-muted);
+}
+
+.mention-menu-icon {
+  display: inline-flex;
+  width: 24px;
+  height: 24px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 7px;
+  background: #e8f1ff;
+  color: #2563eb;
+  font-size: 13px;
+  font-weight: var(--font-weight-semibold);
+}
+
+.tapd-context-strip {
+  display: flex;
+  width: 100%;
+}
+
+.tapd-context-strip[hidden] {
+  display: none;
+}
+
+.tapd-context-chip {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 8px;
+  border: 1px solid var(--color-border-soft);
+  border-radius: 5px;
+  background: var(--color-surface-muted);
+  color: var(--color-muted);
+  font-size: var(--font-size-caption);
+  line-height: 1.35;
+}
+
+.tapd-context-chip-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tapd-context-chip-remove {
+  flex: none;
+  min-width: 0;
+  padding: 0 2px;
+  border: 0;
+  background: transparent;
+  color: var(--color-subtle);
+  font-size: 14px;
+  line-height: 1;
+}
+
+.tapd-context-chip-remove:hover {
+  color: #dc2626;
+}
+
+.tapd-context-url-input {
+  width: 100%;
+  margin-bottom: 8px;
 }
 
 .runtime-composer-input:focus-within {

@@ -333,6 +333,20 @@ export async function getTask(
   return tasks[0] ?? null;
 }
 
+export async function getBug(
+  bugId: string,
+  workspaceId?: string,
+  cfg: TapdConfig = getTapdConfig()
+): Promise<TapdBug | null> {
+  const wsId = workspaceId ?? cfg.workspaceId;
+  const body = await tapdRequest<unknown[]>(cfg, "/bugs", {
+    workspace_id: wsId,
+    id: bugId,
+  });
+  const bugs = unwrapRecords<TapdBug>(body.data, "Bug");
+  return bugs[0] ?? null;
+}
+
 interface TapdAttachmentDownload {
   download_url?: string;
   content_type?: string;
@@ -367,11 +381,23 @@ export async function getTapdAttachmentDownloadUrl(
 export function parseTapdUrl(url: string): {
   workspaceId?: string;
   iterationId?: string;
+  itemType?: "story" | "task" | "bug";
+  itemId?: string;
   storyId?: string;
   taskId?: string;
+  bugId?: string;
 } {
   try {
     const parsed = new URL(url);
+    const hostname = parsed.hostname.toLowerCase();
+    if (
+      hostname !== "tapd.cn" &&
+      hostname !== "tapd.com" &&
+      !hostname.endsWith(".tapd.cn") &&
+      !hostname.endsWith(".tapd.com")
+    ) {
+      return {};
+    }
     const parts = parsed.pathname.split("/").filter(Boolean);
     const result: ReturnType<typeof parseTapdUrl> = {};
 
@@ -388,11 +414,37 @@ export function parseTapdUrl(url: string): {
     const storiesIndex = parts.indexOf("stories");
     if (storiesIndex >= 0 && parts[storiesIndex + 1] === "view") {
       result.storyId = parts[storiesIndex + 2];
+      result.itemType = "story";
+      result.itemId = result.storyId;
+    }
+
+    const dialogPreviewId = parsed.searchParams.get("dialog_preview_id");
+    const previewMatch = dialogPreviewId?.match(/^(story|task|bug)_(\d+)$/);
+    if (previewMatch) {
+      const itemType = previewMatch[1] as "story" | "task" | "bug";
+      const itemId = previewMatch[2];
+      result.itemType = itemType;
+      result.itemId = itemId;
+      if (itemType === "story") result.storyId = itemId;
+      if (itemType === "task") result.taskId = itemId;
+      if (itemType === "bug") result.bugId = itemId;
     }
 
     const tasksIndex = parts.indexOf("tasks");
     if (tasksIndex >= 0 && parts[tasksIndex + 1] === "view") {
       result.taskId = parts[tasksIndex + 2];
+      result.itemType = "task";
+      result.itemId = result.taskId;
+    }
+
+    const bugsIndex = parts.findIndex((part) => part === "bugs" || part === "bug");
+    if (
+      bugsIndex >= 0 &&
+      (parts[bugsIndex + 1] === "view" || parts[bugsIndex + 1] === "detail")
+    ) {
+      result.bugId = parts[bugsIndex + 2];
+      result.itemType = "bug";
+      result.itemId = result.bugId;
     }
 
     return result;

@@ -40,7 +40,6 @@
         <div class="chat-app runtime-content">
         <header class="chat-header">
           <div class="header-left">
-            <p class="subtitle page-url" id="pageUrl">加载中...</p>
             <p class="subtitle" id="connectionStatus">就绪</p>
           </div>
         </header>
@@ -59,12 +58,19 @@
             <form class="composer runtime-composer-form" id="composer">
               <div class="composer-input runtime-composer-input">
                 <div class="attachment-strip" id="attachmentStrip" hidden></div>
+                <div class="tapd-context-strip" id="tapdContextStrip" hidden></div>
                 <textarea
                   class="runtime-composer-textarea"
                   id="prompt"
                   rows="1"
-                  placeholder="请输入"
+                  placeholder="请输入需求，涉及页面时请附页面路径"
                 ></textarea>
+                <div id="mentionMenu" class="mention-menu" role="listbox" aria-label="选择上下文类型" hidden>
+                  <button id="mentionTapdOption" class="mention-menu-option is-active" type="button" role="option" aria-selected="true">
+                    <span class="mention-menu-icon">@</span>
+                    <span>TAPD</span>
+                  </button>
+                </div>
               </div>
               <button id="submitBtn" class="primary send-btn runtime-composer-action" type="submit" data-context-title="会话上下文：0 / 10 轮，0 / 16,000 字" disabled>回车发送</button>
             </form>
@@ -191,19 +197,22 @@
       </div>
     </div>
 
-    <div id="pageConfirmModal" class="page-confirm-modal" hidden>
-      <div class="page-confirm-backdrop" id="pageConfirmBackdrop"></div>
-      <div class="page-confirm-dialog" role="dialog" aria-labelledby="pageConfirmHeading">
-        <h2 id="pageConfirmHeading" class="page-confirm-heading">确认当前页面</h2>
-        <p class="page-confirm-lead">发送前请确认浏览器中打开的是要修改的页面：</p>
-        <div class="page-confirm-page">
-          <div id="pageConfirmTitle" class="page-confirm-title"></div>
-          <div id="pageConfirmUrl" class="page-confirm-url"></div>
-        </div>
-        <p id="pageConfirmHint" class="page-confirm-hint"></p>
+    <div id="tapdContextModal" class="page-confirm-modal" hidden>
+      <div class="page-confirm-backdrop" id="tapdContextBackdrop"></div>
+      <div class="page-confirm-dialog" role="dialog" aria-label="关联 TAPD 条目">
+        <p class="page-confirm-lead">粘贴 TAPD 链接，获取条目描述并关联到当前对话。</p>
+        <input
+          id="tapdContextUrl"
+          class="tapd-context-url-input"
+          type="url"
+          aria-label="TAPD 链接"
+          placeholder="https://www.tapd.cn/..."
+          autocomplete="off"
+        />
+        <p id="tapdContextHint" class="page-confirm-hint"></p>
         <div class="page-confirm-actions">
-          <button id="pageConfirmCancel" class="secondary" type="button">取消</button>
-          <button id="pageConfirmOk" class="primary" type="button">确认并发送</button>
+          <button id="tapdContextCancel" class="secondary" type="button">取消</button>
+          <button id="tapdContextOk" class="primary" type="button">关联</button>
         </div>
       </div>
     </div>

@@ -8,6 +8,7 @@ import { appendJobEvent } from "./jobEvents.js";
 import { stageAttachmentsForAgent } from "./uploadService.js";
 import { resolveJobPreviewLink } from "./devPreviewService.js";
 import type { AgentStreamEvent } from "./agent/types.js";
+import { buildPromptWithTapdContext } from "./tapd/tapdContext.js";
 
 function isNoChangesError(err: unknown): boolean {
   return err instanceof Error && err.message.includes("没有文件变更");
@@ -132,7 +133,7 @@ export async function processJob(jobId: string): Promise<void> {
 
     const result = await runAgent(
       repoPath,
-      job.prompt,
+      buildPromptWithTapdContext(job.prompt, job.tapdContext),
       job.pageContext,
       (event) => emitAgentEvent(jobId, event),
       {

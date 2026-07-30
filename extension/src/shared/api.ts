@@ -1,7 +1,6 @@
 import type {
   ConversationContextStats,
   JobStatus,
-  PageContext,
   SubmitRequest,
   SubmitResponse,
 } from "./types.js";
@@ -17,22 +16,6 @@ async function clientHeaders(extra?: HeadersInit): Promise<HeadersInit> {
     ...(extra ?? {}),
     "X-AI-Runtime-Client-Id": await getClientId(),
   };
-}
-
-export async function fetchPageContext(includeContext: boolean): Promise<PageContext | undefined> {
-  if (!includeContext) return undefined;
-
-  const response = await chrome.runtime.sendMessage({ type: "GET_PAGE_CONTEXT" });
-  if (!response?.ok) {
-    throw new Error(response?.error ?? "无法获取当前页面信息");
-  }
-  return response.data as PageContext;
-}
-
-export async function fetchCurrentTabPreview(): Promise<PageContext | null> {
-  const response = await chrome.runtime.sendMessage({ type: "GET_TAB_PREVIEW" });
-  if (!response?.ok) return null;
-  return response.data as PageContext;
 }
 
 async function postJob(
@@ -54,6 +37,7 @@ async function postJob(
         body: JSON.stringify({
           prompt: body.prompt,
           pageContext: body.pageContext,
+          tapdContext: body.tapdContext,
           submittedBy: body.submittedBy,
           conversationId: body.conversationId,
         }),
@@ -71,6 +55,9 @@ function buildSubmitFormData(body: SubmitRequest): FormData {
   form.append("prompt", body.prompt);
   if (body.pageContext) {
     form.append("pageContext", JSON.stringify(body.pageContext));
+  }
+  if (body.tapdContext) {
+    form.append("tapdContext", JSON.stringify(body.tapdContext));
   }
   if (body.submittedBy) {
     form.append("submittedBy", body.submittedBy);

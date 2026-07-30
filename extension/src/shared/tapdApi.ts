@@ -1,7 +1,140 @@
 import { normalizeServerUrl } from "./config.js";
-import type { TapdIteration, TapdTaskItem, TapdWorkspace } from "./types.js";
+import type {
+  TapdContext,
+  TapdItemType,
+  TapdIteration,
+  TapdTaskItem,
+  TapdWorkspace,
+} from "./types.js";
 
 export const TAPD_TASK_PREFIX = "AI";
+
+function parseTapdItemUrl(
+  value: string
+): { workspaceId: string; itemType: TapdItemType; itemId: string } | null {
+  try {
+    const parsed = new URL(value);
+    const hostname = parsed.hostname.toLowerCase();
+    if (
+      hostname !== "tapd.cn" &&
+      hostname !== "tapd.com" &&
+      !hostname.endsWith(".tapd.cn") &&
+      !hostname.endsWith(".tapd.com")
+    ) {
+      return null;
+    }
+
+    const parts = parsed.pathname.split("/").filter(Boolean);
+    const workspaceId = parts.find((part) => /^\d+$/.test(part));
+    let itemType: TapdItemType | undefined;
+    let itemId: string | undefined;
+
+    const storiesIndex = parts.indexOf("stories");
+    if (storiesIndex >= 0 && parts[storiesIndex + 1] === "view") {
+      itemType = "story";
+      itemId = parts[storiesIndex + 2];
+    }
+    const tasksIndex = parts.indexOf("tasks");
+    if (tasksIndex >= 0 && parts[tasksIndex + 1] === "view") {
+      itemType = "task";
+      itemId = parts[tasksIndex + 2];
+    }
+    const bugsIndex = parts.findIndex((part) => part === "bugs" || part === "bug");
+    if (
+      bugsIndex >= 0 &&
+      (parts[bugsIndex + 1] === "view" || parts[bugsIndex + 1] === "detail")
+    ) {
+      itemType = "bug";
+      itemId = parts[bugsIndex + 2];
+    }
+
+    const previewMatch = parsed.searchParams
+      .get("dialog_preview_id")
+      ?.match(/^(story|task|bug)_(\d+)$/);
+    if (previewMatch) {
+      itemType = previewMatch[1] as TapdItemType;
+      itemId = previewMatch[2];
+    }
+    return workspaceId && itemType && itemId ? { workspaceId, itemType, itemId } : null;
+  } catch {
+    return null;
+  }
+}
+
+async function readJsonResponse<T>(
+  response: Response
+): Promise<{ data?: T; error?: string; isJson: boolean }> {
+  const text = await response.text();
+  if (!text.trim()) return { isJson: false };
+  try {
+    return { data: JSON.parse(text) as T, isJson: true };
+  } catch {
+    return {
+      isJson: false,
+      error: text.trimStart().startsWith("<!DOCTYPE")
+        ? "服务端返回了网页而不是接口数据"
+        : "服务端返回的内容不是有效 JSON",
+    };
+  }
+}
+
+export async function resolveTapdContext(serverUrl: string, url: string): Promise<TapdContext> {
+  const res = await fetch(`${normalizeServerUrl(serverUrl)}/api/tapd/context/resolve`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ url }),
+  });
+  const aggregate = await readJsonResponse<{ context?: TapdContext; error?: string }>(res);
+  if (res.ok && aggregate.data?.context) {
+    return { ...aggregate.data.context, transportMode: "structured" };
+  }
+
+  const shouldUseLegacyFallback =
+    !aggregate.isJson || res.status === 400 || res.status === 404 || res.status === 405;
+  if (!shouldUseLegacyFallback) {
+    throw new Error(aggregate.data?.error ?? aggregate.error ?? `获取 TAPD 需求失败: ${res.status}`);
+  }
+
+  const parsed = parseTapdItemUrl(url);
+  if (!parsed) {
+    throw new Error("无法从链接中识别 TAPD 项目、条目类型和 ID");
+  }
+  const resource = parsed.itemType === "story" ? "stories" : parsed.itemType === "task" ? "tasks" : "bugs";
+  const itemUrl = new URL(
+    `${normalizeServerUrl(serverUrl)}/api/tapd/${resource}/${encodeURIComponent(parsed.itemId)}`
+  );
+  itemUrl.searchParams.set("workspaceId", parsed.workspaceId);
+  const itemResponse = await fetch(itemUrl);
+  const legacy = await readJsonResponse<{
+    story?: TapdTaskItem;
+    task?: TapdTaskItem;
+    bug?: TapdTaskItem & { title?: string; current_owner?: string };
+    error?: string;
+  }>(itemResponse);
+  const item = legacy.data?.story ?? legacy.data?.task ?? legacy.data?.bug;
+  if (!itemResponse.ok || !item) {
+    if (!legacy.isJson) {
+      throw new Error("服务端未提供对应的 TAPD 条目读取接口，请更新并重启 ai-runtime server");
+    }
+    throw new Error(legacy.data?.error ?? `获取 TAPD 条目失败: ${itemResponse.status}`);
+  }
+
+  const title = "title" in item ? item.title ?? item.name : item.name;
+  const owner = "current_owner" in item ? item.current_owner ?? item.owner : item.owner;
+  return {
+    workspaceId: parsed.workspaceId,
+    itemType: parsed.itemType,
+    itemId: item.id,
+    storyId: parsed.itemType === "story" ? item.id : undefined,
+    url,
+    title: title || `${parsed.itemType} ${item.id}`,
+    description: htmlToPlainPromptText(item.description ?? ""),
+    status: item.status,
+    owner,
+    fetchedAt: new Date().toISOString(),
+    transportMode: "legacy",
+  };
+}
 
 export async function fetchTapdWorkspaces(serverUrl: string): Promise<{
   defaultWorkspaceId: string;

@@ -10,14 +10,30 @@ const pageContextSchema = z.object({
   viewport: z.object({ width: z.number(), height: z.number() }),
 });
 
+const tapdContextSchema = z.object({
+  workspaceId: z.string().min(1).max(32),
+  itemType: z.enum(["story", "task", "bug"]).optional(),
+  itemId: z.string().min(1).max(64).optional(),
+  storyId: z.string().min(1).max(64).optional(),
+  url: z.string().url().max(2_048),
+  title: z.string().min(1).max(500),
+  description: z.string().max(50_000),
+  status: z.string().max(100).optional(),
+  owner: z.string().max(500).optional(),
+  fetchedAt: z.string().min(1).max(64),
+}).refine((value) => Boolean(value.itemId || value.storyId), {
+  message: "TAPD 上下文缺少条目 ID",
+});
+
 const submitFieldsSchema = z.object({
   prompt: z.string().min(1, "prompt 不能为空"),
   pageContext: pageContextSchema.optional(),
+  tapdContext: tapdContextSchema.optional(),
   submittedBy: z.string().optional(),
   conversationId: z.string().min(1).max(128).optional(),
 });
 
-function parsePageContextField(raw: unknown): unknown {
+function parseJsonField(raw: unknown): unknown {
   if (raw == null || raw === "") return undefined;
   if (typeof raw === "object") return raw;
   if (typeof raw === "string") {
@@ -41,10 +57,12 @@ export function parseJobSubmitBody(req: Request): { data?: JobRequest; error?: s
     return { data: parsed.data };
   }
 
-  const pageContextRaw = parsePageContextField(req.body?.pageContext);
+  const pageContextRaw = parseJsonField(req.body?.pageContext);
+  const tapdContextRaw = parseJsonField(req.body?.tapdContext);
   const parsed = submitFieldsSchema.safeParse({
     prompt: req.body?.prompt,
     pageContext: pageContextRaw,
+    tapdContext: tapdContextRaw,
     submittedBy: req.body?.submittedBy,
     conversationId: req.body?.conversationId,
   });

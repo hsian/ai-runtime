@@ -1,4 +1,4 @@
-import type { CodingConversation, PageContext } from "./types.js";
+import type { CodingConversation, TapdContext } from "./types.js";
 
 const CONVERSATIONS_KEY = "codingConversations";
 const ACTIVE_CONVERSATION_KEY = "activeCodingConversationId";
@@ -14,12 +14,26 @@ function normalizeConversation(raw: unknown): CodingConversation | null {
     jobIds: Array.isArray(value.jobIds)
       ? value.jobIds.filter((item): item is string => typeof item === "string")
       : [],
-    pageContext:
-      value.pageContext &&
-      typeof value.pageContext === "object" &&
-      typeof (value.pageContext as PageContext).url === "string" &&
-      typeof (value.pageContext as PageContext).title === "string"
-        ? (value.pageContext as PageContext)
+    tapdContext:
+      value.tapdContext &&
+      typeof value.tapdContext === "object" &&
+      typeof (value.tapdContext as TapdContext).title === "string"
+        ? {
+            ...(value.tapdContext as TapdContext),
+            itemType:
+              (value.tapdContext as TapdContext).itemType === "task" ||
+              (value.tapdContext as TapdContext).itemType === "bug"
+                ? (value.tapdContext as TapdContext).itemType
+                : "story",
+            itemId:
+              (value.tapdContext as TapdContext).itemId ||
+              (value.tapdContext as TapdContext).storyId ||
+              "",
+            transportMode:
+              (value.tapdContext as TapdContext).transportMode === "structured"
+                ? "structured"
+                : "legacy",
+          }
         : undefined,
     createdAt: typeof value.createdAt === "string" ? value.createdAt : now,
     updatedAt: typeof value.updatedAt === "string" ? value.updatedAt : now,
@@ -128,16 +142,16 @@ export async function addJobToCodingConversation(
   await writeConversations(conversations);
 }
 
-export async function setCodingConversationPageContext(
+export async function setCodingConversationTapdContext(
   conversationId: string,
-  pageContext: PageContext
+  tapdContext?: TapdContext
 ): Promise<void> {
   const conversations = await readConversations();
   const index = conversations.findIndex((item) => item.id === conversationId);
   if (index < 0) return;
   conversations[index] = {
     ...conversations[index],
-    pageContext,
+    tapdContext,
     updatedAt: new Date().toISOString(),
   };
   await writeConversations(conversations);
@@ -146,19 +160,10 @@ export async function setCodingConversationPageContext(
 export async function addExistingConversation(input: {
   title: string;
   jobId?: string;
-  pageUrl?: string;
-  pageTitle?: string;
 }): Promise<CodingConversation> {
   const conversation = await createCodingConversation(input.title || "历史任务", {
     activate: false,
   });
-  if (input.pageUrl) {
-    await setCodingConversationPageContext(conversation.id, {
-      url: input.pageUrl,
-      title: input.pageTitle ?? input.title,
-      viewport: { width: 0, height: 0 },
-    });
-  }
   if (input.jobId) {
     await addJobToCodingConversation(conversation.id, input.jobId);
   }

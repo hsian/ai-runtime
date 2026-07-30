@@ -6,9 +6,27 @@ export interface PageContext {
   viewport: { width: number; height: number };
 }
 
+export type TapdItemType = "story" | "task" | "bug";
+
+export interface TapdContext {
+  workspaceId: string;
+  itemType: TapdItemType;
+  itemId: string;
+  /** 兼容旧版本保存的需求上下文 */
+  storyId?: string;
+  url: string;
+  title: string;
+  description: string;
+  status?: string;
+  owner?: string;
+  fetchedAt: string;
+  transportMode?: "structured" | "legacy";
+}
+
 export interface SubmitRequest {
   prompt: string;
   pageContext?: PageContext;
+  tapdContext?: TapdContext;
   submittedBy?: string;
   conversationId?: string;
   images?: Blob[];
@@ -139,7 +157,7 @@ export interface CodingConversation {
   id: string;
   title: string;
   jobIds: string[];
-  pageContext?: PageContext;
+  tapdContext?: TapdContext;
   createdAt: string;
   updatedAt: string;
 }

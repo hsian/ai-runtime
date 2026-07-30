@@ -13,9 +13,26 @@ export interface JobAttachment {
   sizeBytes?: number;
 }
 
+export type TapdItemType = "story" | "task" | "bug";
+
+export interface TapdContext {
+  workspaceId: string;
+  itemType?: TapdItemType;
+  itemId?: string;
+  /** 兼容旧版插件提交的需求上下文 */
+  storyId?: string;
+  url: string;
+  title: string;
+  description: string;
+  status?: string;
+  owner?: string;
+  fetchedAt: string;
+}
+
 export interface JobRequest {
   prompt: string;
   pageContext?: PageContext;
+  tapdContext?: TapdContext;
   submittedBy?: string;
   conversationId?: string;
   ownerId?: string;
@@ -44,6 +61,7 @@ export interface Job {
   status: JobStatus;
   prompt: string;
   pageContext?: PageContext;
+  tapdContext?: TapdContext;
   submittedBy?: string;
   conversationId?: string;
   conversationHistory?: ConversationHistoryMessage[];

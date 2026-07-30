@@ -83,6 +83,7 @@ export function createJob(request: JobRequest): Job {
     status: "pending",
     prompt: request.prompt,
     pageContext: request.pageContext,
+    tapdContext: request.tapdContext,
     submittedBy: request.submittedBy,
     conversationId: request.conversationId,
     conversationHistory: buildConversationHistory(request),

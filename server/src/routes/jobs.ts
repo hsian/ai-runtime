@@ -24,6 +24,7 @@ import { confirmJobMerge, createJobMergeRequest, discardJobMerge, mergeCompleted
 import type { JobRequest } from "../types.js";
 import { resolvePlanSummary } from "../services/agent/planSummaryResolver.js";
 import { isNonActionablePlanInput } from "../services/agent/planInputGuard.js";
+import { buildPromptWithTapdContext } from "../services/tapd/tapdContext.js";
 
 function getRequestOwnerId(req: import("express").Request): string {
   const headerValue = req.get("x-ai-runtime-client-id");
@@ -112,7 +113,7 @@ async function runPlan(jobId: string): Promise<void> {
     const planStartedAt = new Date();
     const result = await runAgent(
       repoPath,
-      job.prompt,
+      buildPromptWithTapdContext(job.prompt, job.tapdContext),
       job.pageContext,
       (event) => {
         if (event.type === "agent_text" && event.delta) {
@@ -215,7 +216,7 @@ async function runQuestion(jobId: string): Promise<void> {
     );
     const result = await runAgent(
       repoPath,
-      job.prompt,
+      buildPromptWithTapdContext(job.prompt, job.tapdContext),
       job.pageContext,
       (event) => {
         if (event.type === "agent_text" && event.delta) {
