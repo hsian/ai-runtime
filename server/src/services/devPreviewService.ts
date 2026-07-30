@@ -60,11 +60,11 @@ async function readPackageName(packageJsonPath: string): Promise<string | undefi
   }
 }
 
-async function readDevPort(packageDir?: string): Promise<number | undefined> {
+async function readPreviewPort(packageDir?: string): Promise<number | undefined> {
   if (!packageDir) return undefined;
 
   try {
-    const envText = await readFile(join(packageDir, ".env.dev"), "utf8");
+    const envText = await readFile(join(packageDir, ".env.testing"), "utf8");
     const match = envText.match(/^\s*VITE_PORT\s*=\s*['"]?(\d+)['"]?/m);
     return match ? Number(match[1]) : undefined;
   } catch {
@@ -127,7 +127,7 @@ export async function resolveJobPreviewLink(input: {
   const target = await inferTargetFromChangedFiles(input.repoPath, input.changedFiles);
   if (!target) return undefined;
   const { filter } = target;
-  const port = await readDevPort(target.packageDir);
+  const port = await readPreviewPort(target.packageDir);
   if (!port) return undefined;
 
   const host = normalizePreviewHost(input.previewHost);

@@ -29,18 +29,6 @@ for (const htmlFile of ["app.html", "settings.html"]) {
   writeFileSync(htmlPath, fixed);
 }
 
-writeFileSync(
-  resolve(dist, "tapd-batch.html"),
-  `<!DOCTYPE html>
-<html lang="zh-CN">
-  <head>
-    <meta charset="UTF-8" />
-    <script>location.replace("./app.html#batch");</script>
-  </head>
-  <body></body>
-</html>`
-);
-
 const nestedSrc = resolve(dist, "src");
 if (existsSync(nestedSrc)) {
   rmSync(nestedSrc, { recursive: true, force: true });

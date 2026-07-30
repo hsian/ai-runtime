@@ -37,7 +37,7 @@ async function postJob(
         body: JSON.stringify({
           prompt: body.prompt,
           pageContext: body.pageContext,
-          tapdContext: body.tapdContext,
+          tapdContext: serializeTapdContext(body.tapdContext),
           submittedBy: body.submittedBy,
           conversationId: body.conversationId,
         }),
@@ -50,6 +50,16 @@ async function postJob(
   return data;
 }
 
+function serializeTapdContext(context: SubmitRequest["tapdContext"]): SubmitRequest["tapdContext"] {
+  if (!context) return undefined;
+  const {
+    sourceHtml: _sourceHtml,
+    excludedImageIndexes: _excludedImageIndexes,
+    ...transportContext
+  } = context;
+  return transportContext;
+}
+
 function buildSubmitFormData(body: SubmitRequest): FormData {
   const form = new FormData();
   form.append("prompt", body.prompt);
@@ -57,7 +67,7 @@ function buildSubmitFormData(body: SubmitRequest): FormData {
     form.append("pageContext", JSON.stringify(body.pageContext));
   }
   if (body.tapdContext) {
-    form.append("tapdContext", JSON.stringify(body.tapdContext));
+    form.append("tapdContext", JSON.stringify(serializeTapdContext(body.tapdContext)));
   }
   if (body.submittedBy) {
     form.append("submittedBy", body.submittedBy);
@@ -66,7 +76,7 @@ function buildSubmitFormData(body: SubmitRequest): FormData {
     form.append("conversationId", body.conversationId);
   }
   for (const [index, image] of (body.images ?? []).entries()) {
-    form.append("images", image, `screenshot-${index + 1}.webp`);
+    form.append("images", image, body.imageNames?.[index] ?? `screenshot-${index + 1}.webp`);
   }
   return form;
 }

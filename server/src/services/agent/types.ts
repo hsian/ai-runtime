@@ -38,13 +38,19 @@ function buildAttachmentSection(attachments?: JobAttachment[]): string {
   const lines = attachments
     .map((file, index) => {
       const n = index + 1;
-      return `- 图${n}（配图${n}）: ${file.path}`;
+      const tapdSourceIndex = Number.parseInt(
+        /^tapd-description-(\d+)/i.exec(file.name)?.[1] ?? "",
+        10
+      );
+      return Number.isFinite(tapdSourceIndex)
+        ? `- 附件图${n}（TAPD 原描述配图${tapdSourceIndex}）: ${file.path}`
+        : `- 附件图${n}（用户手动截图）: ${file.path}`;
     })
     .join("\n");
   return `
 【用户截图 / UI 原型】
-用户附带了 ${attachments.length} 张截图，编号与任务描述中的「图N」「配图N」「[配图N]」一致（如图2 = 图2 = 配图2）。
-描述里写「如图N」时，必须先 Read 下方对应编号的文件，再分析该段需求：
+本次附带了 ${attachments.length} 张图片。TAPD 图片必须按下方标注的“原描述配图N”与需求文字对应，不能按附件顺序自行重新编号。
+描述里提到图片时，必须先 Read 下方准确对应的文件，再分析该段需求：
 ${lines}
 
 看图规则（违反视为错误实现）：

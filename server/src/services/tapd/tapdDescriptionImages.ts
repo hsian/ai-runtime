@@ -226,7 +226,7 @@ export async function downloadImagesFromHtml(
       size: downloaded.buffer.length,
     });
 
-    if (images.length >= config.UPLOAD_MAX_COUNT) break;
+    if (images.length >= MAX_TAPD_DESCRIPTION_IMAGES) break;
   }
 
   return { images, expected: countImagesInHtml(html), failedUrls };

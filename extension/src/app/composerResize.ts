@@ -35,13 +35,29 @@ export function setupComposerResize(options: ComposerResizeOptions = {}): void {
     alignWithScrollContent();
   }
 
+  let preferredHeight = DEFAULT_HEIGHT;
+  let autoMinHeight = MIN_HEIGHT;
+
+  const renderHeight = (): void => {
+    footer.style.height = `${Math.max(clampFooterHeight(preferredHeight), autoMinHeight)}px`;
+  };
+
   const applyHeight = (height: number): void => {
-    footer.style.height = `${clampFooterHeight(height)}px`;
+    preferredHeight = clampFooterHeight(height);
+    renderHeight();
   };
 
   void chrome.storage.local.get([storageKey]).then((stored) => {
     const saved = stored[storageKey];
     applyHeight(typeof saved === "number" ? saved : DEFAULT_HEIGHT);
+  });
+
+  footer.addEventListener("composer-auto-min-height", (event) => {
+    const requested = (event as CustomEvent<number>).detail;
+    autoMinHeight = clampFooterHeight(
+      typeof requested === "number" ? requested : MIN_HEIGHT
+    );
+    renderHeight();
   });
 
   let startY = 0;
@@ -62,7 +78,7 @@ export function setupComposerResize(options: ComposerResizeOptions = {}): void {
       document.body.classList.remove("composer-resizing");
       document.removeEventListener("mousemove", onMove);
       document.removeEventListener("mouseup", onUp);
-      void chrome.storage.local.set({ [storageKey]: footer.offsetHeight });
+      void chrome.storage.local.set({ [storageKey]: preferredHeight });
     };
 
     document.addEventListener("mousemove", onMove);

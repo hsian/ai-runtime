@@ -1,6 +1,5 @@
 import "../shared/styles.css";
 import "../shared/shellView.css";
-import { initTapdBatchPanel } from "../tapd-batch/tapd-batch.js";
 import { loadConfig, saveConfig } from "../shared/config.js";
 import {
   fetchConversationContextStats,
@@ -62,6 +61,10 @@ import {
   fetchTapdWorkspaces,
   resolveTapdContext,
 } from "../shared/tapdApi.js";
+import {
+  prepareTapdJobImages,
+  type PrepareTapdImagesResult,
+} from "../shared/tapdJobImages.js";
 import { mountPlanConfirmCard } from "../shared/planConfirmCard.js";
 import { enhanceSelects, refreshCustomSelect } from "../shared/customSelect.js";
 import {
@@ -120,6 +123,13 @@ let activeConversationId = "";
 let activeTapdContext: TapdContext | null = null;
 let mentionTriggerIndex: number | null = null;
 let tapdContextLoading = false;
+let tapdImageCache:
+  | {
+      contextKey: string;
+      result: PrepareTapdImagesResult;
+      previewUrls: Map<number, string>;
+    }
+  | null = null;
 
 function startActionAlert(title: string): void {
   chrome.runtime
@@ -531,6 +541,22 @@ async function openCodingConversation(
 
   const config = await loadConfig();
   void refreshSubmitButtonContextTitle(config.serverUrl);
+  if (
+    config.serverUrl &&
+    activeTapdContext?.sourceHtml &&
+    (activeTapdContext.imageCount ?? 0) > 0
+  ) {
+    const contextBeingLoaded = activeTapdContext;
+    void prepareTapdContextImages(config.serverUrl, contextBeingLoaded).then(() => {
+      if (
+        activeConversationId === conversation.id &&
+        activeTapdContext &&
+        tapdContextKey(activeTapdContext) === tapdContextKey(contextBeingLoaded)
+      ) {
+        renderTapdContext();
+      }
+    });
+  }
   if (!config.serverUrl || conversation.jobIds.length === 0) {
     setConnectionStatus(conversation.jobIds.length === 0 ? "新会话" : "请先配置服务端地址");
     updateSubmitButton();
@@ -1362,11 +1388,28 @@ function linkifyText(text: string): string {
   });
 }
 
+function syncComposerAutoHeight(): void {
+  const footer = el<HTMLElement>("chatFooter");
+  const hasManualAttachments = pendingAttachments.length > 0;
+  const hasTapdImages =
+    el<HTMLElement>("tapdContextStrip").querySelector(".tapd-context-image") !== null;
+  const minimumHeight =
+    140 +
+    (hasManualAttachments ? 65 : 0) +
+    (hasTapdImages ? 90 : 0);
+  footer.dispatchEvent(
+    new CustomEvent<number>("composer-auto-min-height", {
+      detail: minimumHeight,
+    })
+  );
+}
+
 function renderAttachmentStrip(): void {
   const strip = el<HTMLElement>("attachmentStrip");
   if (pendingAttachments.length === 0) {
     strip.hidden = true;
     strip.innerHTML = "";
+    syncComposerAutoHeight();
     return;
   }
 
@@ -1389,6 +1432,7 @@ function renderAttachmentStrip(): void {
       if (id) removeAttachment(id);
     });
   });
+  syncComposerAutoHeight();
 }
 
 function removeAttachment(id: string): void {
@@ -1482,11 +1526,56 @@ function tapdItemTypeLabel(itemType: TapdContext["itemType"]): string {
   return "需求";
 }
 
+function tapdContextKey(context: TapdContext): string {
+  return `${context.workspaceId}:${context.itemType}:${context.itemId}:${context.fetchedAt}`;
+}
+
+function clearTapdImageCache(): void {
+  for (const previewUrl of tapdImageCache?.previewUrls.values() ?? []) {
+    URL.revokeObjectURL(previewUrl);
+  }
+  tapdImageCache = null;
+}
+
+async function prepareTapdContextImages(
+  serverUrl: string,
+  context: TapdContext,
+  forceRetry = false
+): Promise<PrepareTapdImagesResult> {
+  const contextKey = tapdContextKey(context);
+  if (
+    tapdImageCache?.contextKey === contextKey &&
+    (!forceRetry || !tapdImageCache.result.downloadFailed)
+  ) {
+    return tapdImageCache.result;
+  }
+
+  const result = await prepareTapdJobImages(
+    serverUrl,
+    context.sourceHtml,
+    context.workspaceId
+  );
+  clearTapdImageCache();
+  tapdImageCache = { contextKey, result, previewUrls: new Map() };
+  return result;
+}
+
+function tapdImagePreviewUrl(sourceIndex: number, blob: Blob): string {
+  const existing = tapdImageCache?.previewUrls.get(sourceIndex);
+  if (existing) return existing;
+  const previewUrl = URL.createObjectURL(blob);
+  tapdImageCache?.previewUrls.set(sourceIndex, previewUrl);
+  return previewUrl;
+}
+
 function renderTapdContext(): void {
   const strip = el<HTMLElement>("tapdContextStrip");
+  const footer = el<HTMLElement>("chatFooter");
   strip.replaceChildren();
   if (!activeTapdContext) {
     strip.hidden = true;
+    footer.classList.remove("has-tapd-context", "has-tapd-images");
+    syncComposerAutoHeight();
     return;
   }
 
@@ -1496,7 +1585,15 @@ function renderTapdContext(): void {
 
   const title = document.createElement("span");
   title.className = "tapd-context-chip-title";
-  title.textContent = `TAPD ${tapdItemTypeLabel(activeTapdContext.itemType)} · ${activeTapdContext.title}`;
+  const excludedIndexes = new Set(activeTapdContext.excludedImageIndexes ?? []);
+  const selectedImageCount = Math.max(
+    0,
+    (activeTapdContext.imageCount ?? 0) - excludedIndexes.size
+  );
+  const imageSummary = activeTapdContext.imageCount
+    ? ` · ${selectedImageCount}/${activeTapdContext.imageCount} 张配图`
+    : "";
+  title.textContent = `TAPD ${tapdItemTypeLabel(activeTapdContext.itemType)} · ${activeTapdContext.title}${imageSummary}`;
 
   const remove = document.createElement("button");
   remove.className = "tapd-context-chip-remove";
@@ -1507,6 +1604,7 @@ function renderTapdContext(): void {
   remove.addEventListener("click", () => {
     void (async () => {
       activeTapdContext = null;
+      clearTapdImageCache();
       await setCodingConversationTapdContext(activeConversationId);
       renderTapdContext();
       setConnectionStatus("已移除 TAPD 需求上下文");
@@ -1515,11 +1613,64 @@ function renderTapdContext(): void {
 
   chip.append(title, remove);
   strip.append(chip);
+
+  const cached =
+    tapdImageCache?.contextKey === tapdContextKey(activeTapdContext)
+      ? tapdImageCache.result
+      : null;
+  const visibleImages =
+    cached?.items.filter((item) => !excludedIndexes.has(item.sourceIndex)) ?? [];
+  footer.classList.add("has-tapd-context");
+  footer.classList.toggle("has-tapd-images", visibleImages.length > 0);
+  if (visibleImages.length > 0) {
+    const imageList = document.createElement("div");
+    imageList.className = "tapd-context-images";
+    for (const item of visibleImages) {
+      const imageItem = document.createElement("div");
+      imageItem.className = "tapd-context-image";
+
+      const image = document.createElement("img");
+      image.src = tapdImagePreviewUrl(item.sourceIndex, item.blob);
+      image.alt = `TAPD 配图${item.sourceIndex}`;
+      image.title = `TAPD 原描述配图${item.sourceIndex}`;
+
+      const badge = document.createElement("span");
+      badge.className = "tapd-context-image-label";
+      badge.textContent = `配图${item.sourceIndex}`;
+
+      const exclude = document.createElement("button");
+      exclude.className = "tapd-context-image-remove";
+      exclude.type = "button";
+      exclude.title = `排除配图${item.sourceIndex}`;
+      exclude.setAttribute("aria-label", `排除 TAPD 配图${item.sourceIndex}`);
+      exclude.textContent = "×";
+      exclude.addEventListener("click", () => {
+        void (async () => {
+          if (!activeTapdContext) return;
+          const excluded = new Set(activeTapdContext.excludedImageIndexes ?? []);
+          excluded.add(item.sourceIndex);
+          activeTapdContext = {
+            ...activeTapdContext,
+            excludedImageIndexes: [...excluded].sort((left, right) => left - right),
+          };
+          await setCodingConversationTapdContext(activeConversationId, activeTapdContext);
+          renderTapdContext();
+          setConnectionStatus(`已排除 TAPD 配图${item.sourceIndex}`);
+        })();
+      });
+
+      imageItem.append(image, badge, exclude);
+      imageList.append(imageItem);
+    }
+    strip.append(imageList);
+  }
   strip.hidden = false;
+  syncComposerAutoHeight();
 }
 
 function buildLegacyTapdTransportContext(
-  tapdContext: TapdContext | null
+  tapdContext: TapdContext | null,
+  attachedImageIndexes: number[] = []
 ): PageContext | undefined {
   if (!tapdContext || tapdContext.transportMode === "structured") {
     return undefined;
@@ -1536,6 +1687,15 @@ function buildLegacyTapdTransportContext(
     "",
     "【需求描述】",
     tapdContext.description || "（TAPD 需求未填写描述）",
+    tapdContext.imageCount
+      ? `\n【TAPD 配图】\n描述中共有 ${tapdContext.imageCount} 张配图。本次附件映射：${
+          attachedImageIndexes.length
+            ? attachedImageIndexes
+                .map((sourceIndex, attachmentIndex) => `附件图${attachmentIndex + 1}=原描述配图${sourceIndex}`)
+                .join("；")
+            : "没有附带 TAPD 配图"
+        }。遇到“如图N”“图N”或“配图N”时只能按该映射读取，未附带的图片不可臆测。`
+      : "",
   ]
     .filter((line) => line !== "")
     .join("\n");
@@ -1619,13 +1779,28 @@ async function attachTapdContextFromModal(): Promise<void> {
   hint.textContent = "正在远程获取 TAPD 条目描述…";
   try {
     const context = await resolveTapdContext(config.serverUrl, url);
+    let imageResult: PrepareTapdImagesResult | null = null;
+    if ((context.imageCount ?? 0) > 0 && context.sourceHtml) {
+      hint.textContent = `正在读取 TAPD 描述中的 ${context.imageCount} 张配图…`;
+      imageResult = await prepareTapdContextImages(config.serverUrl, context);
+    }
     await setCodingConversationTapdContext(targetConversationId, context);
     if (activeConversationId === targetConversationId) {
       activeTapdContext = context;
       renderTapdContext();
     }
     el<HTMLElement>("tapdContextModal").hidden = true;
-    setConnectionStatus(`已关联 TAPD：${context.title}`);
+    if (imageResult) {
+      const loaded = imageResult.images.length;
+      const expected = imageResult.expectedInHtml;
+      setConnectionStatus(
+        loaded > 0
+          ? `已关联 TAPD：${context.title}，已读取 ${loaded}/${expected} 张配图`
+          : `已关联 TAPD：${context.title}；配图暂未读取，发送时将重试`
+      );
+    } else {
+      setConnectionStatus(`已关联 TAPD：${context.title}`);
+    }
     el<HTMLTextAreaElement>("prompt").focus();
   } catch (err) {
     hint.textContent = err instanceof Error ? err.message : "获取 TAPD 条目失败";
@@ -2337,16 +2512,62 @@ async function handleSubmit(): Promise<void> {
     currentJobStatus = null;
     updateSubmitButton();
 
-    const { blobs: imageBlobs, previewUrls } = detachPendingAttachments();
-    const usesStructuredTapdContext = activeTapdContext?.transportMode === "structured";
+    const submissionTapdContext = activeTapdContext;
+    let tapdImageResult: PrepareTapdImagesResult | null = null;
+    if ((submissionTapdContext?.imageCount ?? 0) > 0 && submissionTapdContext?.sourceHtml) {
+      setConnectionStatus("正在准备 TAPD 描述配图…");
+      tapdImageResult = await prepareTapdContextImages(
+        config.serverUrl,
+        submissionTapdContext,
+        true
+      );
+    }
+    const excludedImageIndexes = new Set(
+      submissionTapdContext?.excludedImageIndexes ?? []
+    );
+    const selectedTapdImages =
+      tapdImageResult?.items.filter(
+        (item) => !excludedImageIndexes.has(item.sourceIndex)
+      ) ?? [];
+    if (selectedTapdImages.length + pendingAttachments.length > MAX_ATTACHMENTS) {
+      setConnectionStatus(
+        `当前选中的 TAPD 配图与手动截图合计不能超过 ${MAX_ATTACHMENTS} 张，请继续排除图片`
+      );
+      return;
+    }
+
+    const { blobs: manualImageBlobs, previewUrls: manualPreviewUrls } =
+      detachPendingAttachments();
+    const tapdImageBlobs = selectedTapdImages.map((item) => item.blob);
+    const tapdImageIndexes = selectedTapdImages.map((item) => item.sourceIndex);
+    const tapdPreviewUrls = selectedTapdImages.map((item) =>
+      URL.createObjectURL(item.blob)
+    );
+    const imageBlobs = [...tapdImageBlobs, ...manualImageBlobs];
+    const previewUrls = [...tapdPreviewUrls, ...manualPreviewUrls];
+    const imageNames = [
+      ...selectedTapdImages.map(
+        (item) => `tapd-description-${item.sourceIndex}.webp`
+      ),
+      ...manualImageBlobs.map((_blob, index) => `screenshot-${index + 1}.webp`),
+    ];
+    const usesStructuredTapdContext = submissionTapdContext?.transportMode === "structured";
+    const transportTapdContext = submissionTapdContext
+      ? {
+          ...submissionTapdContext,
+          attachedImageCount: tapdImageBlobs.length,
+          attachedImageIndexes: tapdImageIndexes,
+        }
+      : null;
     const body: SubmitRequest = {
       prompt,
       pageContext: usesStructuredTapdContext
         ? undefined
-        : buildLegacyTapdTransportContext(activeTapdContext),
-      tapdContext: usesStructuredTapdContext ? activeTapdContext ?? undefined : undefined,
+        : buildLegacyTapdTransportContext(transportTapdContext, tapdImageIndexes),
+      tapdContext: usesStructuredTapdContext ? transportTapdContext ?? undefined : undefined,
       conversationId: activeConversationId,
       images: imageBlobs.length > 0 ? imageBlobs : undefined,
+      imageNames: imageNames.length > 0 ? imageNames : undefined,
     };
     const effectivePlan = usePlanMode;
 
@@ -2377,11 +2598,11 @@ async function handleSubmit(): Promise<void> {
         ? await submitPlan(config.serverUrl, body)
         : await submitQuestion(config.serverUrl, body);
     } catch (submitErr) {
-      for (const [index, blob] of imageBlobs.entries()) {
+      for (const [index, blob] of manualImageBlobs.entries()) {
         pendingAttachments.push({
           id: `att-restore-${Date.now()}-${index}`,
           blob,
-          previewUrl: previewUrls[index],
+          previewUrl: manualPreviewUrls[index],
           label: formatBytes(blob.size),
         });
       }
@@ -2404,44 +2625,19 @@ async function handleSubmit(): Promise<void> {
     resetPlanOutputBuffer(data.jobId);
 
     connectJobStream(config.serverUrl, data.jobId, data.status as JobStatusType);
-    setConnectionStatus(effectivePlan ? "Plan 分析中…" : data.message || "正在只读分析项目");
+    const imageWarning =
+      tapdImageResult &&
+      tapdImageResult.expectedInHtml > tapdImageResult.items.length
+        ? `（TAPD 配图仅读取 ${tapdImageResult.items.length}/${tapdImageResult.expectedInHtml} 张）`
+        : "";
+    setConnectionStatus(
+      `${effectivePlan ? "Plan 分析中…" : data.message || "正在只读分析项目"}${imageWarning}`
+    );
   } catch (err) {
     setConnectionStatus(formatErrorMessage(config.serverUrl, err));
   } finally {
     submitInFlight = false;
     updateSubmitButton();
-  }
-}
-
-let batchPanelReady = false;
-
-function switchAppView(view: "coding" | "batch"): void {
-  const codingView = el<HTMLElement>("codingView");
-  const batchPanel = el<HTMLElement>("tapdBatchPanel");
-  const codingModeTab = el<HTMLButtonElement>("codingModeTab");
-  const tapdBatchBtn = el<HTMLButtonElement>("tapdBatchBtn");
-  const batchCodingModeTab = el<HTMLButtonElement>("backToCodingBtn");
-  const batchTapdModeTab = el<HTMLButtonElement>("batchTapdModeTab");
-  const isBatch = view === "batch";
-
-  codingView.hidden = isBatch;
-  batchPanel.hidden = !isBatch;
-  codingModeTab.classList.toggle("mode-tab-active", !isBatch);
-  tapdBatchBtn.classList.toggle("mode-tab-active", isBatch);
-  batchCodingModeTab.classList.toggle("mode-tab-active", !isBatch);
-  batchTapdModeTab.classList.toggle("mode-tab-active", isBatch);
-  codingModeTab.setAttribute("aria-selected", String(!isBatch));
-  tapdBatchBtn.setAttribute("aria-selected", String(isBatch));
-  batchCodingModeTab.setAttribute("aria-selected", String(!isBatch));
-  batchTapdModeTab.setAttribute("aria-selected", String(isBatch));
-  codingModeTab.disabled = !isBatch;
-  tapdBatchBtn.disabled = isBatch;
-  batchCodingModeTab.disabled = !isBatch;
-  batchTapdModeTab.disabled = isBatch;
-
-  if (isBatch && !batchPanelReady) {
-    initTapdBatchPanel(batchPanel, { onBack: () => switchAppView("coding") });
-    batchPanelReady = true;
   }
 }
 
@@ -2459,7 +2655,6 @@ async function openSettingsModal(): Promise<void> {
   el<HTMLInputElement>("settingsServerUrl").value = config.serverUrl;
   el<HTMLInputElement>("settingsCreateMergeRequestOnMerge").checked =
     config.createMergeRequestOnMerge;
-  el<HTMLInputElement>("settingsTapdBatchSilentMode").checked = config.tapdBatchSilentMode;
   result.classList.add("hidden");
   resultText.textContent = "";
   modal.hidden = false;
@@ -2469,7 +2664,6 @@ async function openSettingsModal(): Promise<void> {
 async function saveSettingsFromModal(): Promise<void> {
   const serverUrl = el<HTMLInputElement>("settingsServerUrl").value.trim();
   const createMergeRequest = el<HTMLInputElement>("settingsCreateMergeRequestOnMerge").checked;
-  const tapdBatchSilentMode = el<HTMLInputElement>("settingsTapdBatchSilentMode").checked;
   const result = el<HTMLElement>("settingsSaveResult");
   const resultText = el<HTMLElement>("settingsSaveResultText");
 
@@ -2484,7 +2678,6 @@ async function saveSettingsFromModal(): Promise<void> {
   await saveConfig({
     serverUrl,
     createMergeRequestOnMerge: createMergeRequest,
-    tapdBatchSilentMode,
   });
   createMergeRequestOnMerge = createMergeRequest;
   resultText.textContent = "已保存";
@@ -2494,9 +2687,6 @@ async function saveSettingsFromModal(): Promise<void> {
 
 function setupSettingsModal(): void {
   el<HTMLElement>("settingsBtn").addEventListener("click", () => {
-    void openSettingsModal();
-  });
-  el<HTMLElement>("batchSettingsBtn").addEventListener("click", () => {
     void openSettingsModal();
   });
   el<HTMLElement>("settingsBackdrop").addEventListener("click", closeSettingsModal);
@@ -2520,10 +2710,6 @@ async function init(): Promise<void> {
   activeConversationId = (await getActiveCodingConversation()).id;
 
   setupSettingsModal();
-  switchAppView("coding");
-  el<HTMLButtonElement>("tapdBatchBtn").addEventListener("click", () => {
-    switchAppView("batch");
-  });
   initCodingTaskPicker({
     onSelectConversation: openCodingConversation,
     onConversationDeleted: openCodingConversation,
@@ -2573,10 +2759,6 @@ async function init(): Promise<void> {
   }
 
   await openCodingConversation(activeConversationId);
-
-  if (location.hash === "#batch") {
-    switchAppView("batch");
-  }
 }
 
 init();

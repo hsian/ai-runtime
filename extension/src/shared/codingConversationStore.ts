@@ -33,6 +33,13 @@ function normalizeConversation(raw: unknown): CodingConversation | null {
               (value.tapdContext as TapdContext).transportMode === "structured"
                 ? "structured"
                 : "legacy",
+            excludedImageIndexes: Array.isArray(
+              (value.tapdContext as TapdContext).excludedImageIndexes
+            )
+              ? (value.tapdContext as TapdContext).excludedImageIndexes?.filter(
+                  (item): item is number => Number.isInteger(item) && item > 0
+                )
+              : undefined,
           }
         : undefined,
     createdAt: typeof value.createdAt === "string" ? value.createdAt : now,

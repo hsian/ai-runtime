@@ -17,6 +17,16 @@ export interface TapdContext {
   url: string;
   title: string;
   description: string;
+  /** 仅保存在扩展端，用于提取描述配图；提交任务时会移除 */
+  sourceHtml?: string;
+  /** 描述中按 HTML 顺序出现的图片数量 */
+  imageCount?: number;
+  /** 用户在当前会话中手动排除的原始配图编号 */
+  excludedImageIndexes?: number[];
+  /** 当前任务实际随请求上传的 TAPD 配图数量 */
+  attachedImageCount?: number;
+  /** 当前任务实际随请求上传的原始配图编号 */
+  attachedImageIndexes?: number[];
   status?: string;
   owner?: string;
   fetchedAt: string;
@@ -30,6 +40,7 @@ export interface SubmitRequest {
   submittedBy?: string;
   conversationId?: string;
   images?: Blob[];
+  imageNames?: string[];
 }
 
 export interface SubmitResponse {
@@ -138,7 +149,6 @@ export interface JobEvent {
 export interface StorageConfig {
   serverUrl: string;
   createMergeRequestOnMerge: boolean;
-  tapdBatchSilentMode: boolean;
 }
 
 export interface CodingTask {
@@ -187,53 +197,4 @@ export interface TapdTaskItem {
   story_id?: string;
   iteration_id?: string;
   imageCount?: number;
-}
-
-export type TapdBatchSessionStatus =
-  | "idle"
-  | "running"
-  | "waiting_confirm"
-  | "waiting_merge"
-  | "waiting_input"
-  | "paused"
-  | "completed"
-  | "cancelled";
-
-export type TapdBatchTaskStatus =
-  | "pending"
-  | "running"
-  | "completed"
-  | "failed"
-  | "skipped";
-
-export interface TapdBatchTask {
-  id: string;
-  tapdTaskId: string;
-  title: string;
-  prompt: string;
-  sourceHtml?: string;
-  imageCount?: number;
-  order: number;
-  status: TapdBatchTaskStatus;
-  jobId?: string;
-  error?: string;
-  failedPhase?: string;
-  completedAt?: string;
-}
-
-export interface TapdBatchSession {
-  id: string;
-  workspaceId: string;
-  iterationId: string;
-  iterationName: string;
-  status: TapdBatchSessionStatus;
-  tasks: TapdBatchTask[];
-  currentTaskId?: string;
-  activeJobId?: string;
-  planSummary?: string;
-  previewUrl?: string;
-  previewMessage?: string;
-  pauseReason?: string;
-  createdAt: string;
-  updatedAt: string;
 }

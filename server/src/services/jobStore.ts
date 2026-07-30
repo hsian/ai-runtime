@@ -13,14 +13,13 @@ export interface ConversationContextStats {
 }
 
 function buildConversationHistory(request: JobRequest): ConversationHistoryMessage[] | undefined {
-  if (!request.conversationId || request.submittedBy === "tapd-batch") return undefined;
+  if (!request.conversationId) return undefined;
 
   const related = Array.from(jobs.values())
     .filter(
       (job) =>
         job.ownerId === (request.ownerId ?? "anonymous") &&
         job.conversationId === request.conversationId &&
-        job.submittedBy !== "tapd-batch" &&
         ["completed", "awaiting_confirm", "awaiting_input", "awaiting_merge"].includes(
           job.status
         )

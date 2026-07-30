@@ -1,40 +1,6 @@
 import { isActionAlertNotification, startActionAlert, stopActionAlert } from "../shared/actionAlert.js";
-import { handleTapdBatchCommand, initTapdBatchControllerFromStorage } from "../shared/tapdBatchController.js";
-import { TAPD_BATCH_STATE } from "../shared/tapdBatchMessages.js";
-import type { TapdBatchCommand } from "../shared/tapdBatchMessages.js";
 
 let lastBrowserTabId: number | null = null;
-
-function handleTapdBatchStateAlert(session: unknown): void {
-  const status = typeof session === "object" && session !== null && "status" in session
-    ? String((session as { status?: unknown }).status)
-    : "";
-
-  if (status === "waiting_confirm") {
-    startActionAlert({
-      title: "TAPD 批量任务：Plan 已生成，等待执行修改",
-    });
-    return;
-  }
-
-  if (status === "waiting_input") {
-    startActionAlert({
-      title: "TAPD 批量任务：Plan 需要补充信息",
-    });
-    return;
-  }
-
-  if (status === "waiting_merge") {
-    startActionAlert({
-      title: "TAPD 批量任务：修改完成，等待合并确认",
-    });
-    return;
-  }
-
-  if (["running", "completed", "cancelled", "paused", "idle"].includes(status)) {
-    stopActionAlert();
-  }
-}
 
 function isBrowserTab(tab: chrome.tabs.Tab): boolean {
   const url = tab.url ?? "";
@@ -163,8 +129,6 @@ chrome.runtime.onInstalled.addListener(() => {
   console.log("[AI Runtime] Extension installed");
 });
 
-void initTapdBatchControllerFromStorage();
-
 chrome.action.onClicked.addListener(() => {
   stopActionAlert();
   void openAppWindow();
@@ -188,16 +152,6 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     stopActionAlert();
     sendResponse({ ok: true });
     return false;
-  }
-
-  if (message?.type === TAPD_BATCH_STATE) {
-    handleTapdBatchStateAlert(message.session);
-    return false;
-  }
-
-  if (message?.type?.startsWith("TAPD_BATCH_")) {
-    void handleTapdBatchCommand(message as TapdBatchCommand).then(sendResponse);
-    return true;
   }
 
 });

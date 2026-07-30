@@ -1,4 +1,5 @@
 import { normalizeServerUrl } from "./config.js";
+import { prepareTapdJobImages } from "./tapdJobImages.js";
 import type {
   TapdContext,
   TapdItemType,
@@ -129,6 +130,8 @@ export async function resolveTapdContext(serverUrl: string, url: string): Promis
     url,
     title: title || `${parsed.itemType} ${item.id}`,
     description: htmlToPlainPromptText(item.description ?? ""),
+    sourceHtml: item.description ?? "",
+    imageCount: item.description?.match(/<img\b/gi)?.length ?? 0,
     status: item.status,
     owner,
     fetchedAt: new Date().toISOString(),
@@ -326,7 +329,6 @@ export async function fetchTapdDescriptionImages(
   html: string,
   workspaceId?: string
 ): Promise<Blob[]> {
-  const { prepareTapdJobImages } = await import("./tapdJobImages.js");
   const result = await prepareTapdJobImages(serverUrl, html, workspaceId);
   return result.images;
 }

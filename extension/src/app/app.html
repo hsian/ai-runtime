@@ -9,15 +9,6 @@
     <div id="codingView" class="shell-view">
       <div class="chat-shell runtime-layout" id="chatShell">
         <aside class="runtime-sidebar task-drawer" id="taskDrawer" aria-label="任务">
-          <div class="sidebar-mode-switch mode-tabs" role="tablist" aria-label="工作模式">
-            <button id="codingModeTab" class="mode-tab mode-tab-active" type="button" role="tab" aria-selected="true">
-              默认模式
-            </button>
-            <button id="tapdBatchBtn" class="mode-tab" type="button" role="tab" aria-selected="false">
-              TAPD任务
-            </button>
-          </div>
-
           <div class="task-drawer-header">
             <h2 class="task-drawer-title">任务</h2>
             <button
@@ -80,123 +71,6 @@
       </div>
     </div>
 
-    <div id="tapdBatchPanel" class="shell-view" hidden>
-      <div class="batch-app runtime-layout">
-        <aside class="runtime-sidebar batch-sidebar">
-          <div class="sidebar-mode-switch mode-tabs" role="tablist" aria-label="工作模式">
-              <button id="backToCodingBtn" class="mode-tab" type="button" role="tab" aria-selected="false">
-                默认模式
-              </button>
-              <button id="batchTapdModeTab" class="mode-tab mode-tab-active" type="button" role="tab" aria-selected="true">
-                TAPD任务
-              </button>
-          </div>
-
-          <section class="batch-toolbar">
-            <label class="batch-field batch-workspace-field">
-              <span class="sr-only">项目</span>
-              <select id="workspaceSelect">
-                <option value="">选择项目</option>
-              </select>
-            </label>
-            <label class="batch-field">
-              <span class="sr-only">迭代</span>
-              <select id="iterationSelect">
-                <option value="">选择迭代</option>
-              </select>
-            </label>
-          </section>
-
-          <section class="batch-task-panel">
-            <div class="batch-list-heading">
-              <div class="batch-kind-tabs" role="tablist" aria-label="TAPD条目类型">
-                <button id="loadTasksBtn" class="batch-kind-tab is-active" type="button" role="tab" aria-selected="true">AI任务</button>
-                <span aria-hidden="true">|</span>
-                <button id="loadBugsBtn" class="batch-kind-tab" type="button" role="tab" aria-selected="false">AI BUG</button>
-              </div>
-              <button id="clearSelectionBtn" class="batch-clear-selection" type="button">清空</button>
-            </div>
-            <p class="sr-only" id="taskSelectionSummary">未选择任务</p>
-            <div id="taskPickerList" class="batch-task-list">
-              <p class="batch-empty">请先选择项目和迭代</p>
-            </div>
-          </section>
-
-          <section class="batch-queue-panel" id="queueSection" hidden>
-            <div class="batch-list-heading">
-              <h2>执行队列</h2>
-              <span class="batch-queue-count" id="batchFooterSummary">已选 0 个</span>
-            </div>
-            <div id="queueList" class="batch-queue-list"></div>
-          </section>
-
-          <button id="batchSettingsBtn" class="sidebar-settings-btn" type="button">
-            <span aria-hidden="true">⚙</span>
-            <span>设置</span>
-          </button>
-          <div class="runtime-sidebar-resizer" title="拖动调整侧栏宽度" aria-hidden="true"></div>
-        </aside>
-
-        <div class="runtime-content batch-content">
-          <header class="batch-header">
-            <div class="batch-header-main">
-              <p class="batch-current-title" id="batchCurrentTaskTitle">选择任务后可在下方编辑描述</p>
-              <p class="batch-status" id="batchStatus">就绪</p>
-            </div>
-            <div class="batch-header-actions">
-              <button id="batchRefreshBtn" class="icon-btn" type="button" title="刷新">⟳</button>
-            </div>
-          </header>
-
-          <main class="batch-conversation">
-            <section class="batch-progress-section" id="progressSection" hidden>
-              <div id="jobProgressLog" class="batch-progress-log chat-messages"></div>
-            </section>
-            <section class="batch-side-empty" id="batchSideEmpty">
-              <p>选择左侧任务或 BUG，在下方编辑描述后开始执行。</p>
-            </section>
-          </main>
-
-          <footer class="batch-footer runtime-composer-footer" id="batchFooter">
-            <div
-              class="footer-resizer runtime-composer-spacer"
-              id="batchFooterResizer"
-              title="拖动调整输入区高度"
-            ></div>
-            <div class="batch-composer runtime-composer-shell">
-              <div class="runtime-composer-form">
-                <div class="runtime-composer-input">
-                  <textarea
-                    class="runtime-composer-textarea"
-                    id="batchPromptEditor"
-                    rows="4"
-                    placeholder="编辑当前任务的执行描述"
-                    disabled
-                  ></textarea>
-                </div>
-                <button id="batchRestorePromptBtn" class="batch-restore-prompt" type="button" hidden>
-                  恢复原始描述
-                </button>
-                <button id="batchPrimaryActionBtn" class="batch-send-action runtime-composer-action" type="button" disabled>请选择任务</button>
-              </div>
-            </div>
-          </footer>
-        </div>
-      </div>
-    </div>
-
-    <div id="tapdResetConfirmModal" class="page-confirm-modal" hidden>
-      <div class="page-confirm-backdrop" id="tapdResetConfirmBackdrop"></div>
-      <div class="page-confirm-dialog" role="dialog" aria-labelledby="tapdResetConfirmHeading">
-        <h2 id="tapdResetConfirmHeading" class="page-confirm-heading">确认刷新</h2>
-        <p class="page-confirm-lead">将终止进行中的任务并清空当前页面状态，回到初始界面。</p>
-        <div class="page-confirm-actions">
-          <button id="tapdResetConfirmCancel" class="secondary" type="button">取消</button>
-          <button id="tapdResetConfirmOk" class="primary" type="button">确认刷新</button>
-        </div>
-      </div>
-    </div>
-
     <div id="tapdContextModal" class="page-confirm-modal" hidden>
       <div class="page-confirm-backdrop" id="tapdContextBackdrop"></div>
       <div class="page-confirm-dialog" role="dialog" aria-label="关联 TAPD 条目">
@@ -245,16 +119,6 @@
             </p>
           </div>
 
-          <div class="settings-group">
-            <h2>TAPD 批量执行</h2>
-            <label class="checkbox" for="settingsTapdBatchSilentMode">
-              <input type="checkbox" id="settingsTapdBatchSilentMode" />
-              <span>TAPD 批量任务静默模式</span>
-            </label>
-            <p class="settings-note">
-              默认关闭。开启后仅 TAPD 批量任务会在 Plan 生成后自动执行修改，并自动合并到 test 或提交 Merge Request，然后继续下一个任务。
-            </p>
-          </div>
         </section>
 
         <section class="result hidden settings-result" id="settingsSaveResult">

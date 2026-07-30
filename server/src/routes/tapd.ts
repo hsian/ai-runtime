@@ -211,6 +211,7 @@ tapdRouter.post("/context/resolve", async (req, res) => {
       res.status(404).json({ error: "TAPD 条目不存在或当前应用无权访问" });
       return;
     }
+    const sourceHtml = item.description ?? "";
     const title = "title" in item ? item.title ?? item.name : item.name;
     const owner = "current_owner" in item ? item.current_owner ?? item.owner : item.owner;
     res.json({
@@ -221,7 +222,9 @@ tapdRouter.post("/context/resolve", async (req, res) => {
         storyId: parsed.itemType === "story" ? item.id : undefined,
         url,
         title: title || `${parsed.itemType} ${item.id}`,
-        description: tapdHtmlToPlainText(item.description ?? ""),
+        description: tapdHtmlToPlainText(sourceHtml),
+        sourceHtml: sourceHtml.slice(0, 500_000),
+        imageCount: countImagesInHtml(sourceHtml),
         status: item.status,
         owner,
         fetchedAt: new Date().toISOString(),

@@ -1,12 +1,19 @@
-import { compressImageForUpload, HARD_MAX_BYTES, MAX_ATTACHMENTS } from "./imageCompress.js";
+import { compressImageForUpload, HARD_MAX_BYTES } from "./imageCompress.js";
 import { normalizeServerUrl } from "./config.js";
 
 const SERVER_IMAGE_FETCH_TIMEOUT_MS = 15000;
 const BROWSER_IMAGE_FETCH_TIMEOUT_MS = 10000;
+const MAX_TAPD_PREVIEW_IMAGES = 8;
 
 interface SerializedTapdImage {
   dataUrl: string;
   mime?: string;
+  name?: string;
+}
+
+export interface PreparedTapdImage {
+  sourceIndex: number;
+  blob: Blob;
 }
 
 function dataUrlToBlob(dataUrl: string, typeHint?: string): Blob | null {
@@ -52,7 +59,7 @@ async function fetchTapdDescriptionImagesFromServer(
   serverUrl: string,
   html: string,
   workspaceId?: string
-): Promise<Blob[]> {
+): Promise<PreparedTapdImage[]> {
   const controller = new AbortController();
   const timeout = globalThis.setTimeout(() => controller.abort(), SERVER_IMAGE_FETCH_TIMEOUT_MS);
   try {
@@ -71,12 +78,17 @@ async function fetchTapdDescriptionImagesFromServer(
       throw new Error(data.error ?? data.warning ?? `下载配图失败: ${res.status}`);
     }
 
-    const blobs: Blob[] = [];
-    for (const item of data.images ?? []) {
+    const indexedBlobs = new Map<number, Blob>();
+    for (const [responseIndex, item] of (data.images ?? []).entries()) {
       const blob = dataUrlToBlob(item.dataUrl, item.mime);
-      if (blob) blobs.push(blob);
+      if (!blob) continue;
+      const sourceIndex = Number.parseInt(/tapd-(\d+)/i.exec(item.name ?? "")?.[1] ?? "", 10);
+      indexedBlobs.set(Number.isFinite(sourceIndex) ? sourceIndex : responseIndex + 1, blob);
     }
-    return blobs;
+
+    return [...indexedBlobs.entries()]
+      .sort(([left], [right]) => left - right)
+      .map(([sourceIndex, blob]) => ({ sourceIndex, blob }));
   } finally {
     globalThis.clearTimeout(timeout);
   }
@@ -169,18 +181,18 @@ async function fetchSingleTapdImageUrl(url: string): Promise<Blob | null> {
 }
 
 /** 浏览器侧回退：用 tapd.cn 登录 Cookie 直接拉描述里的图片 URL */
-async function fetchTapdImagesViaBrowser(html: string): Promise<Blob[]> {
+async function fetchTapdImagesViaBrowser(html: string): Promise<PreparedTapdImage[]> {
   const urls = extractImageUrlsFromHtml(html);
-  const blobs: Blob[] = [];
+  const images: PreparedTapdImage[] = [];
 
-  for (const url of urls) {
-    if (blobs.length >= MAX_ATTACHMENTS) break;
+  for (const [index, url] of urls.entries()) {
+    if (images.length >= MAX_TAPD_PREVIEW_IMAGES) break;
     if (!/tapd\.(cn|com)/i.test(url)) continue;
     const blob = await fetchSingleTapdImageUrl(url);
-    if (blob) blobs.push(blob);
+    if (blob) images.push({ sourceIndex: index + 1, blob });
   }
 
-  return blobs;
+  return images;
 }
 
 export const TAPD_IMAGE_PROMPT_SUFFIX = `
@@ -198,6 +210,7 @@ export function appendTapdImageInstructions(prompt: string, imageCount: number):
 
 export interface PrepareTapdImagesResult {
   images: Blob[];
+  items: PreparedTapdImage[];
   expectedInHtml: number;
   downloadFailed: boolean;
 }
@@ -209,39 +222,49 @@ export async function prepareTapdJobImages(
 ): Promise<PrepareTapdImagesResult> {
   const expectedInHtml = countImagesInHtml(sourceHtml ?? "");
   if (!sourceHtml?.trim() || expectedInHtml === 0) {
-    return { images: [], expectedInHtml: 0, downloadFailed: false };
+    return { images: [], items: [], expectedInHtml: 0, downloadFailed: false };
   }
 
-  let raw: Blob[] = [];
+  let raw: PreparedTapdImage[] = [];
   try {
     // 优先走服务端 TAPD API（附件权限即可换临时下载链，不依赖浏览器 Cookie）
     raw = await fetchTapdDescriptionImagesFromServer(serverUrl, sourceHtml, workspaceId);
-    if (raw.length === 0) {
-      raw = await fetchTapdImagesViaBrowser(sourceHtml);
+    if (raw.length < Math.min(expectedInHtml, MAX_TAPD_PREVIEW_IMAGES)) {
+      const browserImages = await fetchTapdImagesViaBrowser(sourceHtml);
+      if (browserImages.length > raw.length) raw = browserImages;
     }
   } catch {
     try {
       raw = await fetchTapdImagesViaBrowser(sourceHtml);
     } catch {
-      return { images: [], expectedInHtml, downloadFailed: true };
+      return { images: [], items: [], expectedInHtml, downloadFailed: true };
     }
   }
 
-  const images: Blob[] = [];
-  for (const blob of raw) {
-    if (images.length >= MAX_ATTACHMENTS) break;
+  const items: PreparedTapdImage[] = [];
+  for (const item of raw) {
+    if (items.length >= MAX_TAPD_PREVIEW_IMAGES) break;
     try {
-      images.push(await compressImageForUpload(blob));
+      items.push({
+        sourceIndex: item.sourceIndex,
+        blob: await compressImageForUpload(item.blob),
+      });
     } catch {
-      if (blob.size > 0 && blob.size <= HARD_MAX_BYTES) {
-        images.push(blob.type.startsWith("image/") ? blob : new Blob([blob], { type: "image/png" }));
+      if (item.blob.size > 0 && item.blob.size <= HARD_MAX_BYTES) {
+        items.push({
+          sourceIndex: item.sourceIndex,
+          blob: item.blob.type.startsWith("image/")
+            ? item.blob
+            : new Blob([item.blob], { type: "image/png" }),
+        });
       }
     }
   }
 
   return {
-    images,
+    images: items.map((item) => item.blob),
+    items,
     expectedInHtml,
-    downloadFailed: images.length === 0,
+    downloadFailed: items.length < Math.min(expectedInHtml, MAX_TAPD_PREVIEW_IMAGES),
   };
 }

@@ -24,6 +24,9 @@ export interface TapdContext {
   url: string;
   title: string;
   description: string;
+  imageCount?: number;
+  attachedImageCount?: number;
+  attachedImageIndexes?: number[];
   status?: string;
   owner?: string;
   fetchedAt: string;
