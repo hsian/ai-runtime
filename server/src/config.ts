@@ -37,10 +37,6 @@ const envSchema = z.object({
     .string()
     .transform((v) => v === "true")
     .default("true"),
-  AUTO_MERGE_TO_DEFAULT_BRANCH: z
-    .string()
-    .transform((v) => v === "true")
-    .default("true"),
   PREVIEW_DEV_ENABLED: z
     .string()
     .transform((v) => v === "true")

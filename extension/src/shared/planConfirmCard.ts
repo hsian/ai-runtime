@@ -128,7 +128,7 @@ export function mountPlanConfirmCard(
       <div class="hint" style="margin-top:8px;">${
         needsInput
           ? "当前 Plan 信息不足，取消后请重新提交完整需求"
-          : "执行时会使用上方当前方案文本；执行完成后还需确认合并到 test"
+          : "执行时会使用上方当前方案文本；修改完成后将自动合并到 test，并提供预览地址"
       }</div>
     </div>
   `;
@@ -178,6 +178,7 @@ export interface MergeConfirmCardHandlers {
   createMergeRequestOnMerge?: boolean;
   previewUrl?: string;
   previewMessage?: string;
+  mergeRetryable?: boolean;
 }
 
 export function mountMergeConfirmCard(
@@ -187,14 +188,19 @@ export function mountMergeConfirmCard(
   handlers: MergeConfirmCardHandlers
 ): void {
   const interactive = status === "awaiting_merge";
-  const useMergeRequest = handlers.createMergeRequestOnMerge === true;
-  const actionTitle = useMergeRequest
-    ? "修改已完成：是否提交 Merge Request？"
-    : "修改已完成：是否合并到 test 并提交？";
-  const actionLabel = useMergeRequest ? "提交 Merge Request" : "合并到 test";
-  const hint = useMergeRequest
-    ? "提交后会推送 feature 分支并创建 Merge Request，test 代码不做直接改动"
-    : "放弃后将切回 test 分支，test 代码不做任何改动";
+  const retryable = handlers.mergeRetryable === true;
+  const useMergeRequest = !retryable && handlers.createMergeRequestOnMerge === true;
+  const actionTitle = retryable
+    ? "Git 仓库暂时无法访问，代码修改和任务分支已保留"
+    : useMergeRequest
+      ? "修改已完成：是否提交 Merge Request？"
+      : "修改已完成：是否合并到 test 并提交？";
+  const actionLabel = retryable ? "重试合并到 test" : useMergeRequest ? "提交 Merge Request" : "合并到 test";
+  const hint = retryable
+    ? "重试只会重新执行 Git 合并和推送，不会重新运行 AI 修改代码"
+    : useMergeRequest
+      ? "提交后会推送 feature 分支并创建 Merge Request，test 代码不做直接改动"
+      : "放弃后将切回 test 分支，test 代码不做任何改动";
   const previewHtml = handlers.previewUrl
     ? `<div class="hint" style="margin-top:8px;">预览地址：<a href="${escapeHtml(handlers.previewUrl)}" target="_blank" rel="noreferrer">${escapeHtml(handlers.previewUrl)}</a></div>`
     : handlers.previewMessage
@@ -217,7 +223,7 @@ export function mountMergeConfirmCard(
   }
 
   node.innerHTML = `
-    <div class="msg-meta">等待确认合并</div>
+    <div class="msg-meta">${retryable ? "等待重试合并" : "等待确认合并"}</div>
     <div class="queue-card queue-card--waiting queue-card--confirm">
       <div class="queue-title">${actionTitle}</div>
       <div class="confirm-actions">

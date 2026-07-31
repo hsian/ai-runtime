@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "node --import tsx --watch src/index.ts",
     "build": "tsc",
+    "verify:git-integration": "npm run build && node scripts/verify-integration-worktree.mjs",
     "start": "node dist/index.js",
     "stop": "node scripts/stop.mjs"
   },

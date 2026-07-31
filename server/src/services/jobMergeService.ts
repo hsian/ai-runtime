@@ -1,7 +1,8 @@
 import { config } from "../config.js";
 import { getJob, updateJob } from "./jobStore.js";
-import { GitMergeConflictError, gitService } from "./gitService.js";
+import { GitMergeConflictError, GitRemoteUnavailableError, gitService } from "./gitService.js";
 import { appendJobEvent } from "./jobEvents.js";
+import { createJobConflictResolver } from "./gitConflictResolutionService.js";
 import type { ReleaseMergeRecord } from "../types.js";
 
 export async function confirmJobMerge(jobId: string): Promise<void> {
@@ -24,7 +25,11 @@ export async function confirmJobMerge(jobId: string): Promise<void> {
 
   try {
     const mergeMessage = `merge(plugin): ${job.prompt}\n\nJob: ${jobId}`;
-    const mergeSha = await gitService.mergeIntoDefaultBranch(job.branch, mergeMessage);
+    const mergeSha = await gitService.mergeIntoDefaultBranch(
+      job.branch,
+      mergeMessage,
+      createJobConflictResolver(jobId)
+    );
     const doneMessage = `${job.message ?? "修改已完成"}\n\n已合并到 ${defaultBranch}`;
 
     updateJob(jobId, {
@@ -37,6 +42,8 @@ export async function confirmJobMerge(jobId: string): Promise<void> {
       mergedToDefaultBranch: defaultBranch,
       mergedToDefaultAt: new Date().toISOString(),
       worktreePath: undefined,
+      error: undefined,
+      mergeRetryable: false,
     });
     appendJobEvent(jobId, {
       type: "done",
@@ -46,6 +53,29 @@ export async function confirmJobMerge(jobId: string): Promise<void> {
       commitSha: mergeSha,
     });
   } catch (err) {
+    if (err instanceof GitRemoteUnavailableError) {
+      const retryMessage = `${err.message}。代码修改和任务分支已保留，请在仓库恢复后重试合并到 ${defaultBranch}`;
+      updateJob(jobId, {
+        status: "awaiting_merge",
+        error: err.message,
+        message: retryMessage,
+        worktreePath: job.worktreePath,
+        branch: job.sourceBranch ?? job.branch,
+        commitSha: job.sourceCommitSha ?? job.commitSha,
+        previewUrl: undefined,
+        previewMessage: `远程 ${defaultBranch} 尚未更新，当前预览仍是旧代码`,
+        mergeRetryable: true,
+      });
+      appendJobEvent(jobId, {
+        type: "stage",
+        phase: "merge_retryable",
+        text: retryMessage,
+        previewMessage: `远程 ${defaultBranch} 尚未更新，当前预览仍是旧代码`,
+        mergeRetryable: true,
+      });
+      return;
+    }
+
     if (err instanceof GitMergeConflictError) {
       appendJobEvent(jobId, {
         type: "stage",
@@ -216,7 +246,11 @@ export async function mergeCompletedJobToBranch(jobId: string, targetBranch: str
   });
 
   try {
-    const mergeSha = await gitService.cherryPickCommitIntoBranch(sourceCommitSha, targetBranch);
+    const mergeSha = await gitService.cherryPickCommitIntoBranch(
+      sourceCommitSha,
+      targetBranch,
+      createJobConflictResolver(jobId)
+    );
     const record: ReleaseMergeRecord = {
       targetBranch,
       commitSha: mergeSha,

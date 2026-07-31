@@ -517,11 +517,17 @@ jobsRouter.post("/:jobId/merge", (req, res) => {
   }
 
   const body = req.body as { createMergeRequest?: unknown } | undefined;
-  const createMergeRequest = body?.createMergeRequest === true;
+  const retryingMerge = job.mergeRetryable === true;
+  const createMergeRequest = !retryingMerge && body?.createMergeRequest === true;
 
   updateJob(jobId, {
     status: "pending",
-    message: createMergeRequest ? "已确认提交 Merge Request，等待排队..." : "已确认合并，等待排队...",
+    message: retryingMerge
+      ? "已请求重试合并，等待排队..."
+      : createMergeRequest
+        ? "已确认提交 Merge Request，等待排队..."
+        : "已确认合并，等待排队...",
+    mergeRetryable: false,
   });
 
   const mergeWorker = async (queuedJobId: string) => {
@@ -540,9 +546,11 @@ jobsRouter.post("/:jobId/merge", (req, res) => {
     status: "pending",
     message: jobsAhead > 0
       ? `已加入队列，前面还有 ${jobsAhead} 个任务`
-      : createMergeRequest
-        ? "已确认提交 Merge Request，即将处理..."
-        : "已确认合并，即将处理...",
+      : retryingMerge
+        ? "正在重试合并..."
+        : createMergeRequest
+          ? "已确认提交 Merge Request，即将处理..."
+          : "已确认合并，即将处理...",
     jobsAhead,
   });
 });

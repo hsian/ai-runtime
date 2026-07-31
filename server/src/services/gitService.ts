@@ -1,4 +1,5 @@
 import { mkdir, rm } from "fs/promises";
+import { randomUUID } from "crypto";
 import { dirname, resolve } from "path";
 import { simpleGit, type SimpleGit } from "simple-git";
 import { config, getAuthenticatedRepoUrl } from "../config.js";
@@ -25,6 +26,28 @@ export class GitMergeConflictError extends Error {
   }
 }
 
+export class GitRemoteUnavailableError extends Error {
+  constructor(
+    message: string,
+    readonly operation: "fetch" | "push",
+    readonly targetBranch: string,
+    options?: ErrorOptions
+  ) {
+    super(message, options);
+    this.name = "GitRemoteUnavailableError";
+  }
+}
+
+export interface GitConflictContext {
+  operation: "merge" | "cherry-pick";
+  worktreePath: string;
+  files: string[];
+  sourceRef: string;
+  targetBranch: string;
+}
+
+export type GitConflictResolver = (context: GitConflictContext) => Promise<void>;
+
 function getRepoPathFromUrl(repoUrl: string): { url: URL; path: string } {
   const url = new URL(repoUrl);
   const path = decodeURIComponent(url.pathname.replace(/^\/+/, "").replace(/\.git$/, ""));
@@ -47,16 +70,23 @@ async function readErrorResponse(res: Response): Promise<string> {
   return text;
 }
 
-function formatMergeError(err: unknown, sourceBranch: string, targetBranch: string): Error {
+function formatMergeError(
+  err: unknown,
+  sourceBranch: string,
+  targetBranch: string,
+  detectedFiles: string[] = []
+): Error {
   const message = err instanceof Error ? err.message : String(err);
   const conflictMatch = message.match(/CONFLICTS:\s*(.+)$/s);
-  if (!conflictMatch) return err instanceof Error ? err : new Error(message);
+  const files = detectedFiles.length > 0
+    ? detectedFiles
+    : conflictMatch?.[1]
+      .split(",")
+      .map((item) => item.trim().replace(/:content$/, ""))
+      .filter(Boolean) ?? [];
+  if (files.length === 0) return err instanceof Error ? err : new Error(message);
 
-  const files = conflictMatch[1]
-    .split(",")
-    .map((item) => item.trim().replace(/:content$/, ""))
-    .filter(Boolean);
-  const fileText = files.length > 0 ? files.join(", ") : conflictMatch[1].trim();
+  const fileText = files.join(", ");
   return new GitMergeConflictError(
     `合并冲突：${sourceBranch} 无法自动合并到 ${targetBranch}。冲突文件：${fileText}`,
     files,
@@ -65,16 +95,23 @@ function formatMergeError(err: unknown, sourceBranch: string, targetBranch: stri
   );
 }
 
-function formatCherryPickError(err: unknown, commitSha: string, targetBranch: string): Error {
+function formatCherryPickError(
+  err: unknown,
+  commitSha: string,
+  targetBranch: string,
+  detectedFiles: string[] = []
+): Error {
   const message = err instanceof Error ? err.message : String(err);
   const conflictMatch = message.match(/CONFLICTS:\s*(.+)$/s);
-  if (!conflictMatch) return err instanceof Error ? err : new Error(message);
+  const files = detectedFiles.length > 0
+    ? detectedFiles
+    : conflictMatch?.[1]
+      .split(",")
+      .map((item) => item.trim().replace(/:content$/, ""))
+      .filter(Boolean) ?? [];
+  if (files.length === 0) return err instanceof Error ? err : new Error(message);
 
-  const files = conflictMatch[1]
-    .split(",")
-    .map((item) => item.trim().replace(/:content$/, ""))
-    .filter(Boolean);
-  const fileText = files.length > 0 ? files.join(", ") : conflictMatch[1].trim();
+  const fileText = files.join(", ");
   return new Error(`合并冲突：提交 ${commitSha} 无法自动应用到 ${targetBranch}。冲突文件：${fileText}`);
 }
 
@@ -118,11 +155,118 @@ export class GitService {
   }
 
   private async getGitAt(repoPath: string): Promise<SimpleGit> {
-    return simpleGit(repoPath);
+    return simpleGit({
+      baseDir: repoPath,
+      // 仅用于无人值守执行 cherry-pick --continue，值固定为 "true"，不接收外部输入。
+      unsafe: { allowUnsafeEditor: true },
+    });
   }
 
   private getWorktreePath(jobId: string): string {
     return resolve(this.worktreeRoot, jobId.slice(0, 8));
+  }
+
+  private async createIntegrationWorktree(targetBranch: string): Promise<string> {
+    const git = await this.getGit();
+    const safeBranchPart = targetBranch.replace(/[^a-zA-Z0-9._-]+/g, "-") || "branch";
+    const worktreePath = resolve(
+      this.worktreeRoot,
+      "integration",
+      `branch-${safeBranchPart}-${randomUUID().slice(0, 8)}`
+    );
+
+    try {
+      await git.fetch("origin");
+    } catch (err) {
+      throw new GitRemoteUnavailableError(
+        `Git 远程仓库暂时无法访问，获取 ${targetBranch} 失败`,
+        "fetch",
+        targetBranch,
+        { cause: err }
+      );
+    }
+    await mkdir(dirname(worktreePath), { recursive: true });
+    try {
+      await git.raw([
+        "worktree",
+        "add",
+        "--detach",
+        worktreePath,
+        `origin/${targetBranch}`,
+      ]);
+    } catch (err) {
+      await git.raw(["worktree", "remove", "--force", worktreePath]).catch(() => {});
+      await rm(worktreePath, { recursive: true, force: true }).catch(() => {});
+      throw err;
+    }
+
+    return worktreePath;
+  }
+
+  private async removeIntegrationWorktree(worktreePath: string): Promise<void> {
+    const git = await this.getGit();
+    await git.raw(["worktree", "remove", "--force", worktreePath]).catch(async () => {
+      await rm(worktreePath, { recursive: true, force: true }).catch(() => {});
+      await git.raw(["worktree", "prune"]).catch(() => {});
+    });
+  }
+
+  private async listConflictFiles(git: SimpleGit): Promise<string[]> {
+    const output = await git.raw(["diff", "--name-only", "--diff-filter=U"]);
+    return output
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean);
+  }
+
+  private async resolveConflict(
+    git: SimpleGit,
+    context: GitConflictContext,
+    resolver: GitConflictResolver
+  ): Promise<void> {
+    await resolver(context);
+
+    await git.raw(["add", "--all", "--", ...context.files]);
+
+    const unmergedAfterStage = await this.listConflictFiles(git);
+    if (unmergedAfterStage.length > 0) {
+      throw new Error(`暂存后仍有未解决冲突：${unmergedAfterStage.join(", ")}`);
+    }
+
+    await git.raw(["diff", "--cached", "--check"]);
+  }
+
+  private async publishIntegrationCommit(
+    integrationGit: SimpleGit,
+    targetBranch: string
+  ): Promise<string> {
+    const commitSha = (await integrationGit.revparse(["HEAD"])).trim();
+    if (config.AUTO_PUSH) {
+      try {
+        await integrationGit.push("origin", `HEAD:${targetBranch}`);
+      } catch (err) {
+        throw new GitRemoteUnavailableError(
+          `Git 远程仓库暂时无法访问，推送 ${targetBranch} 失败`,
+          "push",
+          targetBranch,
+          { cause: err }
+        );
+      }
+    }
+
+    const git = await this.getGit();
+    const currentBranch = await this.getCurrentBranch();
+    const localBranches = await git.branchLocal();
+
+    // 远端确认成功后才更新本地目标分支，避免 push 失败但预览代码已变化。
+    if (currentBranch === targetBranch) {
+      await git.merge(["--ff-only", commitSha]);
+    } else if (localBranches.all.includes(targetBranch)) {
+      await git.raw(["branch", "-f", targetBranch, commitSha]);
+    } else {
+      await git.raw(["branch", targetBranch, commitSha]);
+    }
+    return commitSha;
   }
 
   async createJobWorktree(jobId: string, branchName: string): Promise<string> {
@@ -278,14 +422,27 @@ export class GitService {
     return { url: data.web_url };
   }
 
-  async mergeIntoDefaultBranch(branchName: string, mergeMessage: string): Promise<string> {
-    return this.mergeIntoBranch(branchName, config.GIT_DEFAULT_BRANCH, mergeMessage);
+  async mergeIntoDefaultBranch(
+    branchName: string,
+    mergeMessage: string,
+    conflictResolver?: GitConflictResolver
+  ): Promise<string> {
+    return this.mergeIntoBranch(
+      branchName,
+      config.GIT_DEFAULT_BRANCH,
+      mergeMessage,
+      conflictResolver
+    );
   }
 
-  async mergeIntoBranch(sourceBranch: string, targetBranch: string, mergeMessage: string): Promise<string> {
-    const git = await this.getGit();
-
-    await this.checkoutRemoteBranch(targetBranch);
+  async mergeIntoBranch(
+    sourceBranch: string,
+    targetBranch: string,
+    mergeMessage: string,
+    conflictResolver?: GitConflictResolver
+  ): Promise<string> {
+    const worktreePath = await this.createIntegrationWorktree(targetBranch);
+    const git = await this.getGitAt(worktreePath);
 
     const mergeArgs = [
       "--no-ff",
@@ -296,7 +453,41 @@ export class GitService {
     ];
 
     try {
-      await git.merge(mergeArgs);
+      try {
+        await git.merge(mergeArgs);
+      } catch (err) {
+        const files = await this.listConflictFiles(git);
+        if (files.length === 0 || !conflictResolver) {
+          throw formatMergeError(err, sourceBranch, targetBranch, files);
+        }
+
+        try {
+          await this.resolveConflict(git, {
+            operation: "merge",
+            worktreePath,
+            files,
+            sourceRef: sourceBranch,
+            targetBranch,
+          }, conflictResolver);
+          await git.raw([
+            "commit",
+            "--no-edit",
+            ...(config.GIT_SKIP_HOOKS ? ["--no-verify"] : []),
+          ]);
+        } catch (resolutionError) {
+          const detail = resolutionError instanceof Error
+            ? resolutionError.message
+            : String(resolutionError);
+          throw new GitMergeConflictError(
+            `AI 自动解决合并冲突失败：${detail}。冲突文件：${files.join(", ")}`,
+            files,
+            sourceBranch,
+            targetBranch
+          );
+        }
+      }
+
+      return await this.publishIntegrationCommit(git, targetBranch);
     } catch (err) {
       try {
         await git.merge(["--abort"]);
@@ -304,23 +495,49 @@ export class GitService {
         // ignore abort errors
       }
       throw formatMergeError(err, sourceBranch, targetBranch);
+    } finally {
+      await this.removeIntegrationWorktree(worktreePath);
     }
-
-    if (config.AUTO_PUSH) {
-      await git.push("origin", targetBranch);
-    }
-
-    const log = await git.log({ maxCount: 1 });
-    return log.latest?.hash ?? "";
   }
 
-  async cherryPickCommitIntoBranch(commitSha: string, targetBranch: string): Promise<string> {
-    const git = await this.getGit();
-
-    await this.checkoutRemoteBranch(targetBranch);
+  async cherryPickCommitIntoBranch(
+    commitSha: string,
+    targetBranch: string,
+    conflictResolver?: GitConflictResolver
+  ): Promise<string> {
+    const worktreePath = await this.createIntegrationWorktree(targetBranch);
+    const git = await this.getGitAt(worktreePath);
 
     try {
-      await git.raw(["cherry-pick", "-x", commitSha]);
+      try {
+        await git.raw(["cherry-pick", "-x", commitSha]);
+      } catch (err) {
+        const files = await this.listConflictFiles(git);
+        if (files.length === 0 || !conflictResolver) {
+          throw formatCherryPickError(err, commitSha, targetBranch, files);
+        }
+
+        try {
+          await this.resolveConflict(git, {
+            operation: "cherry-pick",
+            worktreePath,
+            files,
+            sourceRef: commitSha,
+            targetBranch,
+          }, conflictResolver);
+          git.env("GIT_EDITOR", "true");
+          await git.raw(["cherry-pick", "--continue"]);
+        } catch (resolutionError) {
+          const detail = resolutionError instanceof Error
+            ? resolutionError.message
+            : String(resolutionError);
+          throw new Error(
+            `AI 自动解决 cherry-pick 冲突失败：${detail}。冲突文件：${files.join(", ")}`
+          );
+        }
+      }
+
+      return await this.publishIntegrationCommit(git, targetBranch);
     } catch (err) {
       try {
         await git.raw(["cherry-pick", "--abort"]);
@@ -328,14 +545,9 @@ export class GitService {
         // ignore abort errors
       }
       throw formatCherryPickError(err, commitSha, targetBranch);
+    } finally {
+      await this.removeIntegrationWorktree(worktreePath);
     }
-
-    if (config.AUTO_PUSH) {
-      await git.push("origin", targetBranch);
-    }
-
-    const log = await git.log({ maxCount: 1 });
-    return log.latest?.hash ?? "";
   }
 
   async revertCommitOnBranch(commitSha: string, targetBranch: string): Promise<string> {

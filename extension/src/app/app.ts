@@ -115,6 +115,7 @@ let lastLocalUserBubble:
 const pendingAttachments: PendingAttachment[] = [];
 const previewUrls = new Map<string, string>();
 const previewMessages = new Map<string, string>();
+const mergeRetryableJobs = new Map<string, boolean>();
 let planOutputBuffer = "";
 let planOutputJobId: string | null = null;
 let createMergeRequestOnMerge = false;
@@ -779,8 +780,14 @@ function applyServerJobState(job: JobStatus): void {
   }
 
   if (job.status === "awaiting_merge") {
-    upsertMergeConfirmCard(job.jobId, "awaiting_merge", job.previewUrl, job.previewMessage);
-    setConnectionStatus("等待确认合并");
+    upsertMergeConfirmCard(
+      job.jobId,
+      "awaiting_merge",
+      job.previewUrl,
+      job.previewMessage,
+      job.mergeRetryable
+    );
+    setConnectionStatus(job.mergeRetryable ? "等待重试合并" : "等待确认合并");
     updateSubmitButton();
     return;
   }
@@ -983,7 +990,12 @@ function stageStateClass(event: JobEvent): string {
   if (event.phase === "release_merge_done" || event.phase === "default_revert_done") {
     return "msg-stage--success";
   }
-  if (event.phase === "plan_done" || event.phase === "plan_need_more" || event.phase === "execute_ready") {
+  if (
+    event.phase === "plan_done" ||
+    event.phase === "plan_need_more" ||
+    event.phase === "execute_ready" ||
+    event.phase === "merge_retryable"
+  ) {
     return "msg-stage--waiting";
   }
   return "msg-stage--running";
@@ -1103,20 +1115,28 @@ function upsertMergeConfirmCard(
   jobId: string,
   status: JobStatusType = currentJobStatus ?? "awaiting_merge",
   previewUrl?: string,
-  previewMessage?: string
+  previewMessage?: string,
+  mergeRetryable?: boolean
 ): void {
   if (previewUrl) previewUrls.set(jobId, previewUrl);
   if (previewMessage) previewMessages.set(jobId, previewMessage);
+  if (mergeRetryable !== undefined) mergeRetryableJobs.set(jobId, mergeRetryable);
   const node = ensureMessageElement(`${MERGE_CARD_KEY}-${jobId}`, "msg msg-queue");
   const readonly = status !== "awaiting_merge";
   const statusLabel = mergeCardStatusLabel(status);
-  const actionTitle = createMergeRequestOnMerge
-    ? "修改已完成：是否提交 Merge Request？"
-    : "修改已完成：是否合并到 test 并提交？";
-  const actionLabel = createMergeRequestOnMerge ? "提交 Merge Request" : "合并到 test";
-  const hint = createMergeRequestOnMerge
-    ? "提交后会推送 feature 分支并创建 Merge Request，test 代码不做直接改动"
-    : "放弃后将切回 test 分支，test 代码不做任何改动";
+  const retryable = mergeRetryableJobs.get(jobId) === true;
+  const useMergeRequest = !retryable && createMergeRequestOnMerge;
+  const actionTitle = retryable
+    ? "Git 仓库暂时无法访问，代码修改和任务分支已保留"
+    : useMergeRequest
+      ? "修改已完成：是否提交 Merge Request？"
+      : "修改已完成：是否合并到 test 并提交？";
+  const actionLabel = retryable ? "重试合并到 test" : useMergeRequest ? "提交 Merge Request" : "合并到 test";
+  const hint = retryable
+    ? "重试只会重新执行 Git 合并和推送，不会重新运行 AI 修改代码"
+    : useMergeRequest
+      ? "提交后会推送 feature 分支并创建 Merge Request，test 代码不做直接改动"
+      : "放弃后将切回 test 分支，test 代码不做任何改动";
   const effectivePreviewUrl = previewUrls.get(jobId);
   const previewHtml = effectivePreviewUrl
     ? `<div class="hint" style="margin-top:8px;">预览地址：<a href="${escapeHtml(effectivePreviewUrl)}" target="_blank" rel="noreferrer">${escapeHtml(effectivePreviewUrl)}</a></div>`
@@ -1140,7 +1160,7 @@ function upsertMergeConfirmCard(
   }
 
   node.innerHTML = `
-    <div class="msg-meta">等待确认合并</div>
+    <div class="msg-meta">${retryable ? "等待重试合并" : "等待确认合并"}</div>
     <div class="queue-card queue-card--waiting queue-card--confirm">
       <div class="queue-title">${actionTitle}</div>
       <div class="confirm-actions">
@@ -1160,11 +1180,16 @@ function upsertMergeConfirmCard(
       const config = await loadConfig();
       if (!config.serverUrl) return;
       createMergeRequestOnMerge = config.createMergeRequestOnMerge;
+      const shouldCreateMergeRequest = retryable ? false : createMergeRequestOnMerge;
       try {
         mergeBtn.disabled = true;
         discardBtn!.disabled = true;
-        setConnectionStatus(createMergeRequestOnMerge ? "已确认提交 Merge Request，正在处理..." : "已确认合并，正在处理...");
-        await mergeJob(config.serverUrl, jobId, { createMergeRequest: createMergeRequestOnMerge });
+        setConnectionStatus(retryable
+          ? "正在重试合并到 test..."
+          : shouldCreateMergeRequest
+            ? "已确认提交 Merge Request，正在处理..."
+            : "已确认合并，正在处理...");
+        await mergeJob(config.serverUrl, jobId, { createMergeRequest: shouldCreateMergeRequest });
         currentJobStatus = "running";
         upsertMergeConfirmCard(jobId, "running");
       } catch (err) {
@@ -1340,10 +1365,16 @@ function appendDoneBubble(event: JobEvent): void {
   const branchInfo = event.branch
     ? `<div class="msg-sub">分支: ${escapeHtml(event.branch)}</div>`
     : "";
+  const previewInfo = event.previewUrl
+    ? `<div class="msg-sub">预览：<a href="${escapeHtml(event.previewUrl)}" target="_blank" rel="noreferrer">${escapeHtml(event.previewUrl)}</a></div>`
+    : event.previewMessage
+      ? `<div class="msg-sub">${escapeHtml(event.previewMessage)}</div>`
+      : "";
   node.innerHTML = `
     <div class="msg-meta">${formatTime(event.timestamp)} · 完成</div>
     <div class="msg-bubble">${text}</div>
     ${branchInfo}
+    ${previewInfo}
   `;
   el<HTMLElement>("chatMessages").appendChild(node);
 }
@@ -1869,6 +1900,9 @@ function handleJobEvent(
   lastEventAt = Date.now();
   if (event.previewUrl) previewUrls.set(event.jobId, event.previewUrl);
   if (event.previewMessage) previewMessages.set(event.jobId, event.previewMessage);
+  if (event.mergeRetryable !== undefined) {
+    mergeRetryableJobs.set(event.jobId, event.mergeRetryable);
+  }
 
   if (options?.replay) {
     switch (event.type) {
@@ -1940,14 +1974,22 @@ function handleJobEvent(
         setConnectionStatus("正在准备独立工作区");
         stopActionAlert();
         updateSubmitButton();
-      } else if (event.phase === "execute_ready") {
+      } else if (event.phase === "execute_ready" || event.phase === "merge_retryable") {
         currentJobStatus = "awaiting_merge";
         removeMessageByKey(`${CONFIRM_CARD_KEY}-${event.jobId}`);
-        upsertMergeConfirmCard(event.jobId, "awaiting_merge", event.previewUrl, event.previewMessage);
-        setConnectionStatus("等待确认合并");
-        startActionAlert(
-          createMergeRequestOnMerge ? "修改完成，等待提交 Merge Request" : "修改完成，等待合并确认"
+        upsertMergeConfirmCard(
+          event.jobId,
+          "awaiting_merge",
+          event.previewUrl,
+          event.previewMessage,
+          event.mergeRetryable
         );
+        setConnectionStatus(event.mergeRetryable ? "等待重试合并" : "等待确认合并");
+        startActionAlert(event.mergeRetryable
+          ? "Git 仓库不可用，等待重试合并"
+          : createMergeRequestOnMerge
+            ? "修改完成，等待提交 Merge Request"
+            : "修改完成，等待合并确认");
         stopProgressIdleNotice();
         updateSubmitButton();
       } else if (event.phase === "merge") {
@@ -2056,7 +2098,7 @@ function handleJobEvent(
   if (
     event.type === "done" ||
     (event.type === "stage" &&
-      ["plan_done", "plan_need_more", "execute_ready"].includes(event.phase ?? ""))
+      ["plan_done", "plan_need_more", "execute_ready", "merge_retryable"].includes(event.phase ?? ""))
   ) {
     void refreshSubmitButtonContextTitle();
   }

@@ -95,6 +95,8 @@ export interface Job {
   previewFilter?: string;
   previewMessage?: string;
   previewHost?: string;
+  /** Git 远程暂时不可用，代码已保留，可仅重试合并 */
+  mergeRetryable?: boolean;
   error?: string;
   createdAt: string;
   updatedAt: string;

@@ -61,7 +61,12 @@ function stageStateClass(event: JobEvent): string {
   if (event.phase === "release_merge_done" || event.phase === "default_revert_done") {
     return "msg-stage--success";
   }
-  if (event.phase === "plan_done" || event.phase === "plan_need_more" || event.phase === "execute_ready") {
+  if (
+    event.phase === "plan_done" ||
+    event.phase === "plan_need_more" ||
+    event.phase === "execute_ready" ||
+    event.phase === "merge_retryable"
+  ) {
     return "msg-stage--waiting";
   }
   return "msg-stage--running";
@@ -81,6 +86,7 @@ export class JobProgressView {
   private agentBuffers = new Map<string, string>();
   private previewUrls = new Map<string, string>();
   private previewMessages = new Map<string, string>();
+  private mergeRetryable = new Map<string, boolean>();
   private seenEventIds = new Set<string>();
 
   constructor(
@@ -94,6 +100,7 @@ export class JobProgressView {
     this.agentBuffers.clear();
     this.previewUrls.clear();
     this.previewMessages.clear();
+    this.mergeRetryable.clear();
     this.seenEventIds.clear();
   }
 
@@ -199,9 +206,16 @@ export class JobProgressView {
     this.scrollToBottom();
   }
 
-  renderMergeCard(jobId: string, status: JobStatusType, previewUrl?: string, previewMessage?: string): void {
+  renderMergeCard(
+    jobId: string,
+    status: JobStatusType,
+    previewUrl?: string,
+    previewMessage?: string,
+    mergeRetryable?: boolean
+  ): void {
     if (previewUrl) this.previewUrls.set(jobId, previewUrl);
     if (previewMessage) this.previewMessages.set(jobId, previewMessage);
+    if (mergeRetryable !== undefined) this.mergeRetryable.set(jobId, mergeRetryable);
     if (status === "awaiting_merge") {
       this.container.querySelector(`[data-key="${CONFIRM_KEY}-${jobId}"]`)?.remove();
     }
@@ -216,6 +230,7 @@ export class JobProgressView {
       createMergeRequestOnMerge: this.options.createMergeRequestOnMerge,
       previewUrl: this.previewUrls.get(jobId),
       previewMessage: this.previewMessages.get(jobId),
+      mergeRetryable: this.mergeRetryable.get(jobId),
     });
     this.scrollToBottom();
   }
@@ -266,9 +281,17 @@ export class JobProgressView {
         } else if (event.phase === "plan_need_more") {
           this.options.onStatus?.("需要补充信息");
           if (event.jobId) this.renderConfirmCard(event.jobId, "awaiting_input");
-        } else if (event.phase === "execute_ready") {
-          this.options.onStatus?.("等待确认合并");
-          if (event.jobId) this.renderMergeCard(event.jobId, "awaiting_merge", event.previewUrl, event.previewMessage);
+        } else if (event.phase === "execute_ready" || event.phase === "merge_retryable") {
+          this.options.onStatus?.(event.mergeRetryable ? "等待重试合并" : "等待确认合并");
+          if (event.jobId) {
+            this.renderMergeCard(
+              event.jobId,
+              "awaiting_merge",
+              event.previewUrl,
+              event.previewMessage,
+              event.mergeRetryable
+            );
+          }
         } else if (event.phase === "plan") {
           this.options.onStatus?.("Plan 分析中");
         } else if (event.phase === "merge") {
@@ -305,7 +328,12 @@ export class JobProgressView {
           const node = document.createElement("div");
           node.className = "msg msg-done";
           node.dataset.key = event.id;
-          node.innerHTML = `<div class="msg-meta">${formatTime(event.timestamp)}</div><div class="msg-bubble">${escapeHtml(event.message ?? "任务完成")}</div>`;
+          const preview = event.previewUrl
+            ? `<div class="msg-sub">预览：<a href="${escapeHtml(event.previewUrl)}" target="_blank" rel="noreferrer">${escapeHtml(event.previewUrl)}</a></div>`
+            : event.previewMessage
+              ? `<div class="msg-sub">${escapeHtml(event.previewMessage)}</div>`
+              : "";
+          node.innerHTML = `<div class="msg-meta">${formatTime(event.timestamp)}</div><div class="msg-bubble">${escapeHtml(event.message ?? "任务完成")}</div>${preview}`;
           this.container.appendChild(node);
         }
         this.updateExistingGateCards(event.jobId, "completed");

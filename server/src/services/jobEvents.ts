@@ -38,6 +38,7 @@ export interface JobEvent {
   mergeRequestUrl?: string;
   previewUrl?: string;
   previewMessage?: string;
+  mergeRetryable?: boolean;
   message?: string;
   attachmentCount?: number;
 }
