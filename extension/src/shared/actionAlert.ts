@@ -1,5 +1,3 @@
-let actionAlertTimer: ReturnType<typeof setInterval> | null = null;
-let actionAlertVisible = false;
 let actionAlertTitle = "";
 let actionAlertNotificationId: string | null = null;
 
@@ -7,19 +5,9 @@ interface ActionAlertOptions {
   title: string;
 }
 
-function setActionBadge(text: string): void {
-  void chrome.action.setBadgeBackgroundColor({ color: "#f97316" });
-  void chrome.action.setBadgeTextColor?.({ color: "#ffffff" });
-  void chrome.action.setBadgeText({ text });
-}
-
 export function stopActionAlert(): void {
-  if (actionAlertTimer) {
-    clearInterval(actionAlertTimer);
-    actionAlertTimer = null;
-  }
-  actionAlertVisible = false;
   actionAlertTitle = "";
+  // 清理旧版本可能遗留的闪烁 badge，后续提醒只使用桌面通知。
   void chrome.action.setBadgeText({ text: "" });
   void chrome.action.setTitle({ title: "AI Runtime" });
   if (actionAlertNotificationId) {
@@ -29,7 +17,7 @@ export function stopActionAlert(): void {
 }
 
 export function startActionAlert(options: ActionAlertOptions): void {
-  if (actionAlertTimer && actionAlertTitle === options.title) {
+  if (actionAlertNotificationId && actionAlertTitle === options.title) {
     return;
   }
 
@@ -44,14 +32,6 @@ export function startActionAlert(options: ActionAlertOptions): void {
     message: options.title,
     priority: 2,
   });
-
-  const tick = (): void => {
-    actionAlertVisible = !actionAlertVisible;
-    setActionBadge(actionAlertVisible ? "OK" : "");
-  };
-
-  tick();
-  actionAlertTimer = setInterval(tick, 650);
 }
 
 export function isActionAlertNotification(notificationId: string): boolean {

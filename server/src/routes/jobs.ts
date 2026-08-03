@@ -258,6 +258,7 @@ async function runQuestion(jobId: string): Promise<void> {
     });
     appendJobEvent(jobId, {
       type: "done",
+      phase: "question_done",
       text: result.summary,
       message: result.summary,
     });

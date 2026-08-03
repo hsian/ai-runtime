@@ -76,6 +76,8 @@ export interface Job {
   requiresConfirm?: boolean;
   /** plan 总结（用于展示和回溯） */
   planSummary?: string;
+  /** AI 执行完成后的实际修改总结，用于生成 commit/merge 描述 */
+  implementationSummary?: string;
   /** 本次改动所在的 feature 分支，完成后仍用于发版分支合并 */
   sourceBranch?: string;
   /** 本次任务实际产生的提交，用于发版分支 cherry-pick，避免带入 test 上其他提交 */

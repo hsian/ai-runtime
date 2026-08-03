@@ -4,6 +4,7 @@ import { GitMergeConflictError, GitRemoteUnavailableError, gitService } from "./
 import { appendJobEvent } from "./jobEvents.js";
 import { createJobConflictResolver } from "./gitConflictResolutionService.js";
 import type { ReleaseMergeRecord } from "../types.js";
+import { buildMergeMessage } from "./commitMessage.js";
 
 export async function confirmJobMerge(jobId: string): Promise<void> {
   const job = getJob(jobId);
@@ -24,7 +25,10 @@ export async function confirmJobMerge(jobId: string): Promise<void> {
   });
 
   try {
-    const mergeMessage = `merge(plugin): ${job.prompt}\n\nJob: ${jobId}`;
+    const mergeMessage = buildMergeMessage(
+      job.implementationSummary ?? job.message ?? "完成代码修改",
+      jobId
+    );
     const mergeSha = await gitService.mergeIntoDefaultBranch(
       job.branch,
       mergeMessage,

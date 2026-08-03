@@ -2047,7 +2047,11 @@ function handleJobEvent(
       if (!hasExistingGateCard(event.jobId)) appendDoneBubble(event);
       updateExistingGateCards(event.jobId, "completed");
       setConnectionStatus("任务已完成");
-      stopActionAlert();
+      if (event.phase === "question_done") {
+        startActionAlert("项目问答已完成");
+      } else {
+        stopActionAlert();
+      }
       stopProgressIdleNotice();
       activeStream?.close();
       activeStream = null;

@@ -25,12 +25,19 @@ function wrapLines(text: string, maxLen: number): string {
   return lines.join("\n");
 }
 
-export function buildCommitMessage(prompt: string, summary: string, jobId: string): string {
-  const subject = truncateLine(`feat(plugin): ${prompt}`, 72);
-  const body = wrapLines(stripAnsi(summary), 72);
+export function buildCommitMessage(summary: string, jobId: string): string {
+  const actualSummary = stripAnsi(summary).trim() || "完成代码修改";
+  const subject = truncateLine(`feat(plugin): ${actualSummary}`, 72);
+  const body = wrapLines(actualSummary, 72);
   const footer = `Job: ${jobId}`;
 
   return body ? `${subject}\n\n${body}\n\n${footer}` : `${subject}\n\n${footer}`;
+}
+
+export function buildMergeMessage(summary: string, jobId: string): string {
+  const actualSummary = stripAnsi(summary).trim() || "完成代码修改";
+  const subject = truncateLine(`merge(plugin): ${actualSummary}`, 72);
+  return `${subject}\n\nJob: ${jobId}`;
 }
 
 export function formatGitError(err: unknown): string {
