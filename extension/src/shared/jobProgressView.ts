@@ -245,7 +245,26 @@ export class JobProgressView {
   private updateExistingGateCards(jobId: string, status: JobStatusType): void {
     const hasConfirm = Boolean(this.container.querySelector(`[data-key="${CONFIRM_KEY}-${jobId}"]`));
     const hasMerge = Boolean(this.container.querySelector(`[data-key="${MERGE_KEY}-${jobId}"]`));
-    if (hasConfirm) this.renderConfirmCard(jobId, status);
+    if (hasConfirm) {
+      this.renderConfirmCard(jobId, status);
+      if (status === "completed") {
+        const previewUrl = this.previewUrls.get(jobId);
+        const content = this.container.querySelector<HTMLElement>(
+          `[data-key="${CONFIRM_KEY}-${jobId}"] .result-content`
+        );
+        if (previewUrl && content) {
+          const preview = document.createElement("div");
+          preview.className = "result-detail";
+          const link = document.createElement("a");
+          link.href = previewUrl;
+          link.target = "_blank";
+          link.rel = "noreferrer";
+          link.textContent = previewUrl;
+          preview.append("预览地址：", link);
+          content.appendChild(preview);
+        }
+      }
+    }
     if (hasMerge) this.renderMergeCard(jobId, status);
   }
 

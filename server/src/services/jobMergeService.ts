@@ -51,6 +51,7 @@ export async function confirmJobMerge(jobId: string): Promise<void> {
     });
     appendJobEvent(jobId, {
       type: "done",
+      phase: "default_merge_done",
       text: doneMessage,
       message: doneMessage,
       branch: defaultBranch,

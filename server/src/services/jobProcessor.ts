@@ -77,6 +77,7 @@ function finishJob(
     previewMessage?: string;
     mergeRetryable?: boolean;
     implementationSummary?: string;
+    phase?: string;
   }
 ): void {
   updateJob(jobId, patch);
@@ -98,6 +99,7 @@ function finishJob(
     previewUrl: patch.previewUrl,
     previewMessage: patch.previewMessage,
     mergeRetryable: patch.mergeRetryable,
+    phase: patch.phase,
   });
 }
 
@@ -125,8 +127,21 @@ export async function processJob(jobId: string): Promise<void> {
   let repoPath: string | undefined;
   let taskCommitSha: string | undefined;
   let implementationSummary: string | undefined;
+  let misplacedChangePaths: string[] = [];
 
   try {
+    const initialWorkspaceDirtyPaths = await gitService.listUncommittedPaths();
+    if (initialWorkspaceDirtyPaths.length > 0) {
+      finishJob(jobId, {
+        status: "failed",
+        error: `业务主仓库存在未提交改动，请先处理后再执行: ${initialWorkspaceDirtyPaths.join(", ")}`,
+        message: "业务主仓库存在未提交改动，已停止执行",
+        sourceBranch: branchName,
+        branch: branchName,
+      });
+      return;
+    }
+
     emitStage(jobId, "pull", `正在基于 ${defaultBranch} 创建独立工作区...`);
     repoPath = await gitService.createJobWorktree(jobId, branchName);
     updateJob(jobId, { worktreePath: repoPath });
@@ -158,7 +173,19 @@ export async function processJob(jobId: string): Promise<void> {
     implementationSummary = result.summary;
     if (await abortIfCancelled(jobId, "agent", repoPath)) return;
 
-    const hasChanges = await gitService.hasUncommittedChanges(repoPath);
+    let hasChanges = await gitService.hasUncommittedChanges(repoPath);
+
+    if (!hasChanges) {
+      const workspaceDirtyPaths = await gitService.listUncommittedPaths();
+      if (workspaceDirtyPaths.length > 0) {
+        emitStage(jobId, "commit", "检测到改动落在业务主仓库，正在转移到任务工作区...");
+        misplacedChangePaths = await gitService.copyUncommittedChanges(
+          gitService.getRepoPath(),
+          repoPath
+        );
+        hasChanges = await gitService.hasUncommittedChanges(repoPath);
+      }
+    }
 
     if (!hasChanges) {
       if (looksLikeClarification(result.summary)) {
@@ -173,7 +200,8 @@ export async function processJob(jobId: string): Promise<void> {
       }
 
       finishJob(jobId, {
-        status: "completed",
+        status: "failed",
+        error: "执行完成但隔离工作区没有产生代码变更，未创建 commit",
         message: result.summary || "未产生代码变更",
         sourceBranch: branchName,
         branch: branchName,
@@ -192,6 +220,9 @@ export async function processJob(jobId: string): Promise<void> {
     const commitMessage = buildCommitMessage(result.summary, jobId);
     const commitSha = await gitService.commitAndPush(branchName, commitMessage, repoPath);
     taskCommitSha = commitSha;
+    if (misplacedChangePaths.length > 0) {
+      await gitService.discardSpecificUncommittedChanges(misplacedChangePaths);
+    }
 
     let previewUrl: string | undefined;
     let previewFilter: string | undefined;
@@ -240,6 +271,7 @@ export async function processJob(jobId: string): Promise<void> {
       previewMessage: previewNotice,
       mergeRetryable: false,
       implementationSummary: result.summary,
+      phase: "default_merge_done",
     });
   } catch (err) {
     if (err instanceof GitRemoteUnavailableError && repoPath && taskCommitSha) {

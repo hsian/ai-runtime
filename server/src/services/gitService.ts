@@ -1,4 +1,4 @@
-import { mkdir, rm } from "fs/promises";
+import { cp, mkdir, rm, stat } from "fs/promises";
 import { randomUUID } from "crypto";
 import { dirname, resolve } from "path";
 import { simpleGit, type SimpleGit } from "simple-git";
@@ -164,6 +164,15 @@ export class GitService {
 
   private getWorktreePath(jobId: string): string {
     return resolve(this.worktreeRoot, jobId.slice(0, 8));
+  }
+
+  private assertInsideRepo(repoPath: string, filePath: string): void {
+    const repoRoot = resolve(repoPath);
+    const resolved = resolve(repoRoot, filePath);
+    const relative = resolved.slice(repoRoot.length).replace(/^[\\/]/, "");
+    if (!relative || relative.startsWith("..") || resolve(repoRoot, relative) !== resolved) {
+      throw new Error(`非法文件路径，拒绝操作: ${filePath}`);
+    }
   }
 
   private async createIntegrationWorktree(targetBranch: string): Promise<string> {
@@ -639,6 +648,57 @@ export class GitService {
     const git = repoPath === this.repoPath ? await this.getGit() : await this.getGitAt(repoPath);
     const status = await git.status();
     return status.files.length > 0;
+  }
+
+  async listUncommittedPaths(repoPath = this.repoPath): Promise<string[]> {
+    const git = repoPath === this.repoPath ? await this.getGit() : await this.getGitAt(repoPath);
+    const status = await git.status();
+    return [...new Set(status.files.map((file) => file.path).filter(Boolean))];
+  }
+
+  async copyUncommittedChanges(sourceRepoPath: string, targetRepoPath: string): Promise<string[]> {
+    const sourceGit = sourceRepoPath === this.repoPath ? await this.getGit() : await this.getGitAt(sourceRepoPath);
+    const status = await sourceGit.status();
+    const paths = [...new Set(status.files.map((file) => file.path).filter(Boolean))];
+
+    for (const path of paths) {
+      this.assertInsideRepo(sourceRepoPath, path);
+      this.assertInsideRepo(targetRepoPath, path);
+
+      const sourcePath = resolve(sourceRepoPath, path);
+      const targetPath = resolve(targetRepoPath, path);
+      const sourceStat = await stat(sourcePath).catch(() => null);
+
+      if (!sourceStat) {
+        await rm(targetPath, { recursive: true, force: true });
+        continue;
+      }
+
+      await mkdir(dirname(targetPath), { recursive: true });
+      await cp(sourcePath, targetPath, { recursive: true, force: true });
+    }
+
+    return paths;
+  }
+
+  async discardSpecificUncommittedChanges(paths: string[], repoPath = this.repoPath): Promise<void> {
+    if (paths.length === 0) return;
+    const git = repoPath === this.repoPath ? await this.getGit() : await this.getGitAt(repoPath);
+
+    for (const path of paths) {
+      this.assertInsideRepo(repoPath, path);
+    }
+
+    await git.raw(["restore", "--staged", "--worktree", "--", ...paths]).catch(() => {});
+
+    const remaining = await git.status();
+    const remainingByPath = new Map(remaining.files.map((file) => [file.path, file]));
+    for (const path of paths) {
+      const file = remainingByPath.get(path) as { index?: string; working_dir?: string } | undefined;
+      if (file?.index === "?" || file?.working_dir === "?") {
+        await rm(resolve(repoPath, path), { recursive: true, force: true });
+      }
+    }
   }
 
   /** 服务重启后：还原工作区、回到基线分支、清理 plugin-fix 分支 */

@@ -170,6 +170,8 @@ export interface CodingConversation {
   title: string;
   jobIds: string[];
   tapdContext?: TapdContext;
+  /** TAPD 标签是否尚未随本会话消息成功发送 */
+  tapdContextPending?: boolean;
   createdAt: string;
   updatedAt: string;
 }

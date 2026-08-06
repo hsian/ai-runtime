@@ -25,8 +25,24 @@ function wrapLines(text: string, maxLen: number): string {
   return lines.join("\n");
 }
 
+export function normalizeImplementationSummary(summary: string): string {
+  const cleaned = stripAnsi(summary).trim();
+  if (!cleaned) return "完成代码修改";
+
+  const withoutQuotedPath = cleaned.replace(
+    /^(?:已)?修改(?:了)?\s*`[^`\r\n]+`\s*(?:文件)?\s*[，,。:：\-—]?\s*/u,
+    ""
+  );
+  const withoutPlainPath = withoutQuotedPath.replace(
+    /^(?:已)?修改(?:了)?\s+(?:(?:apps|packages|src|server|extension)[/\\][^\s，,。:：]+)\s*(?:文件)?\s*[，,。:：\-—]?\s*/iu,
+    ""
+  );
+
+  return withoutPlainPath.trim() || "完成相关功能调整";
+}
+
 export function buildCommitMessage(summary: string, jobId: string): string {
-  const actualSummary = stripAnsi(summary).trim() || "完成代码修改";
+  const actualSummary = normalizeImplementationSummary(summary);
   const subject = truncateLine(`feat(plugin): ${actualSummary}`, 72);
   const body = wrapLines(actualSummary, 72);
   const footer = `Job: ${jobId}`;
@@ -35,7 +51,7 @@ export function buildCommitMessage(summary: string, jobId: string): string {
 }
 
 export function buildMergeMessage(summary: string, jobId: string): string {
-  const actualSummary = stripAnsi(summary).trim() || "完成代码修改";
+  const actualSummary = normalizeImplementationSummary(summary);
   const subject = truncateLine(`merge(plugin): ${actualSummary}`, 72);
   return `${subject}\n\nJob: ${jobId}`;
 }

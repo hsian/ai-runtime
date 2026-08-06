@@ -122,6 +122,7 @@ let createMergeRequestOnMerge = false;
 let submitInFlight = false;
 let activeConversationId = "";
 let activeTapdContext: TapdContext | null = null;
+let tapdContextPending = false;
 let mentionTriggerIndex: number | null = null;
 let tapdContextLoading = false;
 let tapdImageCache:
@@ -264,6 +265,23 @@ function updateExistingGateCards(jobId: string, status: JobStatusType): void {
   const container = el<HTMLElement>("chatMessages");
   if (container.querySelector(`[data-key="${CONFIRM_CARD_KEY}-${jobId}"]`)) {
     upsertConfirmCard(jobId, status);
+    if (status === "completed") {
+      const previewUrl = previewUrls.get(jobId);
+      const content = container.querySelector<HTMLElement>(
+        `[data-key="${CONFIRM_CARD_KEY}-${jobId}"] .result-content`
+      );
+      if (previewUrl && content) {
+        const preview = document.createElement("div");
+        preview.className = "result-detail";
+        const link = document.createElement("a");
+        link.href = previewUrl;
+        link.target = "_blank";
+        link.rel = "noreferrer";
+        link.textContent = previewUrl;
+        preview.append("预览地址：", link);
+        content.appendChild(preview);
+      }
+    }
   }
   if (container.querySelector(`[data-key="${MERGE_CARD_KEY}-${jobId}"]`)) {
     upsertMergeConfirmCard(jobId, status);
@@ -536,6 +554,7 @@ async function openCodingConversation(
   clearChatDom();
   activeConversationId = conversation.id;
   activeTapdContext = conversation.tapdContext ?? null;
+  tapdContextPending = Boolean(activeTapdContext && conversation.tapdContextPending);
   renderTapdContext();
   await setActiveCodingConversation(conversation.id);
   refreshTaskDrawer();
@@ -1603,7 +1622,7 @@ function renderTapdContext(): void {
   const strip = el<HTMLElement>("tapdContextStrip");
   const footer = el<HTMLElement>("chatFooter");
   strip.replaceChildren();
-  if (!activeTapdContext) {
+  if (!activeTapdContext || !tapdContextPending) {
     strip.hidden = true;
     footer.classList.remove("has-tapd-context", "has-tapd-images");
     syncComposerAutoHeight();
@@ -1635,6 +1654,7 @@ function renderTapdContext(): void {
   remove.addEventListener("click", () => {
     void (async () => {
       activeTapdContext = null;
+      tapdContextPending = false;
       clearTapdImageCache();
       await setCodingConversationTapdContext(activeConversationId);
       renderTapdContext();
@@ -1815,9 +1835,10 @@ async function attachTapdContextFromModal(): Promise<void> {
       hint.textContent = `正在读取 TAPD 描述中的 ${context.imageCount} 张配图…`;
       imageResult = await prepareTapdContextImages(config.serverUrl, context);
     }
-    await setCodingConversationTapdContext(targetConversationId, context);
+    await setCodingConversationTapdContext(targetConversationId, context, true);
     if (activeConversationId === targetConversationId) {
       activeTapdContext = context;
+      tapdContextPending = true;
       renderTapdContext();
     }
     el<HTMLElement>("tapdContextModal").hidden = true;
@@ -2012,7 +2033,11 @@ function handleJobEvent(
         setConnectionStatus("正在提交 Merge Request");
         stopActionAlert();
         updateSubmitButton();
-      } else if (event.phase === "release_merge_done" || event.phase === "default_revert_done") {
+      } else if (event.phase === "release_merge_done") {
+        startActionAlert("合并成功");
+        refreshTaskDrawer();
+      } else if (event.phase === "default_revert_done") {
+        startActionAlert("撤销成功");
         refreshTaskDrawer();
       } else if (event.phase && ["pull", "branch", "agent", "commit"].includes(event.phase)) {
         currentJobStatus = "running";
@@ -2049,8 +2074,10 @@ function handleJobEvent(
       setConnectionStatus("任务已完成");
       if (event.phase === "question_done") {
         startActionAlert("项目问答已完成");
+      } else if (event.phase === "default_merge_done") {
+        startActionAlert("代码修改并合并成功");
       } else {
-        stopActionAlert();
+        startActionAlert("代码修改已完成");
       }
       stopProgressIdleNotice();
       activeStream?.close();
@@ -2657,6 +2684,15 @@ async function handleSubmit(): Promise<void> {
     }
 
     el<HTMLTextAreaElement>("prompt").value = "";
+    if (submissionTapdContext && tapdContextPending) {
+      tapdContextPending = false;
+      await setCodingConversationTapdContext(
+        activeConversationId,
+        activeTapdContext ?? submissionTapdContext,
+        false
+      );
+      renderTapdContext();
+    }
     await addJobToCodingConversation(activeConversationId, data.jobId, prompt);
     if (effectivePlan) {
       const savedTask = await saveCodingPromptAsTask({

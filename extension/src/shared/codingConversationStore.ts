@@ -8,12 +8,18 @@ function normalizeConversation(raw: unknown): CodingConversation | null {
   const value = raw as Record<string, unknown>;
   if (typeof value.id !== "string") return null;
   const now = new Date().toISOString();
+  const jobIds = Array.isArray(value.jobIds)
+    ? value.jobIds.filter((item): item is string => typeof item === "string")
+    : [];
+  const hasTapdContext = Boolean(
+    value.tapdContext &&
+    typeof value.tapdContext === "object" &&
+    typeof (value.tapdContext as TapdContext).title === "string"
+  );
   return {
     id: value.id,
     title: typeof value.title === "string" && value.title.trim() ? value.title : "新会话",
-    jobIds: Array.isArray(value.jobIds)
-      ? value.jobIds.filter((item): item is string => typeof item === "string")
-      : [],
+    jobIds,
     tapdContext:
       value.tapdContext &&
       typeof value.tapdContext === "object" &&
@@ -42,6 +48,11 @@ function normalizeConversation(raw: unknown): CodingConversation | null {
               : undefined,
           }
         : undefined,
+    tapdContextPending: hasTapdContext
+      ? typeof value.tapdContextPending === "boolean"
+        ? value.tapdContextPending
+        : jobIds.length === 0
+      : undefined,
     createdAt: typeof value.createdAt === "string" ? value.createdAt : now,
     updatedAt: typeof value.updatedAt === "string" ? value.updatedAt : now,
   };
@@ -151,7 +162,8 @@ export async function addJobToCodingConversation(
 
 export async function setCodingConversationTapdContext(
   conversationId: string,
-  tapdContext?: TapdContext
+  tapdContext?: TapdContext,
+  pending?: boolean
 ): Promise<void> {
   const conversations = await readConversations();
   const index = conversations.findIndex((item) => item.id === conversationId);
@@ -159,6 +171,9 @@ export async function setCodingConversationTapdContext(
   conversations[index] = {
     ...conversations[index],
     tapdContext,
+    tapdContextPending: tapdContext
+      ? pending ?? conversations[index].tapdContextPending ?? true
+      : undefined,
     updatedAt: new Date().toISOString(),
   };
   await writeConversations(conversations);
