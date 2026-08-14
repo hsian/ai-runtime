@@ -563,6 +563,7 @@ async function openCodingConversation(
   void refreshSubmitButtonContextTitle(config.serverUrl);
   if (
     config.serverUrl &&
+    tapdContextPending &&
     activeTapdContext?.sourceHtml &&
     (activeTapdContext.imageCount ?? 0) > 0
   ) {
@@ -2585,7 +2586,10 @@ async function handleSubmit(): Promise<void> {
     currentJobStatus = null;
     updateSubmitButton();
 
-    const submissionTapdContext = activeTapdContext;
+    // TAPD 上下文和其中的配图只随关联后的首条消息发送。
+    // activeTapdContext 会保留在会话中用于展示关联关系，是否需要组装进
+    // 当前请求应由 tapdContextPending 决定，否则后续提问会重复携带配图。
+    const submissionTapdContext = tapdContextPending ? activeTapdContext : null;
     let tapdImageResult: PrepareTapdImagesResult | null = null;
     if ((submissionTapdContext?.imageCount ?? 0) > 0 && submissionTapdContext?.sourceHtml) {
       setConnectionStatus("正在准备 TAPD 描述配图…");
@@ -2686,6 +2690,7 @@ async function handleSubmit(): Promise<void> {
     el<HTMLTextAreaElement>("prompt").value = "";
     if (submissionTapdContext && tapdContextPending) {
       tapdContextPending = false;
+      clearTapdImageCache();
       await setCodingConversationTapdContext(
         activeConversationId,
         activeTapdContext ?? submissionTapdContext,
