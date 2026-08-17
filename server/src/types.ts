@@ -39,6 +39,7 @@ export interface JobRequest {
   submittedBy?: string;
   conversationId?: string;
   ownerId?: string;
+  remoteIp?: string;
   attachments?: JobAttachment[];
 }
 
@@ -61,6 +62,7 @@ export type JobStatus =
 export interface Job {
   jobId: string;
   ownerId: string;
+  remoteIp?: string;
   status: JobStatus;
   prompt: string;
   pageContext?: PageContext;

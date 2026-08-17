@@ -89,6 +89,11 @@ export async function cleanupStagedAttachmentsForAgent(
   await rm(agentDir, { recursive: true, force: true });
 }
 
+/** 删除服务端为任务长期保存的原始附件。 */
+export async function deleteJobAttachments(jobId: string): Promise<void> {
+  await rm(resolve(config.UPLOAD_DIR, jobId), { recursive: true, force: true });
+}
+
 export function multerErrorMessage(err: unknown): string {
   if (err instanceof multer.MulterError) {
     if (err.code === "LIMIT_FILE_SIZE") {

@@ -2,12 +2,15 @@
   "name": "ai-runtime",
   "private": true,
   "workspaces": [
+    "web",
     "extension",
     "server"
   ],
   "scripts": {
+    "dev": "node scripts/dev.mjs",
     "dev:server": "npm run dev -w server",
     "dev:extension": "npm run dev -w extension",
-    "build": "npm run build -w extension && npm run build -w server"
+    "dev:web": "npm run dev -w web",
+    "build": "npm run build -w web && npm run build -w server"
   }
 }

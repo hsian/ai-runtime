@@ -79,6 +79,7 @@ export function createJob(request: JobRequest): Job {
   const job: Job = {
     jobId: uuidv4(),
     ownerId: request.ownerId ?? "anonymous",
+    remoteIp: request.remoteIp,
     status: "pending",
     prompt: request.prompt,
     pageContext: request.pageContext,
@@ -116,4 +117,8 @@ export function listJobs(ownerId?: string): Job[] {
   return visible.sort(
     (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
   );
+}
+
+export function deleteJob(jobId: string): boolean {
+  return jobs.delete(jobId);
 }

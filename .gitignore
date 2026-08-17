@@ -1,8 +1,11 @@
 server/data/uploads/
+server/data/logs/
 server/data/runtime-state.json
+server/data/client-cookie-secret
 dist/
 workspace/
 .env
 *.log
+*.tsbuildinfo
 .DS_Store
 node_modules/

@@ -1,4 +1,6 @@
 import express from "express";
+import { existsSync } from "node:fs";
+import { join } from "node:path";
 
 import cors from "cors";
 
@@ -11,10 +13,14 @@ import { tapdRouter } from "./routes/tapd.js";
 import { gitService } from "./services/gitService.js";
 
 import { initJobStore } from "./services/jobStore.js";
+import { initOperationLog } from "./services/operationLog.js";
+import { clientIdentityMiddleware, getClientIdentity } from "./services/clientIdentity.js";
+import { operationLogsRouter } from "./routes/operationLogs.js";
 
 
 
 initJobStore();
+initOperationLog();
 
 
 
@@ -33,6 +39,7 @@ void gitService.resetWorkspaceAfterRestart().catch((err) => {
 
 
 const app = express();
+app.set("trust proxy", false);
 
 
 
@@ -44,13 +51,15 @@ app.use(
 
     methods: ["GET", "POST", "OPTIONS"],
 
-    allowedHeaders: ["Content-Type", "X-AI-Runtime-Client-Id"],
+    allowedHeaders: ["Content-Type"],
+    credentials: true,
 
   })
 
 );
 
 app.use(express.json({ limit: "1mb" }));
+app.use(clientIdentityMiddleware);
 
 
 
@@ -60,11 +69,30 @@ app.get("/health", (_req, res) => {
 
 });
 
+app.get("/api/client", (req, res) => {
+  const identity = getClientIdentity(req);
+  res.json({ remoteIp: identity.remoteIp });
+});
+
 
 
 app.use("/api/jobs", jobsRouter);
 
 app.use("/api/tapd", tapdRouter);
+app.use("/api/operation-logs", operationLogsRouter);
+
+if (existsSync(config.WEB_DIST_DIR)) {
+  app.use(express.static(config.WEB_DIST_DIR));
+  app.get("*", (req, res, next) => {
+    if (req.path.startsWith("/api/")) {
+      next();
+      return;
+    }
+    res.sendFile(join(config.WEB_DIST_DIR, "index.html"));
+  });
+} else {
+  console.warn(`[AI Runtime] 未找到 Web 构建目录: ${config.WEB_DIST_DIR}`);
+}
 
 
 

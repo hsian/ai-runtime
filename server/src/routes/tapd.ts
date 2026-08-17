@@ -16,6 +16,8 @@ import {
   downloadImagesFromHtml,
 } from "../services/tapd/tapdDescriptionImages.js";
 import { tapdHtmlToPlainText } from "../services/tapd/tapdContext.js";
+import { logOperation } from "../services/operationLog.js";
+import { getClientIdentity } from "../services/clientIdentity.js";
 
 export const tapdRouter = Router();
 
@@ -131,9 +133,26 @@ tapdRouter.post("/bugs", async (req, res) => {
 
   try {
     const bug = await createBug({ title, description, iterationId, workspaceId });
+    logOperation({
+      action: "tapd_bug_create",
+      status: "success",
+      ownerId: getClientIdentity(req).ownerId,
+      workspaceId,
+      iterationId,
+      tapdItemId: bug.id,
+    });
     res.json({ workspaceId, iterationId, bug });
   } catch (err) {
-    res.status(502).json({ error: err instanceof Error ? err.message : "创建 TAPD 缺陷失败" });
+    const error = err instanceof Error ? err.message : "创建 TAPD 缺陷失败";
+    logOperation({
+      action: "tapd_bug_create",
+      status: "failed",
+      ownerId: getClientIdentity(req).ownerId,
+      workspaceId,
+      iterationId,
+      error,
+    });
+    res.status(502).json({ error });
   }
 });
 

@@ -5,6 +5,7 @@ import { appendJobEvent } from "./jobEvents.js";
 import { createJobConflictResolver } from "./gitConflictResolutionService.js";
 import type { ReleaseMergeRecord } from "../types.js";
 import { buildMergeMessage } from "./commitMessage.js";
+import { logOperation } from "./operationLog.js";
 
 export async function confirmJobMerge(jobId: string): Promise<void> {
   const job = getJob(jobId);
@@ -56,6 +57,16 @@ export async function confirmJobMerge(jobId: string): Promise<void> {
       message: doneMessage,
       branch: defaultBranch,
       commitSha: mergeSha,
+    });
+    logOperation({
+      action: "git_merge",
+      status: "success",
+      jobId,
+      ownerId: job.ownerId,
+      branch: job.branch,
+      targetBranch: defaultBranch,
+      commitSha: mergeSha,
+      message: "merged_and_pushed",
     });
   } catch (err) {
     if (err instanceof GitRemoteUnavailableError) {
@@ -123,10 +134,29 @@ export async function confirmJobMerge(jobId: string): Promise<void> {
           commitSha: job.commitSha,
           mergeRequestUrl: mergeRequest.url,
         });
+        logOperation({
+          action: "merge_request_create",
+          status: "success",
+          jobId,
+          ownerId: job.ownerId,
+          branch: job.branch,
+          targetBranch: defaultBranch,
+          commitSha: job.commitSha,
+          message: "created_after_merge_conflict",
+        });
         await gitService.removeJobWorktree(job.worktreePath, job.branch);
         return;
       } catch (mrErr) {
         const error = mrErr instanceof Error ? mrErr.message : String(mrErr);
+        logOperation({
+          action: "merge_request_create",
+          status: "failed",
+          jobId,
+          ownerId: job.ownerId,
+          branch: job.branch,
+          targetBranch: defaultBranch,
+          error,
+        });
         updateJob(jobId, { status: "failed", error, message: "合并冲突且提交 Merge Request 失败" });
         appendJobEvent(jobId, { type: "error", message: error, text: `合并冲突且提交 Merge Request 失败: ${error}` });
         throw mrErr;
@@ -134,6 +164,15 @@ export async function confirmJobMerge(jobId: string): Promise<void> {
     }
 
     const error = err instanceof Error ? err.message : String(err);
+    logOperation({
+      action: "git_merge",
+      status: "failed",
+      jobId,
+      ownerId: job.ownerId,
+      branch: job.branch,
+      targetBranch: defaultBranch,
+      error,
+    });
     updateJob(jobId, { status: "failed", error, message: "合并失败" });
     appendJobEvent(jobId, { type: "error", message: error, text: `合并失败: ${error}` });
     throw err;
@@ -196,9 +235,27 @@ export async function createJobMergeRequest(jobId: string): Promise<void> {
       commitSha: job.commitSha,
       mergeRequestUrl: mergeRequest.url,
     });
+    logOperation({
+      action: "merge_request_create",
+      status: "success",
+      jobId,
+      ownerId: job.ownerId,
+      branch: job.branch,
+      targetBranch: defaultBranch,
+      commitSha: job.commitSha,
+    });
     await gitService.removeJobWorktree(job.worktreePath, job.branch);
   } catch (err) {
     const error = err instanceof Error ? err.message : String(err);
+    logOperation({
+      action: "merge_request_create",
+      status: "failed",
+      jobId,
+      ownerId: job.ownerId,
+      branch: job.branch,
+      targetBranch: defaultBranch,
+      error,
+    });
     updateJob(jobId, { status: "failed", error, message: "提交 Merge Request 失败" });
     appendJobEvent(jobId, { type: "error", message: error, text: `提交 Merge Request 失败: ${error}` });
     throw err;
@@ -279,8 +336,26 @@ export async function mergeCompletedJobToBranch(jobId: string, targetBranch: str
       branch: targetBranch,
       commitSha: mergeSha,
     });
+    logOperation({
+      action: "release_merge",
+      status: "success",
+      jobId,
+      ownerId: job.ownerId,
+      branch: sourceBranch,
+      targetBranch,
+      commitSha: mergeSha,
+    });
   } catch (err) {
     const error = err instanceof Error ? err.message : String(err);
+    logOperation({
+      action: "release_merge",
+      status: "failed",
+      jobId,
+      ownerId: job.ownerId,
+      branch: sourceBranch,
+      targetBranch,
+      error,
+    });
     const record: ReleaseMergeRecord = {
       targetBranch,
       status: "failed",
@@ -346,8 +421,24 @@ export async function revertCompletedJobFromDefaultBranch(jobId: string): Promis
       branch: config.GIT_DEFAULT_BRANCH,
       commitSha: revertSha,
     });
+    logOperation({
+      action: "git_revert",
+      status: "success",
+      jobId,
+      ownerId: job.ownerId,
+      targetBranch: config.GIT_DEFAULT_BRANCH,
+      commitSha: revertSha,
+    });
   } catch (err) {
     const error = err instanceof Error ? err.message : String(err);
+    logOperation({
+      action: "git_revert",
+      status: "failed",
+      jobId,
+      ownerId: job.ownerId,
+      targetBranch: config.GIT_DEFAULT_BRANCH,
+      error,
+    });
     updateJob(jobId, {
       message: `${job.message ?? "修改已完成"}\n\n${config.GIT_DEFAULT_BRANCH} 撤回失败: ${error}`,
       revertError: error,
@@ -392,5 +483,13 @@ export async function discardJobMerge(jobId: string): Promise<void> {
     type: "cancelled",
     message: "已放弃合并",
     text: "已放弃合并：已切回 test 分支，test 未做任何改动",
+  });
+  logOperation({
+    action: "merge_discard",
+    status: "cancelled",
+    jobId,
+    ownerId: job.ownerId,
+    branch: job.branch,
+    targetBranch: config.GIT_DEFAULT_BRANCH,
   });
 }

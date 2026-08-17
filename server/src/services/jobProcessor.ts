@@ -10,6 +10,7 @@ import { resolveJobPreviewLink } from "./devPreviewService.js";
 import type { AgentStreamEvent } from "./agent/types.js";
 import { createJobConflictResolver } from "./gitConflictResolutionService.js";
 import { buildPromptWithTapdContext } from "./tapd/tapdContext.js";
+import { logOperation } from "./operationLog.js";
 
 function isNoChangesError(err: unknown): boolean {
   return err instanceof Error && err.message.includes("没有文件变更");
@@ -80,7 +81,20 @@ function finishJob(
     phase?: string;
   }
 ): void {
+  const existing = getJob(jobId);
   updateJob(jobId, patch);
+  logOperation({
+    action: "job_execute",
+    status: patch.status === "completed" ? "success" : "failed",
+    jobId,
+    ownerId: existing?.ownerId,
+    mode: "execute",
+    engine: "claude",
+    durationMs: existing ? Date.now() - new Date(existing.createdAt).getTime() : undefined,
+    branch: patch.branch,
+    commitSha: patch.commitSha,
+    error: patch.error,
+  });
   if (patch.status === "failed") {
     appendJobEvent(jobId, {
       type: "error",
@@ -112,6 +126,16 @@ export async function processJob(jobId: string): Promise<void> {
     jobsAhead: 0,
   });
   if (!job) return;
+  const agentStartedAt = Date.now();
+  logOperation({
+    action: "job_execute",
+    status: "started",
+    jobId,
+    ownerId: job.ownerId,
+    mode: "execute",
+    engine: "claude",
+    attachmentCount: job.attachments?.length,
+  });
 
   if (!job.requiresConfirm || !job.planSummary?.trim()) {
     finishJob(jobId, {
@@ -171,6 +195,15 @@ export async function processJob(jobId: string): Promise<void> {
       }
     );
     implementationSummary = result.summary;
+    logOperation({
+      action: "agent_execute",
+      status: "success",
+      jobId,
+      ownerId: job.ownerId,
+      mode: "execute",
+      engine: "claude",
+      durationMs: Date.now() - agentStartedAt,
+    });
     if (await abortIfCancelled(jobId, "agent", repoPath)) return;
 
     let hasChanges = await gitService.hasUncommittedChanges(repoPath);
@@ -220,6 +253,15 @@ export async function processJob(jobId: string): Promise<void> {
     const commitMessage = buildCommitMessage(result.summary, jobId);
     const commitSha = await gitService.commitAndPush(branchName, commitMessage, repoPath);
     taskCommitSha = commitSha;
+    logOperation({
+      action: "git_commit",
+      status: "success",
+      jobId,
+      ownerId: job.ownerId,
+      branch: branchName,
+      commitSha,
+      message: config.PUSH_FEATURE_BRANCH ? "committed_and_pushed" : "committed_locally",
+    });
     if (misplacedChangePaths.length > 0) {
       await gitService.discardSpecificUncommittedChanges(misplacedChangePaths);
     }
@@ -253,6 +295,16 @@ export async function processJob(jobId: string): Promise<void> {
       mergeMessage,
       createJobConflictResolver(jobId)
     );
+    logOperation({
+      action: "git_merge",
+      status: "success",
+      jobId,
+      ownerId: job.ownerId,
+      branch: branchName,
+      targetBranch: defaultBranch,
+      commitSha: mergeSha,
+      message: "merged_and_pushed",
+    });
     finalBranch = defaultBranch;
 
     const doneMessage = `${result.summary}\n\n已合并到 ${defaultBranch}`;

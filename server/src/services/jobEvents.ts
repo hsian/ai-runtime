@@ -86,6 +86,10 @@ export function getJobEvents(jobId: string): JobEvent[] {
   return events.get(jobId) ?? [];
 }
 
+export function deleteJobEvents(jobId: string): void {
+  events.delete(jobId);
+}
+
 export function subscribeJobEvents(
   jobId: string,
   callback: (event: JobEvent) => void

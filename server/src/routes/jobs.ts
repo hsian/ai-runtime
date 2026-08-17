@@ -1,6 +1,7 @@
 import { Router } from "express";
 import {
   createJob,
+  deleteJob,
   getConversationContextStats,
   getJob,
   listJobs,
@@ -8,12 +9,13 @@ import {
 } from "../services/jobStore.js";
 import { jobQueue } from "../services/jobQueue.js";
 import { processJob } from "../services/jobProcessor.js";
-import { appendJobEvent, getJobEvents, subscribeJobEvents } from "../services/jobEvents.js";
+import { appendJobEvent, deleteJobEvents, getJobEvents, subscribeJobEvents } from "../services/jobEvents.js";
 import { gitService } from "../services/gitService.js";
 import { runAgent, killAgentForJob, AgentAbortedError } from "../services/agent/index.js";
 import { config } from "../config.js";
 import {
   cleanupStagedAttachmentsForAgent,
+  deleteJobAttachments,
   finalizeJobAttachments,
   jobImagesUpload,
   multerErrorMessage,
@@ -25,16 +27,38 @@ import type { JobRequest } from "../types.js";
 import { resolvePlanSummary } from "../services/agent/planSummaryResolver.js";
 import { isNonActionablePlanInput } from "../services/agent/planInputGuard.js";
 import { buildPromptWithTapdContext } from "../services/tapd/tapdContext.js";
+import { logOperation } from "../services/operationLog.js";
+import { getClientIdentity } from "../services/clientIdentity.js";
 
 function getRequestOwnerId(req: import("express").Request): string {
-  const headerValue = req.get("x-ai-runtime-client-id");
-  const queryValue = req.query.clientId;
-  const raw =
-    headerValue ??
-    (typeof queryValue === "string" ? queryValue : undefined) ??
-    "anonymous";
-  const ownerId = raw.trim().slice(0, 128);
-  return ownerId || "anonymous";
+  return getClientIdentity(req).ownerId;
+}
+
+function toPublicJob(job: NonNullable<ReturnType<typeof getJob>>) {
+  const {
+    attachments,
+    conversationHistory: _conversationHistory,
+    ownerId: _ownerId,
+    remoteIp: _remoteIp,
+    previewHost: _previewHost,
+    worktreePath: _worktreePath,
+    ...publicJob
+  } = job;
+  return {
+    ...publicJob,
+    attachments: attachments?.map((attachment, index) => ({
+      index,
+      name: attachment.name,
+      mime: attachment.mime,
+      sizeBytes: attachment.sizeBytes,
+      url: `/api/jobs/${encodeURIComponent(job.jobId)}/attachments/${index}`,
+    })),
+  };
+}
+
+function getPublicJob(jobId: string) {
+  const job = getJob(jobId);
+  return job ? toPublicJob(job) : undefined;
 }
 
 function isAuthorizedJob(
@@ -73,6 +97,16 @@ async function revertPlanWorkspaceChanges(jobId: string, reason: string): Promis
 async function runPlan(jobId: string): Promise<void> {
   const job = updateJob(jobId, { status: "planning", requiresConfirm: true, jobsAhead: undefined });
   if (!job) return;
+  const operationStartedAt = Date.now();
+  logOperation({
+    action: "plan_generate",
+    status: "started",
+    jobId,
+    ownerId: job.ownerId,
+    mode: "plan",
+    engine: "claude",
+    attachmentCount: job.attachments?.length,
+  });
   let shouldCleanupWorkspace = false;
 
   const trimmed = job.prompt.trim();
@@ -86,6 +120,16 @@ async function runPlan(jobId: string): Promise<void> {
       type: "stage",
       phase: "plan_need_more",
       text: "Plan 需要补充信息：当前描述过短，请补充具体改动后重新提交",
+    });
+    logOperation({
+      action: "plan_generate",
+      status: "failed",
+      jobId,
+      ownerId: job.ownerId,
+      mode: "plan",
+      engine: "claude",
+      durationMs: Date.now() - operationStartedAt,
+      message: "needs_more_input",
     });
     return;
   }
@@ -167,6 +211,15 @@ async function runPlan(jobId: string): Promise<void> {
       phase: "plan_done",
       text: "Plan 完成：请确认是否执行修改",
     });
+    logOperation({
+      action: "plan_generate",
+      status: "success",
+      jobId,
+      ownerId: job.ownerId,
+      mode: "plan",
+      engine: "claude",
+      durationMs: Date.now() - operationStartedAt,
+    });
   } catch (err) {
     if (shouldCleanupWorkspace) {
       await revertPlanWorkspaceChanges(jobId, "Plan 中断后还原工作区");
@@ -189,20 +242,43 @@ async function runQueuedPlan(jobId: string): Promise<void> {
 
     updateJob(jobId, { status: "failed", error: String(err), message: "Plan 执行失败" });
     appendJobEvent(jobId, { type: "error", message: String(err), text: "Plan 执行失败" });
+    logOperation({
+      action: "plan_generate",
+      status: "failed",
+      jobId,
+      ownerId: latest?.ownerId,
+      mode: "plan",
+      engine: "claude",
+      error: err instanceof Error ? err.message : String(err),
+    });
   }
 }
 
 async function runQuestion(jobId: string): Promise<void> {
   const job = updateJob(jobId, {
     status: "running",
-    message: "正在只读分析项目...",
+    message: `问答模式：正在拉取 ${config.GIT_DEFAULT_BRANCH} 分支最新代码...`,
     jobsAhead: undefined,
   });
   if (!job) return;
-
-  const repoPath = gitService.getRepoPath();
+  const operationStartedAt = Date.now();
+  logOperation({
+    action: "question_execute",
+    status: "started",
+    jobId,
+    ownerId: job.ownerId,
+    mode: "question",
+    engine: "claude",
+    attachmentCount: job.attachments?.length,
+  });
 
   try {
+    const defaultBranch = config.GIT_DEFAULT_BRANCH;
+    const pullText = `问答模式：正在拉取 ${defaultBranch} 分支最新代码...`;
+    appendJobEvent(jobId, { type: "stage", phase: "pull", text: pullText });
+    await gitService.prepareBaseBranch();
+
+    const repoPath = gitService.getRepoPath();
     appendJobEvent(jobId, {
       type: "stage",
       phase: "question",
@@ -262,6 +338,15 @@ async function runQuestion(jobId: string): Promise<void> {
       text: result.summary,
       message: result.summary,
     });
+    logOperation({
+      action: "question_execute",
+      status: "success",
+      jobId,
+      ownerId: job.ownerId,
+      mode: "question",
+      engine: "claude",
+      durationMs: Date.now() - operationStartedAt,
+    });
   } catch (err) {
     const current = getJob(jobId);
     if (current?.status === "cancelled" || err instanceof AgentAbortedError) return;
@@ -276,7 +361,18 @@ async function runQuestion(jobId: string): Promise<void> {
       message: String(err),
       text: "项目问答失败",
     });
+    logOperation({
+      action: "question_execute",
+      status: "failed",
+      jobId,
+      ownerId: job.ownerId,
+      mode: "question",
+      engine: "claude",
+      durationMs: Date.now() - operationStartedAt,
+      error: err instanceof Error ? err.message : String(err),
+    });
   } finally {
+    const repoPath = gitService.getRepoPath();
     await cleanupStagedAttachmentsForAgent(repoPath, jobId).catch(() => {});
   }
 }
@@ -312,7 +408,8 @@ function createJobFromSubmit(
     ? (req.files as Express.Multer.File[] | undefined)
     : undefined;
 
-  const job = createJob({ ...parsed.data, ownerId: getRequestOwnerId(req) });
+  const identity = getClientIdentity(req);
+  const job = createJob({ ...parsed.data, ownerId: identity.ownerId, remoteIp: identity.remoteIp });
   const previewHost = req.get("x-forwarded-host") ?? req.get("host");
   if (previewHost) {
     updateJob(job.jobId, { previewHost });
@@ -357,6 +454,14 @@ jobsRouter.post("/", handleJobImagesUpload, (req, res) => {
 
   const { job, data } = created;
   emitUserSubmitEvents(job.jobId, data);
+  logOperation({
+    action: "job_submit",
+    status: "success",
+    jobId: job.jobId,
+    ownerId: job.ownerId,
+    mode: "question",
+    attachmentCount: data.attachments?.length,
+  });
 
   void runQuestion(job.jobId);
 
@@ -378,6 +483,14 @@ jobsRouter.post("/plan", handleJobImagesUpload, (req, res) => {
   const { job, data } = created;
   updateJob(job.jobId, { requiresConfirm: true, status: "planning" });
   emitUserSubmitEvents(job.jobId, data);
+  logOperation({
+    action: "job_submit",
+    status: "success",
+    jobId: job.jobId,
+    ownerId: job.ownerId,
+    mode: "plan",
+    attachmentCount: data.attachments?.length,
+  });
 
   void runQueuedPlan(job.jobId);
 
@@ -409,6 +522,13 @@ jobsRouter.post("/:jobId/execute", (req, res) => {
 
   updateJob(jobId, { status: "pending", message: "已确认执行，正在准备独立工作区...", planSummary });
   appendJobEvent(jobId, { type: "stage", phase: "execute_confirmed", text: "已确认执行，正在准备独立工作区..." });
+  logOperation({
+    action: "plan_confirm",
+    status: "success",
+    jobId,
+    ownerId: job.ownerId,
+    mode: "execute",
+  });
   void processJob(jobId);
 
   res.status(202).json({
@@ -435,6 +555,14 @@ jobsRouter.post("/:jobId/cancel", async (req, res) => {
   }
 
   updateJob(jobId, { status: "cancelled", message: "任务已取消" });
+  logOperation({
+    action: "job_cancel",
+    status: "cancelled",
+    jobId,
+    ownerId: job.ownerId,
+    mode: job.requiresConfirm ? (job.status === "planning" ? "plan" : "execute") : "question",
+    message: `cancelled_from:${job.status}`,
+  });
   const removedFromQueue = jobQueue.dequeue(jobId);
 
   if (removedFromQueue) {
@@ -505,6 +633,43 @@ jobsRouter.post("/:jobId/cancel", async (req, res) => {
   appendJobEvent(jobId, { type: "cancelled", message: "任务已取消", text: "任务已取消" });
 
   res.json({ ok: true });
+});
+
+jobsRouter.delete("/conversation/:conversationId", async (req, res) => {
+  const ownerId = getRequestOwnerId(req);
+  const conversationId = req.params.conversationId;
+  const jobs = listJobs(ownerId).filter(
+    (job) => (job.conversationId || job.jobId) === conversationId
+  );
+  if (jobs.length === 0) {
+    res.status(404).json({ error: "任务不存在" });
+    return;
+  }
+
+  const deletableStatuses = new Set(["completed", "failed", "cancelled", "awaiting_confirm", "awaiting_input"]);
+  const blocked = jobs.find((job) => !deletableStatuses.has(job.status));
+  if (blocked) {
+    const message = blocked.status === "awaiting_merge"
+      ? "任务正在等待合并处理，请先合并或放弃合并"
+      : "任务仍在执行，请先取消后再删除";
+    res.status(409).json({ error: message });
+    return;
+  }
+
+  for (const job of jobs) {
+    await deleteJobAttachments(job.jobId).catch(() => undefined);
+    await cleanupStagedAttachmentsForAgent(gitService.getRepoPath(), job.jobId).catch(() => undefined);
+    deleteJobEvents(job.jobId);
+    deleteJob(job.jobId);
+  }
+  logOperation({
+    action: "job_delete",
+    status: "success",
+    jobId: jobs[0]?.jobId,
+    ownerId,
+    message: `deleted_conversation_jobs:${jobs.length}`,
+  });
+  res.json({ ok: true, deleted: jobs.length });
 });
 
 jobsRouter.post("/:jobId/merge", (req, res) => {
@@ -628,9 +793,9 @@ jobsRouter.post("/:jobId/release-merge", async (req, res) => {
       await mergeCompletedJobToBranch(queuedJobId, targetBranch);
     });
     await done;
-    res.json({ ok: true, job: getJob(jobId) });
+    res.json({ ok: true, job: getPublicJob(jobId) });
   } catch (err) {
-    res.status(400).json({ error: err instanceof Error ? err.message : String(err), job: getJob(jobId) });
+    res.status(400).json({ error: err instanceof Error ? err.message : String(err), job: getPublicJob(jobId) });
   }
 });
 
@@ -644,9 +809,9 @@ jobsRouter.post("/:jobId/revert-default", async (req, res) => {
       await revertCompletedJobFromDefaultBranch(queuedJobId);
     });
     await done;
-    res.json({ ok: true, job: getJob(jobId) });
+    res.json({ ok: true, job: getPublicJob(jobId) });
   } catch (err) {
-    res.status(400).json({ error: err instanceof Error ? err.message : String(err), job: getJob(jobId) });
+    res.status(400).json({ error: err instanceof Error ? err.message : String(err), job: getPublicJob(jobId) });
   }
 });
 
@@ -664,6 +829,21 @@ jobsRouter.get("/:jobId/events", (req, res) => {
   if (!job) return;
 
   res.json({ events: getJobEvents(job.jobId) });
+});
+
+jobsRouter.get("/:jobId/attachments/:index", (req, res) => {
+  const job = getAuthorizedJob(req, res);
+  if (!job) return;
+  const index = Number(req.params.index);
+  const attachment = Number.isInteger(index) && index >= 0 ? job.attachments?.[index] : undefined;
+  if (!attachment) {
+    res.status(404).json({ error: "图片不存在" });
+    return;
+  }
+  res.setHeader("Cache-Control", "private, max-age=3600");
+  res.setHeader("Content-Disposition", `inline; filename*=UTF-8''${encodeURIComponent(attachment.name)}`);
+  res.type(attachment.mime);
+  res.sendFile(attachment.path);
 });
 
 jobsRouter.get("/:jobId/stream", (req, res) => {
@@ -708,9 +888,9 @@ jobsRouter.get("/:jobId/stream", (req, res) => {
 jobsRouter.get("/:jobId", (req, res) => {
   const job = getAuthorizedJob(req, res);
   if (!job) return;
-  res.json(job);
+  res.json(toPublicJob(job));
 });
 
 jobsRouter.get("/", (req, res) => {
-  res.json({ jobs: listJobs(getRequestOwnerId(req)) });
+  res.json({ jobs: listJobs(getRequestOwnerId(req)).map(toPublicJob) });
 });

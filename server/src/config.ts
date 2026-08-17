@@ -41,12 +41,28 @@ const envSchema = z.object({
     .string()
     .transform((v) => v === "true")
     .default("true"),
-  CORS_ORIGIN: z.string().default("*"),
+  CORS_ORIGIN: z.string().default("http://localhost:5173"),
   UPLOAD_DIR: z.string().default("./data/uploads"),
   UPLOAD_MAX_BYTES: z.coerce.number().default(300 * 1024),
   /** TAPD 描述配图从远端下载时的体积上限（下载后会由插件压缩再上传） */
   TAPD_IMAGE_MAX_BYTES: z.coerce.number().default(5 * 1024 * 1024),
   UPLOAD_MAX_COUNT: z.coerce.number().default(3),
+  OPERATION_LOG_ENABLED: z
+    .string()
+    .transform((v) => v === "true")
+    .default("true"),
+  OPERATION_LOG_DIR: z.string().default("./data/logs"),
+  OPERATION_LOG_RETENTION_DAYS: z.coerce.number().int().positive().default(7),
+  OPERATION_LOG_MAX_FILE_MB: z.coerce.number().positive().default(20),
+  CLIENT_COOKIE_SECRET: z.string().optional(),
+  CLIENT_COOKIE_SECRET_FILE: z.string().default("./data/client-cookie-secret"),
+  CLIENT_COOKIE_NAME: z.string().default("ai_runtime_client"),
+  CLIENT_COOKIE_MAX_AGE_DAYS: z.coerce.number().int().positive().default(365),
+  CLIENT_COOKIE_SECURE: z
+    .string()
+    .transform((v) => v === "true")
+    .default("false"),
+  WEB_DIST_DIR: z.string().default("../web/dist"),
   TAPD_API_BASE: z.string().url().default("https://api.tapd.cn"),
   TAPD_CLIENT_ID: z.string().optional(),
   TAPD_CLIENT_SECRET: z.string().optional(),
@@ -98,6 +114,9 @@ function loadConfig() {
     UPLOAD_DIR: resolve(process.cwd(), parsed.data.UPLOAD_DIR),
     WORKSPACE_DIR: resolve(process.cwd(), parsed.data.WORKSPACE_DIR),
     WORKTREE_DIR: resolve(process.cwd(), parsed.data.WORKTREE_DIR),
+    OPERATION_LOG_DIR: resolve(process.cwd(), parsed.data.OPERATION_LOG_DIR),
+    CLIENT_COOKIE_SECRET_FILE: resolve(process.cwd(), parsed.data.CLIENT_COOKIE_SECRET_FILE),
+    WEB_DIST_DIR: resolve(process.cwd(), parsed.data.WEB_DIST_DIR),
   };
 }
 
