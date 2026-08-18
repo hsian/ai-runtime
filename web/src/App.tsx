@@ -1,6 +1,6 @@
 import { App as AntApp, Button, Input, Modal, Select, Space, Tooltip, Typography } from "antd";
-import { ReloadOutlined, SafetyCertificateOutlined } from "@ant-design/icons";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { BellOutlined, ReloadOutlined, SafetyCertificateOutlined } from "@ant-design/icons";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { ConversationPanel } from "./components/ConversationPanel";
 import { TaskComposer } from "./components/TaskComposer";
@@ -10,6 +10,12 @@ import { api, openJobStream } from "./services/api";
 import { useTaskStore } from "./stores/taskStore";
 import type { JobStatus, TapdContext, TapdImageOption, TapdIteration, TapdWorkspace } from "./types";
 import { compressImage } from "./utils/imageCompress";
+import {
+  getDesktopNotificationPermission,
+  requestDesktopNotificationPermission,
+  showDesktopNotification,
+  type DesktopNotificationPermission,
+} from "./utils/desktopNotification";
 import { createUniqueId } from "./utils/uniqueId";
 
 const terminalStatuses = new Set(["completed", "failed", "cancelled", "awaiting_confirm", "awaiting_input", "awaiting_merge"]);
@@ -51,6 +57,69 @@ export default function App() {
     () => localStorage.getItem("createMergeRequestOnMerge") === "true"
   );
   const [planDrafts, setPlanDrafts] = useState<Record<string, string>>({});
+  const [notificationPermission, setNotificationPermission] = useState<DesktopNotificationPermission>(
+    getDesktopNotificationPermission
+  );
+  const knownJobStatuses = useRef(new Map<string, JobStatus["status"]>());
+
+  const notifyJobStatus = useCallback((job: JobStatus) => {
+    let body: string | undefined;
+    let requireInteraction = false;
+    switch (job.status) {
+      case "awaiting_confirm":
+        body = "Plan 已生成，等待执行修改";
+        requireInteraction = true;
+        break;
+      case "awaiting_input":
+        body = "Plan 需要补充信息";
+        requireInteraction = true;
+        break;
+      case "awaiting_merge":
+        body = job.mergeRetryable
+          ? "Git 仓库不可用，等待重试合并"
+          : "代码修改完成，等待合并确认";
+        requireInteraction = true;
+        break;
+      case "completed":
+        body = job.mergedToDefaultBranch
+          ? "代码修改并合并成功"
+          : job.requiresConfirm
+            ? "代码修改已完成"
+            : "项目问答已完成";
+        break;
+      case "failed":
+        body = job.error ? `任务执行失败：${job.error.slice(0, 120)}` : "任务执行失败";
+        requireInteraction = true;
+        break;
+    }
+    if (!body) return;
+    showDesktopNotification({
+      body,
+      tag: `ai-runtime-${job.jobId}-${job.status}`,
+      requireInteraction,
+      onClick: () => useTaskStore.getState().selectJob(job.jobId),
+    });
+  }, []);
+
+  const applyJobUpdate = useCallback((job: JobStatus) => {
+    const previous = knownJobStatuses.current.get(job.jobId);
+    knownJobStatuses.current.set(job.jobId, job.status);
+    store.upsertJob(job);
+    if (previous && previous !== job.status) notifyJobStatus(job);
+  }, [notifyJobStatus, store]);
+
+  const enableDesktopNotifications = useCallback(async (announce = true) => {
+    const permission = await requestDesktopNotificationPermission();
+    setNotificationPermission(permission);
+    if (!announce) return;
+    if (permission === "granted") {
+      message.success("桌面通知已开启");
+    } else if (permission === "denied") {
+      message.warning("桌面通知已被浏览器阻止，请在地址栏的网站权限中重新开启");
+    } else {
+      message.warning("当前页面不支持桌面通知，请通过 HTTPS 或 localhost 访问");
+    }
+  }, [message]);
 
   const selectedJob = useMemo(
     () => store.jobs.find((job) => job.jobId === store.selectedJobId),
@@ -68,20 +137,29 @@ export default function App() {
   const refreshJobs = useCallback(async (keepSelection = true) => {
     try {
       const jobs = await api.listJobs();
+      const visibleIds = new Set(jobs.map((job) => job.jobId));
+      for (const jobId of knownJobStatuses.current.keys()) {
+        if (!visibleIds.has(jobId)) knownJobStatuses.current.delete(jobId);
+      }
+      for (const job of jobs) {
+        const previous = knownJobStatuses.current.get(job.jobId);
+        knownJobStatuses.current.set(job.jobId, job.status);
+        if (previous && previous !== job.status) notifyJobStatus(job);
+      }
       store.setJobs(jobs);
       if (!keepSelection && jobs[0]) store.selectJob(jobs[0].jobId);
     } catch (error) {
       message.error(error instanceof Error ? error.message : "任务列表加载失败");
     }
-  }, [message, store]);
+  }, [message, notifyJobStatus, store]);
 
   const refreshJob = useCallback(async (jobId: string) => {
     try {
-      store.upsertJob(await api.getJob(jobId));
+      applyJobUpdate(await api.getJob(jobId));
     } catch {
       // A cancelled or restarted in-memory task may no longer exist.
     }
-  }, [store]);
+  }, [applyJobUpdate]);
 
   useEffect(() => {
     store.setLoading(true);
@@ -106,7 +184,15 @@ export default function App() {
     ]);
     const source = openJobStream(jobId, (event) => {
       store.appendEvent(event);
-      if (event.type === "done" || event.type === "error" || event.type === "cancelled" || event.phase?.includes("done")) {
+      if (
+        event.type === "done" ||
+        event.type === "error" ||
+        event.type === "cancelled" ||
+        event.phase?.includes("done") ||
+        event.phase === "plan_need_more" ||
+        event.phase === "execute_ready" ||
+        event.phase === "merge_retryable"
+      ) {
         void refreshJob(jobId);
       }
     });
@@ -151,6 +237,7 @@ export default function App() {
   const submit = async () => {
     const prompt = draft.trim();
     if (!prompt || submitting) return;
+    if (notificationPermission === "default") void enableDesktopNotifications(false);
     setSubmitting(true);
     try {
       const uploadSources = [...tapdImages.map((item) => item.blob), ...files];
@@ -205,15 +292,18 @@ export default function App() {
     }
   };
 
-  const confirmExecute = (planSummary: string) => runAction(async () => {
-    const jobId = selectedJob!.jobId;
-    await api.execute(jobId, planSummary);
-    setPlanDrafts((current) => {
-      const next = { ...current };
-      delete next[jobId];
-      return next;
-    });
-  }, "已按编辑后的方案开始执行代码修改");
+  const confirmExecute = (planSummary: string) => {
+    if (notificationPermission === "default") void enableDesktopNotifications(false);
+    return runAction(async () => {
+      const jobId = selectedJob!.jobId;
+      await api.execute(jobId, planSummary);
+      setPlanDrafts((current) => {
+        const next = { ...current };
+        delete next[jobId];
+        return next;
+      });
+    }, "已按编辑后的方案开始执行代码修改");
+  };
   const cancelJob = () => modal.confirm({
     title: "确认取消当前任务？",
     content: "正在执行的 Agent 进程和临时工作区将被停止并清理。",
@@ -408,6 +498,13 @@ export default function App() {
           </div>
           <Space>
             {active && <span className="live-indicator"><i /> 实时连接</span>}
+            <Tooltip title={notificationPermission === "granted" ? "桌面通知已开启" : "开启桌面通知"}>
+              <Button
+                type={notificationPermission === "granted" ? "primary" : "text"}
+                icon={<BellOutlined />}
+                onClick={() => void enableDesktopNotifications()}
+              />
+            </Tooltip>
             <Tooltip title="刷新任务"><Button type="text" icon={<ReloadOutlined />} onClick={() => void refreshJobs()} /></Tooltip>
           </Space>
         </header>
@@ -416,9 +513,11 @@ export default function App() {
           <ConversationPanel
             jobs={conversationJobs}
             currentJob={selectedJob}
+            modifyCode={modifyCode}
             eventsByJob={store.events}
             planDrafts={planDrafts}
             busy={busy}
+            onModifyCodeChange={setModifyCode}
             onPlanChange={(jobId, value) => setPlanDrafts((current) => ({ ...current, [jobId]: value }))}
             onExecute={confirmExecute}
           />

@@ -26,7 +26,6 @@ export interface OperationLogEntry {
 }
 
 const LOG_FILE_PATTERN = /^operations-\d{4}-\d{2}-\d{2}(?:-\d+)?\.jsonl$/;
-const CLEANUP_INTERVAL_MS = 6 * 60 * 60 * 1000;
 let writeQueue = Promise.resolve();
 const clientIps = new Map<string, string>();
 
@@ -113,27 +112,6 @@ export async function cleanupExpiredOperationLogs(): Promise<void> {
       if (info.mtimeMs < cutoff) await unlink(filePath);
     })
   );
-}
-
-export function initOperationLog(): void {
-  if (!config.OPERATION_LOG_ENABLED) return;
-
-  void cleanupExpiredOperationLogs().catch((err) => {
-    console.warn(
-      "[OperationLog] 清理过期日志失败:",
-      err instanceof Error ? err.message : String(err)
-    );
-  });
-
-  const timer = setInterval(() => {
-    void cleanupExpiredOperationLogs().catch((err) => {
-      console.warn(
-        "[OperationLog] 清理过期日志失败:",
-        err instanceof Error ? err.message : String(err)
-      );
-    });
-  }, CLEANUP_INTERVAL_MS);
-  timer.unref();
 }
 
 export async function listOperationLogDates(): Promise<string[]> {

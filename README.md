@@ -6,7 +6,7 @@
 
 ```text
 web/        React + TypeScript + Ant Design 前端
-server/     Express API、Agent、Git、TAPD 和任务队列
+server/     Express API、Agent、Git、TAPD、SQLite 任务存储和任务队列
 extension/  旧版 Chrome 插件，仅保留用于迁移对照，不参与默认构建
 ```
 
@@ -29,6 +29,8 @@ npm run dev
 
 浏览器访问 `http://localhost:5173`。开发服务器会把 `/api` 请求代理到 `http://localhost:6080`；可通过 `VITE_API_PROXY` 修改目标地址。
 
+Web 页面支持 Plan 待确认、等待合并、任务完成和执行失败的桌面通知。点击页面右上角铃铛可授权；除 `localhost` 外，Chrome 通常要求通过 HTTPS 访问才能使用网页桌面通知。
+
 ## 构建与部署
 
 ```powershell
@@ -49,6 +51,18 @@ http://服务器内网IP:6080
 服务端首次访问时签发带 HMAC 签名的 HttpOnly Cookie，作为匿名 `ownerId` 隔离任务。来源内网 IP 只用于操作日志，不用于任务归属，因此 IP 变化或复用不会导致任务串台。
 
 未配置 `CLIENT_COOKIE_SECRET` 时，服务端会自动生成 `server/data/client-cookie-secret`。该文件必须保留，删除后所有浏览器会获得新的匿名身份。
+
+## 任务数据
+
+任务、状态和执行事件默认持久化到 `server/data/ai-runtime.sqlite`。服务重启后历史任务仍可查询；重启时仍处于 `planning`、`pending` 或 `running` 的任务会标记为执行中断，等待确认的 Plan 会继续保留。
+
+服务启动时及之后每 6 小时执行一次统一清理：已完成、失败、取消、等待确认或等待补充信息且超过 `JOB_RETENTION_DAYS`（默认 30 天）的任务会连同执行事件和附件一起删除。等待合并的任务不会自动删除，避免未合并代码被误清理。
+
+部署到容器或临时文件系统时，请持久化整个 `server/data` 目录，至少包括：
+
+- `ai-runtime.sqlite`、`ai-runtime.sqlite-wal` 和 `ai-runtime.sqlite-shm`
+- `client-cookie-secret`
+- `uploads/`
 
 ## 操作日志
 

@@ -13,14 +13,15 @@ import { tapdRouter } from "./routes/tapd.js";
 import { gitService } from "./services/gitService.js";
 
 import { initJobStore } from "./services/jobStore.js";
-import { initOperationLog } from "./services/operationLog.js";
+import { closeDatabase } from "./services/database.js";
+import { initHousekeeping } from "./services/housekeeping.js";
 import { clientIdentityMiddleware, getClientIdentity } from "./services/clientIdentity.js";
 import { operationLogsRouter } from "./routes/operationLogs.js";
 
 
 
 initJobStore();
-initOperationLog();
+initHousekeeping();
 
 
 
@@ -121,6 +122,8 @@ function shutdown(signal: string): void {
   server.close(() => {
 
     console.log("[AI Runtime] 服务已关闭");
+
+    closeDatabase();
 
     process.exit(0);
 

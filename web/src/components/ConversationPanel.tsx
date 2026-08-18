@@ -104,9 +104,11 @@ function JobTurn(props: {
 export function ConversationPanel(props: {
   jobs: JobStatus[];
   currentJob?: JobStatus;
+  modifyCode: boolean;
   eventsByJob: Record<string, JobEvent[]>;
   planDrafts: Record<string, string>;
   busy: boolean;
+  onModifyCodeChange: (value: boolean) => void;
   onPlanChange: (jobId: string, value: string) => void;
   onExecute: (planSummary: string) => void;
 }) {
@@ -119,8 +121,22 @@ export function ConversationPanel(props: {
           可以先询问项目实现，也可以开启“修改代码”，由 Agent 先生成方案，确认后再进入独立工作区执行。
         </Typography.Paragraph>
         <div className="starter-grid">
-          <div><FileTextOutlined /><strong>项目问答</strong><span>读取仓库并回答，不修改代码</span></div>
-          <div><CodeOutlined /><strong>代码修改</strong><span>先出 Plan，确认后自动执行</span></div>
+          <button
+            type="button"
+            className={!props.modifyCode ? "is-active" : undefined}
+            aria-pressed={!props.modifyCode}
+            onClick={() => props.onModifyCodeChange(false)}
+          >
+            <FileTextOutlined /><strong>项目问答</strong><span>读取仓库并回答，不修改代码</span>
+          </button>
+          <button
+            type="button"
+            className={props.modifyCode ? "is-active" : undefined}
+            aria-pressed={props.modifyCode}
+            onClick={() => props.onModifyCodeChange(true)}
+          >
+            <CodeOutlined /><strong>代码修改</strong><span>先出 Plan，确认后自动执行</span>
+          </button>
         </div>
       </div>
     );

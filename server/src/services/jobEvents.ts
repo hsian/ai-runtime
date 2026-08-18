@@ -1,5 +1,7 @@
 import { randomUUID } from "crypto";
 
+import { getDatabase } from "./database.js";
+
 export type JobEventType =
   | "user"
   | "queue"
@@ -46,12 +48,7 @@ export interface JobEvent {
 export type JobEventInput = Omit<JobEvent, "id" | "jobId" | "timestamp">;
 
 const MAX_EVENTS_PER_JOB = 1000;
-const events = new Map<string, JobEvent[]>();
 const subscribers = new Map<string, Set<(event: JobEvent) => void>>();
-
-export function getJobEventsMap(): Map<string, JobEvent[]> {
-  return events;
-}
 
 export function appendJobEvent(jobId: string, input: JobEventInput): JobEvent {
   const event: JobEvent = {
@@ -61,12 +58,25 @@ export function appendJobEvent(jobId: string, input: JobEventInput): JobEvent {
     ...input,
   };
 
-  const list = events.get(jobId) ?? [];
-  list.push(event);
-  if (list.length > MAX_EVENTS_PER_JOB) {
-    list.splice(0, list.length - MAX_EVENTS_PER_JOB);
-  }
-  events.set(jobId, list);
+  const db = getDatabase();
+  const persist = db.transaction(() => {
+    db.prepare(`
+      INSERT INTO job_events (id, job_id, timestamp, data)
+      VALUES (?, ?, ?, ?)
+    `).run(event.id, event.jobId, event.timestamp, JSON.stringify(event));
+    db.prepare(`
+      DELETE FROM job_events
+      WHERE job_id = ?
+        AND sequence NOT IN (
+          SELECT sequence
+          FROM job_events
+          WHERE job_id = ?
+          ORDER BY sequence DESC
+          LIMIT ?
+        )
+    `).run(jobId, jobId, MAX_EVENTS_PER_JOB);
+  });
+  persist();
 
   const subs = subscribers.get(jobId);
   if (subs) {
@@ -83,11 +93,14 @@ export function appendJobEvent(jobId: string, input: JobEventInput): JobEvent {
 }
 
 export function getJobEvents(jobId: string): JobEvent[] {
-  return events.get(jobId) ?? [];
+  const rows = getDatabase()
+    .prepare("SELECT data FROM job_events WHERE job_id = ? ORDER BY sequence")
+    .all(jobId) as Array<{ data: string }>;
+  return rows.map((row) => JSON.parse(row.data) as JobEvent);
 }
 
 export function deleteJobEvents(jobId: string): void {
-  events.delete(jobId);
+  getDatabase().prepare("DELETE FROM job_events WHERE job_id = ?").run(jobId);
 }
 
 export function subscribeJobEvents(

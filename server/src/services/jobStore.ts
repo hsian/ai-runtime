@@ -1,9 +1,15 @@
 import { v4 as uuidv4 } from "uuid";
-import type { ConversationHistoryMessage, Job, JobRequest } from "../types.js";
 
-const jobs = new Map<string, Job>();
+import type { ConversationHistoryMessage, Job, JobRequest, JobStatus } from "../types.js";
+import { getDatabase, initDatabase } from "./database.js";
+
 const MAX_HISTORY_JOBS = 10;
 const MAX_HISTORY_CHARS = 16_000;
+const INTERRUPTED_STATUSES: JobStatus[] = ["planning", "pending", "running"];
+
+interface JobRow {
+  data: string;
+}
 
 export interface ConversationContextStats {
   usedJobs: number;
@@ -12,20 +18,53 @@ export interface ConversationContextStats {
   maxChars: number;
 }
 
+function parseJob(row: JobRow | undefined): Job | undefined {
+  if (!row) return undefined;
+  return JSON.parse(row.data) as Job;
+}
+
+function persistJob(job: Job): void {
+  getDatabase()
+    .prepare(`
+      INSERT INTO jobs (
+        job_id, owner_id, conversation_id, status, created_at, updated_at, data
+      ) VALUES (
+        @jobId, @ownerId, @conversationId, @status, @createdAt, @updatedAt, @data
+      )
+      ON CONFLICT(job_id) DO UPDATE SET
+        owner_id = excluded.owner_id,
+        conversation_id = excluded.conversation_id,
+        status = excluded.status,
+        created_at = excluded.created_at,
+        updated_at = excluded.updated_at,
+        data = excluded.data
+    `)
+    .run({
+      jobId: job.jobId,
+      ownerId: job.ownerId,
+      conversationId: job.conversationId ?? null,
+      status: job.status,
+      createdAt: job.createdAt,
+      updatedAt: job.updatedAt,
+      data: JSON.stringify(job),
+    });
+}
+
 function buildConversationHistory(request: JobRequest): ConversationHistoryMessage[] | undefined {
   if (!request.conversationId) return undefined;
 
-  const related = Array.from(jobs.values())
-    .filter(
-      (job) =>
-        job.ownerId === (request.ownerId ?? "anonymous") &&
-        job.conversationId === request.conversationId &&
-        ["completed", "awaiting_confirm", "awaiting_input", "awaiting_merge"].includes(
-          job.status
-        )
-    )
-    .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime())
-    .slice(-MAX_HISTORY_JOBS);
+  const rows = getDatabase()
+    .prepare(`
+      SELECT data
+      FROM jobs
+      WHERE owner_id = ?
+        AND conversation_id = ?
+        AND status IN ('completed', 'awaiting_confirm', 'awaiting_input', 'awaiting_merge')
+      ORDER BY created_at DESC
+      LIMIT ?
+    `)
+    .all(request.ownerId ?? "anonymous", request.conversationId, MAX_HISTORY_JOBS) as JobRow[];
+  const related = rows.map((row) => parseJob(row)!).reverse();
 
   const turns: ConversationHistoryMessage[][] = [];
   for (const job of related) {
@@ -56,8 +95,7 @@ export function getConversationContextStats(
   ownerId: string,
   conversationId: string
 ): ConversationContextStats {
-  const history =
-    buildConversationHistory({ prompt: "", ownerId, conversationId }) ?? [];
+  const history = buildConversationHistory({ prompt: "", ownerId, conversationId }) ?? [];
   return {
     usedJobs: history.filter((message) => message.role === "user").length,
     maxJobs: MAX_HISTORY_JOBS,
@@ -66,12 +104,30 @@ export function getConversationContextStats(
   };
 }
 
-export function getJobsMap(): Map<string, Job> {
-  return jobs;
-}
-
 export function initJobStore(): void {
-  // 任务仅保存在内存中，服务重启后清空
+  initDatabase();
+  const placeholders = INTERRUPTED_STATUSES.map(() => "?").join(", ");
+  const rows = getDatabase()
+    .prepare(`SELECT data FROM jobs WHERE status IN (${placeholders})`)
+    .all(...INTERRUPTED_STATUSES) as JobRow[];
+  const now = new Date().toISOString();
+  const markInterrupted = getDatabase().transaction(() => {
+    for (const row of rows) {
+      const job = parseJob(row)!;
+      persistJob({
+        ...job,
+        status: "failed",
+        jobsAhead: undefined,
+        message: "服务重启，任务已中断，请重新提交",
+        error: "任务执行期间服务发生重启",
+        updatedAt: now,
+      });
+    }
+  });
+  markInterrupted();
+  if (rows.length > 0) {
+    console.warn(`[JobStore] 已将 ${rows.length} 个未结束任务标记为重启中断`);
+  }
 }
 
 export function createJob(request: JobRequest): Job {
@@ -92,33 +148,59 @@ export function createJob(request: JobRequest): Job {
     createdAt: now,
     updatedAt: now,
   };
-  jobs.set(job.jobId, job);
+  persistJob(job);
   return job;
 }
 
 export function getJob(jobId: string): Job | undefined {
-  return jobs.get(jobId);
+  const row = getDatabase().prepare("SELECT data FROM jobs WHERE job_id = ?").get(jobId) as
+    | JobRow
+    | undefined;
+  return parseJob(row);
 }
 
 export function updateJob(jobId: string, patch: Partial<Job>): Job | undefined {
-  const job = jobs.get(jobId);
+  const job = getJob(jobId);
   if (!job) return undefined;
 
   const updated: Job = { ...job, ...patch, updatedAt: new Date().toISOString() };
-  jobs.set(jobId, updated);
+  persistJob(updated);
   return updated;
 }
 
 export function listJobs(ownerId?: string): Job[] {
-  const all = Array.from(jobs.values());
-  const visible = ownerId
-    ? all.filter((job) => job.ownerId === ownerId || !job.ownerId)
-    : all;
-  return visible.sort(
-    (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
-  );
+  const rows = ownerId
+    ? (getDatabase()
+        .prepare("SELECT data FROM jobs WHERE owner_id = ? ORDER BY created_at DESC")
+        .all(ownerId) as JobRow[])
+    : (getDatabase().prepare("SELECT data FROM jobs ORDER BY created_at DESC").all() as JobRow[]);
+  return rows.map((row) => parseJob(row)!);
+}
+
+export function listExpiredJobs(cutoffIso: string): Job[] {
+  const rows = getDatabase()
+    .prepare(`
+      SELECT data
+      FROM jobs
+      WHERE status IN ('completed', 'failed', 'cancelled', 'awaiting_confirm', 'awaiting_input')
+        AND updated_at < ?
+      ORDER BY updated_at
+    `)
+    .all(cutoffIso) as JobRow[];
+  return rows.map((row) => parseJob(row)!);
+}
+
+export function deleteJobIfExpired(jobId: string, cutoffIso: string): boolean {
+  return getDatabase()
+    .prepare(`
+      DELETE FROM jobs
+      WHERE job_id = ?
+        AND status IN ('completed', 'failed', 'cancelled', 'awaiting_confirm', 'awaiting_input')
+        AND updated_at < ?
+    `)
+    .run(jobId, cutoffIso).changes > 0;
 }
 
 export function deleteJob(jobId: string): boolean {
-  return jobs.delete(jobId);
+  return getDatabase().prepare("DELETE FROM jobs WHERE job_id = ?").run(jobId).changes > 0;
 }

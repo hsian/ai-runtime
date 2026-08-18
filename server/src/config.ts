@@ -54,6 +54,8 @@ const envSchema = z.object({
   OPERATION_LOG_DIR: z.string().default("./data/logs"),
   OPERATION_LOG_RETENTION_DAYS: z.coerce.number().int().positive().default(7),
   OPERATION_LOG_MAX_FILE_MB: z.coerce.number().positive().default(20),
+  DATABASE_PATH: z.string().default("./data/ai-runtime.sqlite"),
+  JOB_RETENTION_DAYS: z.coerce.number().int().positive().default(30),
   CLIENT_COOKIE_SECRET: z.string().optional(),
   CLIENT_COOKIE_SECRET_FILE: z.string().default("./data/client-cookie-secret"),
   CLIENT_COOKIE_NAME: z.string().default("ai_runtime_client"),
@@ -115,6 +117,7 @@ function loadConfig() {
     WORKSPACE_DIR: resolve(process.cwd(), parsed.data.WORKSPACE_DIR),
     WORKTREE_DIR: resolve(process.cwd(), parsed.data.WORKTREE_DIR),
     OPERATION_LOG_DIR: resolve(process.cwd(), parsed.data.OPERATION_LOG_DIR),
+    DATABASE_PATH: resolve(process.cwd(), parsed.data.DATABASE_PATH),
     CLIENT_COOKIE_SECRET_FILE: resolve(process.cwd(), parsed.data.CLIENT_COOKIE_SECRET_FILE),
     WEB_DIST_DIR: resolve(process.cwd(), parsed.data.WEB_DIST_DIR),
   };

@@ -39,8 +39,8 @@ export function TaskSidebar(props: {
       <div className="brand">
         <div className="brand-mark"><RobotOutlined /></div>
         <div>
-          <strong>AI Runtime</strong>
-          <span>代码任务工作台</span>
+          <strong>Code Agent</strong>
+          <span>智能任务工作台</span>
         </div>
       </div>
 
