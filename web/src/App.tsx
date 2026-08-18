@@ -10,11 +10,12 @@ import { api, openJobStream } from "./services/api";
 import { useTaskStore } from "./stores/taskStore";
 import type { JobStatus, TapdContext, TapdImageOption, TapdIteration, TapdWorkspace } from "./types";
 import { compressImage } from "./utils/imageCompress";
+import { createUniqueId } from "./utils/uniqueId";
 
 const terminalStatuses = new Set(["completed", "failed", "cancelled", "awaiting_confirm", "awaiting_input", "awaiting_merge"]);
 
 function newConversationId(): string {
-  return crypto.randomUUID();
+  return createUniqueId();
 }
 
 function revokeTapdPreviews(images: TapdImageOption[]): void {
