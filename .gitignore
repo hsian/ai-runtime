@@ -1,5 +1,6 @@
 server/data/uploads/
 server/data/logs/
+server/data/wt/
 server/data/runtime-state.json
 server/data/ai-runtime.sqlite*
 server/data/client-cookie-secret
