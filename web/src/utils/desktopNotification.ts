@@ -1,7 +1,7 @@
 export type DesktopNotificationPermission = NotificationPermission | "unsupported";
 
 export function getDesktopNotificationPermission(): DesktopNotificationPermission {
-  if (!("Notification" in window)) return "unsupported";
+  if (!("Notification" in window) || !window.isSecureContext) return "unsupported";
   return Notification.permission;
 }
 

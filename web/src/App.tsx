@@ -16,6 +16,7 @@ import {
   showDesktopNotification,
   type DesktopNotificationPermission,
 } from "./utils/desktopNotification";
+import { startTitleAlert, stopTitleAlert } from "./utils/titleAlert";
 import { createUniqueId } from "./utils/uniqueId";
 
 const terminalStatuses = new Set(["completed", "failed", "cancelled", "awaiting_confirm", "awaiting_input", "awaiting_merge"]);
@@ -93,6 +94,7 @@ export default function App() {
         break;
     }
     if (!body) return;
+    startTitleAlert(body);
     showDesktopNotification({
       body,
       tag: `ai-runtime-${job.jobId}-${job.status}`,
@@ -115,11 +117,22 @@ export default function App() {
     if (permission === "granted") {
       message.success("桌面通知已开启");
     } else if (permission === "denied") {
-      message.warning("桌面通知已被浏览器阻止，请在地址栏的网站权限中重新开启");
+      message.info("桌面通知已被浏览器阻止，将使用标签标题滚动提醒");
     } else {
-      message.warning("当前页面不支持桌面通知，请通过 HTTPS 或 localhost 访问");
+      message.info("局域网 HTTP 已自动使用标签标题滚动提醒");
     }
   }, [message]);
+
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible") stopTitleAlert();
+    };
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    return () => {
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+      stopTitleAlert();
+    };
+  }, []);
 
   const selectedJob = useMemo(
     () => store.jobs.find((job) => job.jobId === store.selectedJobId),
@@ -498,7 +511,13 @@ export default function App() {
           </div>
           <Space>
             {active && <span className="live-indicator"><i /> 实时连接</span>}
-            <Tooltip title={notificationPermission === "granted" ? "桌面通知已开启" : "开启桌面通知"}>
+            <Tooltip title={
+              notificationPermission === "granted"
+                ? "桌面通知已开启"
+                : notificationPermission === "unsupported"
+                  ? "局域网 HTTP 已启用标题滚动提醒"
+                  : "开启桌面通知"
+            }>
               <Button
                 type={notificationPermission === "granted" ? "primary" : "text"}
                 icon={<BellOutlined />}

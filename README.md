@@ -29,7 +29,7 @@ npm run dev
 
 浏览器访问 `http://localhost:5173`。开发服务器会把 `/api` 请求代理到 `http://localhost:6080`；可通过 `VITE_API_PROXY` 修改目标地址。
 
-Web 页面支持 Plan 待确认、等待合并、任务完成和执行失败的桌面通知。点击页面右上角铃铛可授权；除 `localhost` 外，Chrome 通常要求通过 HTTPS 访问才能使用网页桌面通知。
+Web 页面支持 Plan 待确认、等待合并、任务完成和执行失败提醒。HTTPS 或 `localhost` 下可通过右上角铃铛开启桌面通知；局域网 IP 的普通 HTTP 下会自动改用浏览器标签标题滚动提醒，仅在页面处于后台时滚动，切回页面后恢复正常标题。
 
 ## 构建与部署
 
