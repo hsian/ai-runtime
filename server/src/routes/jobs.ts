@@ -141,8 +141,6 @@ async function runPlan(jobId: string): Promise<void> {
     appendJobEvent(jobId, { type: "stage", phase: "pull", text: pullText });
     await gitService.prepareBaseBranch();
 
-    appendJobEvent(jobId, { type: "stage", phase: "plan", text: "Plan 模式：正在分析改动方案（不创建分支、不改代码）..." });
-
     const repoPath = gitService.getRepoPath();
     const stagedAttachments = await stageAttachmentsForAgent(job.attachments, repoPath, jobId);
     shouldCleanupWorkspace = true;
@@ -153,6 +151,8 @@ async function runPlan(jobId: string): Promise<void> {
         text: `已准备 ${stagedAttachments.length} 张截图供分析`,
       });
     }
+
+    appendJobEvent(jobId, { type: "stage", phase: "plan", text: "Plan 模式：正在分析改动方案（不创建分支、不改代码）..." });
 
     const planStartedAt = new Date();
     const result = await runAgent(

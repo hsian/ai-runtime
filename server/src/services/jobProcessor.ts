@@ -174,12 +174,12 @@ export async function processJob(jobId: string): Promise<void> {
     emitStage(jobId, "branch", `已创建独立工作区和分支 ${branchName}`);
     if (await abortIfCancelled(jobId, "branch", repoPath)) return;
 
-    emitStage(jobId, "agent", "正在分析并修改代码...");
-
     const stagedAttachments = await stageAttachmentsForAgent(job.attachments, repoPath, jobId);
     if (stagedAttachments?.length) {
       emitStage(jobId, "attachments", `已准备 ${stagedAttachments.length} 张截图供分析`);
     }
+
+    emitStage(jobId, "agent", "正在分析并修改代码...");
 
     const result = await runAgent(
       repoPath,

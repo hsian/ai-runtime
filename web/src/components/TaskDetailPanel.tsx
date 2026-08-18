@@ -6,7 +6,7 @@ import {
   RollbackOutlined,
   StopOutlined,
 } from "@ant-design/icons";
-import { Button, Card, Descriptions, Divider, Empty, Space, Tooltip, Typography } from "antd";
+import { Button, Card, Descriptions, Divider, Empty, Tag, Typography } from "antd";
 
 import type { JobEvent, JobStatus } from "../types";
 import { ExecutionTimeline } from "./ExecutionTimeline";
@@ -16,6 +16,7 @@ const cancellable = new Set(["planning", "pending", "running"]);
 
 export function TaskDetailPanel(props: {
   job?: JobStatus;
+  jobs: JobStatus[];
   events: JobEvent[];
   busy: boolean;
   onCancel: () => void;
@@ -24,11 +25,21 @@ export function TaskDetailPanel(props: {
   onRelease: () => void;
   onRevert: () => void;
   onTapdBug: () => void;
+  onSelectJob: (jobId: string) => void;
+  onBatchRelease: (jobIds: string[]) => void;
+  onBatchRevert: (jobIds: string[]) => void;
 }) {
   if (!props.job) {
     return <aside className="detail-panel"><Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="选择任务后查看详情" /></aside>;
   }
   const job = props.job;
+  const releaseCandidates = props.jobs.filter(
+    (item) => item.status === "completed" && !item.revertedFromDefaultAt && Boolean(item.sourceCommitSha || item.commitSha)
+  );
+  const revertCandidates = props.jobs.filter(
+    (item) => item.status === "completed" && !item.revertedFromDefaultAt && Boolean(item.mergedToDefaultBranch && item.commitSha)
+  );
+  const hasCodeCommit = Boolean(job.sourceCommitSha || job.commitSha);
 
   return (
     <aside className="detail-panel">
@@ -36,6 +47,40 @@ export function TaskDetailPanel(props: {
         <div><span>任务详情</span><StatusBadge status={job.status} /></div>
         <Typography.Text type="secondary">{new Date(job.createdAt).toLocaleString("zh-CN")}</Typography.Text>
       </div>
+
+      {props.jobs.length > 1 && (
+        <section className="subtask-section">
+          <div className="subtask-heading"><span>子任务</span><Tag>{props.jobs.length}</Tag></div>
+          <div className="subtask-list">
+            {props.jobs.map((item, index) => (
+              <button
+                type="button"
+                key={item.jobId}
+                className={`subtask-item${item.jobId === job.jobId ? " is-active" : ""}${item.revertedFromDefaultAt ? " is-reverted" : ""}`}
+                onClick={() => props.onSelectJob(item.jobId)}
+              >
+                <span className="subtask-index">第 {index + 1} 次</span>
+                <span className="subtask-title">{item.prompt || "未命名子任务"}</span>
+                <span className="subtask-state">{item.revertedFromDefaultAt ? "已撤回" : item.commitSha ? `Commit ${item.commitSha.slice(0, 7)}` : <StatusBadge status={item.status} />}</span>
+              </button>
+            ))}
+          </div>
+          {(releaseCandidates.length > 1 || revertCandidates.length > 1) && (
+            <div className="subtask-batch-actions">
+              {releaseCandidates.length > 1 && (
+                <Button size="small" icon={<BranchesOutlined />} loading={props.busy} onClick={() => props.onBatchRelease(releaseCandidates.map((item) => item.jobId))}>
+                  顺序合并 {releaseCandidates.length} 个
+                </Button>
+              )}
+              {revertCandidates.length > 1 && (
+                <Button size="small" danger icon={<RollbackOutlined />} loading={props.busy} onClick={() => props.onBatchRevert(revertCandidates.map((item) => item.jobId))}>
+                  倒序撤回 {revertCandidates.length} 个
+                </Button>
+              )}
+            </div>
+          )}
+        </section>
+      )}
 
       <Card size="small" className="meta-card">
         <Descriptions column={1} size="small" colon={false}>
@@ -58,7 +103,7 @@ export function TaskDetailPanel(props: {
             <Button danger icon={<CloseCircleOutlined />} loading={props.busy} onClick={props.onDiscard}>放弃合并</Button>
           </>
         )}
-        {job.status === "completed" && !job.revertedFromDefaultAt && (
+        {job.status === "completed" && !job.revertedFromDefaultAt && hasCodeCommit && (
           <>
             <Button icon={<BranchesOutlined />} loading={props.busy} onClick={props.onRelease}>合并到其他分支</Button>
             {job.mergedToDefaultBranch && (

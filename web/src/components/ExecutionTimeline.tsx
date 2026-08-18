@@ -31,6 +31,19 @@ export function ExecutionTimeline({ events }: { events: JobEvent[] }) {
         const cancelled = event.type === "cancelled";
         const completed = event.type === "done";
         const isLast = index === stages.length - 1;
+        const eventIndex = events.findIndex((item) => item.id === event.id);
+        const nextStage = stages[index + 1];
+        const nextStageIndex = nextStage ? events.findIndex((item) => item.id === nextStage.id) : events.length;
+        const liveEvent = ["agent", "plan", "question"].includes(event.phase ?? "")
+          ? events.slice(eventIndex + 1, nextStageIndex).reverse().find(
+              (item) => item.type === "agent_status" || item.type === "agent_tool"
+            )
+          : undefined;
+        const liveText = liveEvent?.type === "agent_status"
+          ? liveEvent.statusText || liveEvent.text
+          : liveEvent?.type === "agent_tool"
+            ? `${liveEvent.toolAction === "done" ? "已完成" : "正在执行"} ${liveEvent.toolName ?? "工具"}${liveEvent.toolDetail ? `：${liveEvent.toolDetail}` : ""}`
+            : undefined;
         return (
           <div className="timeline-row" key={event.id}>
             <div className={`timeline-icon${failed ? " is-error" : cancelled ? " is-muted" : ""}`}>
@@ -38,7 +51,7 @@ export function ExecutionTimeline({ events }: { events: JobEvent[] }) {
             </div>
             <div className="timeline-copy">
               <strong>{phaseLabel[event.phase ?? ""] || (failed ? "执行失败" : cancelled ? "任务取消" : completed ? "任务完成" : event.phase || "任务进度")}</strong>
-              <span>{event.text || event.message}</span>
+              <span>{liveText || event.text || event.message}</span>
             </div>
           </div>
         );

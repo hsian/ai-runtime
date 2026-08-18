@@ -1,6 +1,6 @@
-import { App as AntApp, Button, Input, Modal, Select, Space, Spin, Switch, Tooltip, Typography } from "antd";
-import { HistoryOutlined, ReloadOutlined, SafetyCertificateOutlined, SettingOutlined } from "@ant-design/icons";
-import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from "react";
+import { App as AntApp, Button, Input, Modal, Select, Space, Tooltip, Typography } from "antd";
+import { ReloadOutlined, SafetyCertificateOutlined } from "@ant-design/icons";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { ConversationPanel } from "./components/ConversationPanel";
 import { TaskComposer } from "./components/TaskComposer";
@@ -10,8 +10,6 @@ import { api, openJobStream } from "./services/api";
 import { useTaskStore } from "./stores/taskStore";
 import type { JobStatus, TapdContext, TapdImageOption, TapdIteration, TapdWorkspace } from "./types";
 import { compressImage } from "./utils/imageCompress";
-
-const OperationLogDrawer = lazy(() => import("./components/OperationLogDrawer"));
 
 const terminalStatuses = new Set(["completed", "failed", "cancelled", "awaiting_confirm", "awaiting_input", "awaiting_merge"]);
 
@@ -42,15 +40,15 @@ export default function App() {
   const [releaseOpen, setReleaseOpen] = useState(false);
   const [releaseBranches, setReleaseBranches] = useState<string[]>([]);
   const [releaseBranch, setReleaseBranch] = useState<string>();
+  const [releaseJobIds, setReleaseJobIds] = useState<string[]>([]);
   const [bugOpen, setBugOpen] = useState(false);
   const [workspaces, setWorkspaces] = useState<TapdWorkspace[]>([]);
   const [workspaceId, setWorkspaceId] = useState<string>();
   const [iterations, setIterations] = useState<TapdIteration[]>([]);
   const [iterationId, setIterationId] = useState<string>();
-  const [createMergeRequest, setCreateMergeRequest] = useState(
+  const [createMergeRequest] = useState(
     () => localStorage.getItem("createMergeRequestOnMerge") === "true"
   );
-  const [logsOpen, setLogsOpen] = useState(false);
   const [planDrafts, setPlanDrafts] = useState<Record<string, string>>({});
 
   const selectedJob = useMemo(
@@ -293,13 +291,23 @@ export default function App() {
     });
   };
 
-  const openRelease = async () => {
-    if (!selectedJob) return;
+  const openRelease = async (jobIds?: string[]) => {
+    const targetIds = jobIds?.length ? jobIds : selectedJob ? [selectedJob.jobId] : [];
+    if (targetIds.length === 0) return;
     setBusy(true);
     try {
-      const branches = await api.releaseBranches(selectedJob.jobId);
-      setReleaseBranches(branches);
-      setReleaseBranch(branches[0]);
+      const branchLists = await Promise.all(targetIds.map((jobId) => api.releaseBranches(jobId)));
+      const commonBranches = branchLists.slice(1).reduce(
+        (common, branches) => common.filter((branch) => branches.includes(branch)),
+        branchLists[0] ?? []
+      );
+      if (commonBranches.length === 0) {
+        message.warning("所选子任务没有共同可合并的目标分支");
+        return;
+      }
+      setReleaseJobIds(targetIds);
+      setReleaseBranches(commonBranches);
+      setReleaseBranch(commonBranches[0]);
       setReleaseOpen(true);
     } catch (error) {
       message.error(error instanceof Error ? error.message : "分支列表读取失败");
@@ -307,6 +315,51 @@ export default function App() {
       setBusy(false);
     }
   };
+
+  const confirmReleaseMerge = async () => {
+    if (!releaseBranch || releaseJobIds.length === 0 || busy) return;
+    setBusy(true);
+    try {
+      const ordered = store.jobs
+        .filter((job) => releaseJobIds.includes(job.jobId))
+        .sort((left, right) => new Date(left.createdAt).getTime() - new Date(right.createdAt).getTime());
+      for (const job of ordered) await api.mergeToRelease(job.jobId, releaseBranch);
+      setReleaseOpen(false);
+      await refreshJobs();
+      await Promise.all(ordered.map((job) => api.getEvents(job.jobId).then((events) => store.setEvents(job.jobId, events)).catch(() => undefined)));
+      message.success(ordered.length > 1 ? `已按顺序合并 ${ordered.length} 个子任务到 ${releaseBranch}` : `已合并到 ${releaseBranch}`);
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : "分支合并失败");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const batchRevert = (jobIds: string[]) => modal.confirm({
+    title: `确认撤回 ${jobIds.length} 个子任务？`,
+    content: "系统会从最后一次修改开始倒序创建 revert commit 并推送，避免破坏子任务之间的依赖关系。",
+    okText: "确认倒序撤回",
+    okButtonProps: { danger: true },
+    cancelText: "取消",
+    onOk: async () => {
+      if (busy) return;
+      setBusy(true);
+      try {
+        const ordered = store.jobs
+          .filter((job) => jobIds.includes(job.jobId))
+          .sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime());
+        for (const job of ordered) await api.revert(job.jobId);
+        await refreshJobs();
+        await Promise.all(ordered.map((job) => api.getEvents(job.jobId).then((events) => store.setEvents(job.jobId, events)).catch(() => undefined)));
+        message.success(`已倒序撤回 ${ordered.length} 个子任务`);
+      } catch (error) {
+        message.error(error instanceof Error ? error.message : "批量撤回失败");
+        throw error;
+      } finally {
+        setBusy(false);
+      }
+    },
+  });
 
   const openBug = async () => {
     try {
@@ -394,6 +447,7 @@ export default function App() {
 
       <TaskDetailPanel
         job={selectedJob}
+        jobs={conversationJobs}
         events={selectedEvents}
         busy={busy}
         onCancel={cancelJob}
@@ -402,30 +456,14 @@ export default function App() {
         onRelease={() => void openRelease()}
         onRevert={revertJob}
         onTapdBug={() => void openBug()}
+        onSelectJob={selectJob}
+        onBatchRelease={(jobIds) => void openRelease(jobIds)}
+        onBatchRevert={batchRevert}
       />
 
       <div className="client-corner">
         <SafetyCertificateOutlined /> 当前终端 {store.remoteIp || "识别中"}
-        <Button type="link" size="small" icon={<HistoryOutlined />} onClick={() => setLogsOpen(true)}>操作日志</Button>
-        <Tooltip title="合并策略">
-          <SettingOutlined />
-        </Tooltip>
-        <Switch
-          size="small"
-          checked={createMergeRequest}
-          onChange={(checked) => {
-            setCreateMergeRequest(checked);
-            localStorage.setItem("createMergeRequestOnMerge", String(checked));
-          }}
-        />
-        <span>{createMergeRequest ? "MR" : "直合"}</span>
       </div>
-
-      {logsOpen && (
-        <Suspense fallback={null}>
-          <OperationLogDrawer open={logsOpen} onClose={() => setLogsOpen(false)} />
-        </Suspense>
-      )}
 
       <Modal
         title="关联 TAPD 条目"
@@ -468,17 +506,15 @@ export default function App() {
       </Modal>
 
       <Modal
-        title="合并到其他分支"
+        title={releaseJobIds.length > 1 ? `顺序合并 ${releaseJobIds.length} 个子任务` : "合并到其他分支"}
         open={releaseOpen}
         onCancel={() => setReleaseOpen(false)}
         okText="确认合并"
         okButtonProps={{ disabled: !releaseBranch }}
         confirmLoading={busy}
-        onOk={() => void runAction(async () => {
-          await api.mergeToRelease(selectedJob!.jobId, releaseBranch!);
-          setReleaseOpen(false);
-        }, `已合并到 ${releaseBranch}`)}
+        onOk={() => void confirmReleaseMerge()}
       >
+        {releaseJobIds.length > 1 && <Typography.Paragraph type="secondary">将按第 1 次到最后一次的顺序应用提交。</Typography.Paragraph>}
         <Select style={{ width: "100%" }} value={releaseBranch} options={releaseBranches.map((branch) => ({ label: branch, value: branch }))} onChange={setReleaseBranch} placeholder="选择目标分支" />
       </Modal>
 

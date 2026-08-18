@@ -26,9 +26,11 @@ function JobTurn(props: {
   return (
     <div className="conversation-turn">
       <div className="message user-message">
-        <div className="message-avatar"><UserOutlined /></div>
-        <div>
+        <div className="message-heading">
+          <div className="message-avatar"><UserOutlined /></div>
           <div className="message-label">你提交的需求</div>
+        </div>
+        <div className="user-bubble">
           <div className="message-body">{props.job.prompt}</div>
           {props.job.attachments && props.job.attachments.length > 0 && (
             <div className="message-attachments">
