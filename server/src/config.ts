@@ -12,6 +12,7 @@ const envSchema = z.object({
   GIT_AUTHOR_EMAIL: z.string().default("ai-runtime@company.com"),
   WORKSPACE_DIR: z.string().default("./workspace"),
   WORKTREE_DIR: z.string().default("./data/wt"),
+  AGENT_PROVIDER: z.enum(["claude", "codex"]).default("claude"),
   CLAUDE_CLI_PATH: z.string().default("claude"),
   CLAUDE_MODEL: z.string().optional(),
   CLAUDE_TIMEOUT_MS: z.coerce.number().default(1_200_000),
@@ -23,6 +24,35 @@ const envSchema = z.object({
     .transform((v) => v === "true")
     .default("true"),
   CLAUDE_SETTING_SOURCES: z.string().default("user,project"),
+  CODEX_CLI_PATH: z.string().default("codex"),
+  CODEX_MODEL: z.string().optional(),
+  CODEX_PROFILE: z.string().optional(),
+  CODEX_TIMEOUT_MS: z.coerce.number().default(1_200_000),
+  CODEX_ENABLE_SYSTEM_PROXY: z
+    .string()
+    .transform((v) => v === "true")
+    .default("true"),
+  CODEX_DISABLE_WEBSOCKETS: z
+    .string()
+    .transform((v) => v === "true")
+    .default("true"),
+  CODEX_DISABLED_FEATURES: z
+    .string()
+    .default("plugins,remote_plugin,skill_search,skill_mcp_dependency_install,tool_suggest"),
+  CODEX_SANDBOX_MODE: z
+    .enum(["read-only", "workspace-write", "danger-full-access"])
+    .default("workspace-write"),
+  CODEX_READ_ONLY_SANDBOX_MODE: z
+    .enum(["read-only", "workspace-write", "danger-full-access"])
+    .default("read-only"),
+  CODEX_APPROVE_FOR_ME: z
+    .string()
+    .transform((v) => v === "true")
+    .default("true"),
+  CODEX_BYPASS_SANDBOX: z
+    .string()
+    .transform((v) => v === "true")
+    .default("false"),
   AUTO_PUSH: z
     .string()
     .transform((v) => v === "true")

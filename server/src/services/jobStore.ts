@@ -138,6 +138,7 @@ export function createJob(request: JobRequest): Job {
     remoteIp: request.remoteIp,
     status: "pending",
     prompt: request.prompt,
+    agentProvider: request.agentProvider,
     pageContext: request.pageContext,
     tapdContext: request.tapdContext,
     submittedBy: request.submittedBy,

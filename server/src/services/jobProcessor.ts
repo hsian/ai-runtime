@@ -54,6 +54,17 @@ function isCancelled(jobId: string): boolean {
   return getJob(jobId)?.status === "cancelled";
 }
 
+function buildCodexRetryPrompt(prompt: string): string {
+  return [
+    prompt,
+    "",
+    "【系统补充】",
+    "上一次 Codex CLI 返回了说明性文本，但工作区没有任何文件变更。",
+    "请继续执行同一个任务，必须实际修改源码文件。",
+    "不要只描述计划，不要说“我会”；完成前请确认 Git 工作区已经产生变更。",
+  ].join("\n");
+}
+
 async function abortIfCancelled(jobId: string, phase: string, repoPath?: string): Promise<boolean> {
   if (!isCancelled(jobId)) return false;
   appendJobEvent(jobId, { type: "stage", phase: "abort", text: `任务已取消，停止在阶段: ${phase}` });
@@ -82,6 +93,7 @@ function finishJob(
   }
 ): void {
   const existing = getJob(jobId);
+  const engine = existing?.agentProvider ?? config.AGENT_PROVIDER;
   updateJob(jobId, patch);
   logOperation({
     action: "job_execute",
@@ -89,7 +101,7 @@ function finishJob(
     jobId,
     ownerId: existing?.ownerId,
     mode: "execute",
-    engine: "claude",
+    engine,
     durationMs: existing ? Date.now() - new Date(existing.createdAt).getTime() : undefined,
     branch: patch.branch,
     commitSha: patch.commitSha,
@@ -127,13 +139,14 @@ export async function processJob(jobId: string): Promise<void> {
   });
   if (!job) return;
   const agentStartedAt = Date.now();
+  const engine = job.agentProvider ?? config.AGENT_PROVIDER;
   logOperation({
     action: "job_execute",
     status: "started",
     jobId,
     ownerId: job.ownerId,
     mode: "execute",
-    engine: "claude",
+    engine,
     attachmentCount: job.attachments?.length,
   });
 
@@ -189,6 +202,7 @@ export async function processJob(jobId: string): Promise<void> {
       {
         mode: "execute",
         jobId,
+        agentProvider: engine,
         attachments: stagedAttachments,
         confirmedPlan: job.requiresConfirm ? job.planSummary : undefined,
         conversationHistory: job.conversationHistory,
@@ -201,12 +215,35 @@ export async function processJob(jobId: string): Promise<void> {
       jobId,
       ownerId: job.ownerId,
       mode: "execute",
-      engine: "claude",
+      engine,
       durationMs: Date.now() - agentStartedAt,
     });
     if (await abortIfCancelled(jobId, "agent", repoPath)) return;
 
     let hasChanges = await gitService.hasUncommittedChanges(repoPath);
+
+    if (!hasChanges && engine === "codex") {
+      emitStage(jobId, "agent_retry", "Codex 未产生代码变更，正在自动重试执行...");
+      const retryResult = await runAgent(
+        repoPath,
+        buildPromptWithTapdContext(buildCodexRetryPrompt(job.prompt), job.tapdContext),
+        job.pageContext,
+        (event) => emitAgentEvent(jobId, event),
+        {
+          mode: "execute",
+          jobId,
+          agentProvider: engine,
+          attachments: stagedAttachments,
+          confirmedPlan: job.requiresConfirm ? job.planSummary : undefined,
+          conversationHistory: job.conversationHistory,
+        }
+      );
+      implementationSummary = retryResult.summary || implementationSummary;
+      hasChanges = await gitService.hasUncommittedChanges(repoPath);
+      if (hasChanges) {
+        result.summary = retryResult.summary || result.summary;
+      }
+    }
 
     if (!hasChanges) {
       const workspaceDirtyPaths = await gitService.listUncommittedPaths();

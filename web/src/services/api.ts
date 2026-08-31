@@ -48,6 +48,7 @@ function submitBody(input: SubmitInput): BodyInit {
     const form = new FormData();
     form.append("prompt", input.prompt);
     form.append("conversationId", input.conversationId);
+    if (input.agentProvider) form.append("agentProvider", input.agentProvider);
     if (input.tapdContext) form.append("tapdContext", JSON.stringify(input.tapdContext));
     input.images.forEach((image, index) => {
       form.append("images", image, input.imageNames?.[index] || `screenshot-${index + 1}.webp`);
@@ -57,6 +58,7 @@ function submitBody(input: SubmitInput): BodyInit {
   return JSON.stringify({
     prompt: input.prompt,
     conversationId: input.conversationId,
+    agentProvider: input.agentProvider,
     tapdContext: input.tapdContext,
   });
 }

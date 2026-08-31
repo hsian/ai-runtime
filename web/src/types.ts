@@ -22,6 +22,7 @@ export interface JobStatus {
   jobId: string;
   status: JobStatusType;
   prompt?: string;
+  agentProvider?: AgentProvider;
   conversationId?: string;
   requiresConfirm?: boolean;
   message?: string;
@@ -95,10 +96,13 @@ export interface TapdContext {
 export interface SubmitInput {
   prompt: string;
   conversationId: string;
+  agentProvider?: AgentProvider;
   tapdContext?: TapdContext;
   images?: Blob[];
   imageNames?: string[];
 }
+
+export type AgentProvider = "claude" | "codex";
 
 export interface SubmitResponse {
   jobId: string;

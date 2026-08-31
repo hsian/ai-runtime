@@ -101,7 +101,11 @@ const server = app.listen(config.PORT, "0.0.0.0", () => {
 
   console.log(`[AI Runtime] 服务已启动: http://0.0.0.0:${config.PORT}`);
 
-  console.log(`[AI Runtime] Agent: Claude Code CLI (${config.CLAUDE_CLI_PATH})`);
+  console.log(
+    `[AI Runtime] Agent: ${config.AGENT_PROVIDER === "codex" ? "Codex CLI" : "Claude Code CLI"} (${
+      config.AGENT_PROVIDER === "codex" ? config.CODEX_CLI_PATH : config.CLAUDE_CLI_PATH
+    })`
+  );
 
   console.log(`[AI Runtime] 健康检查: http://localhost:${config.PORT}/health`);
 

@@ -8,7 +8,7 @@ import { TaskDetailPanel } from "./components/TaskDetailPanel";
 import { TaskSidebar } from "./components/TaskSidebar";
 import { api, openJobStream } from "./services/api";
 import { useTaskStore } from "./stores/taskStore";
-import type { JobStatus, TapdContext, TapdImageOption, TapdIteration, TapdWorkspace } from "./types";
+import type { AgentProvider, JobStatus, TapdContext, TapdImageOption, TapdIteration, TapdWorkspace } from "./types";
 import { compressImage } from "./utils/imageCompress";
 import {
   getDesktopNotificationPermission,
@@ -34,6 +34,7 @@ export default function App() {
   const store = useTaskStore();
   const [draft, setDraft] = useState("");
   const [modifyCode, setModifyCode] = useState(true);
+  const [agentProvider, setAgentProvider] = useState<AgentProvider>("claude");
   const [files, setFiles] = useState<File[]>([]);
   const [conversationId, setConversationId] = useState(newConversationId);
   const [tapdContext, setTapdContext] = useState<TapdContext>();
@@ -265,6 +266,7 @@ export default function App() {
       const result = await api.submit({
         prompt,
         conversationId,
+        agentProvider,
         tapdContext: submittedTapdContext,
         images: compressed,
         imageNames: [
@@ -546,12 +548,14 @@ export default function App() {
           <TaskComposer
             value={draft}
             modifyCode={modifyCode}
+            agentProvider={agentProvider}
             files={files}
             tapdContext={tapdContext}
             tapdImages={tapdImages}
             submitting={submitting}
             onChange={setDraft}
             onModifyCodeChange={setModifyCode}
+            onAgentProviderChange={setAgentProvider}
             onFilesChange={setFiles}
             onOpenTapd={() => setTapdOpen(true)}
             onRemoveTapd={() => {

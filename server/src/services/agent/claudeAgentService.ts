@@ -14,6 +14,7 @@ import {
   summarizeToolInput,
   SYSTEM_PROMPT,
   type AgentEventHandler,
+  type AgentRunOptions,
   type AgentResult,
 } from "./types.js";
 import {
@@ -22,17 +23,11 @@ import {
   unregisterAgentProcess,
 } from "./agentProcessRegistry.js";
 import { pickPlanOutput } from "./planSummaryResolver.js";
+import { AgentAbortedError } from "./errors.js";
 
 export { killAgentForJob };
 
 const IS_WINDOWS = process.platform === "win32";
-
-export class AgentAbortedError extends Error {
-  constructor() {
-    super("Agent 已中止");
-    this.name = "AgentAbortedError";
-  }
-}
 
 function killChildProcess(child: ChildProcess): void {
   if (!child.pid) return;
@@ -290,15 +285,7 @@ export async function runClaudeAgent(
   prompt: string,
   pageContext?: PageContext,
   onEvent?: AgentEventHandler,
-  options?: {
-    permissionMode?: string;
-    systemPrompt?: string;
-    mode?: "plan" | "question" | "execute";
-    jobId?: string;
-    attachments?: JobAttachment[];
-    confirmedPlan?: string;
-    conversationHistory?: ConversationHistoryMessage[];
-  }
+  options?: AgentRunOptions
 ): Promise<AgentResult> {
   const isPlan = options?.mode === "plan";
   const isQuestion = options?.mode === "question";

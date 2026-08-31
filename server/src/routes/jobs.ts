@@ -24,6 +24,7 @@ import {
 import { isMultipartSubmit, parseJobSubmitBody } from "../middleware/parseJobSubmit.js";
 import { confirmJobMerge, createJobMergeRequest, discardJobMerge, mergeCompletedJobToBranch, revertCompletedJobFromDefaultBranch } from "../services/jobMergeService.js";
 import type { JobRequest } from "../types.js";
+import type { AgentProvider } from "../services/agent/index.js";
 import { resolvePlanSummary } from "../services/agent/planSummaryResolver.js";
 import { isNonActionablePlanInput } from "../services/agent/planInputGuard.js";
 import { buildPromptWithTapdContext } from "../services/tapd/tapdContext.js";
@@ -32,6 +33,10 @@ import { getClientIdentity } from "../services/clientIdentity.js";
 
 function getRequestOwnerId(req: import("express").Request): string {
   return getClientIdentity(req).ownerId;
+}
+
+function getJobAgentProvider(job: Pick<JobRequest, "agentProvider">): AgentProvider {
+  return job.agentProvider ?? config.AGENT_PROVIDER;
 }
 
 function toPublicJob(job: NonNullable<ReturnType<typeof getJob>>) {
@@ -104,7 +109,7 @@ async function runPlan(jobId: string): Promise<void> {
     jobId,
     ownerId: job.ownerId,
     mode: "plan",
-    engine: "claude",
+    engine: getJobAgentProvider(job),
     attachmentCount: job.attachments?.length,
   });
   let shouldCleanupWorkspace = false;
@@ -127,7 +132,7 @@ async function runPlan(jobId: string): Promise<void> {
       jobId,
       ownerId: job.ownerId,
       mode: "plan",
-      engine: "claude",
+      engine: getJobAgentProvider(job),
       durationMs: Date.now() - operationStartedAt,
       message: "needs_more_input",
     });
@@ -187,6 +192,7 @@ async function runPlan(jobId: string): Promise<void> {
       {
         mode: "plan",
         jobId,
+        agentProvider: getJobAgentProvider(job),
         attachments: stagedAttachments,
         conversationHistory: job.conversationHistory,
       }
@@ -217,7 +223,7 @@ async function runPlan(jobId: string): Promise<void> {
       jobId,
       ownerId: job.ownerId,
       mode: "plan",
-      engine: "claude",
+      engine: getJobAgentProvider(job),
       durationMs: Date.now() - operationStartedAt,
     });
   } catch (err) {
@@ -248,7 +254,7 @@ async function runQueuedPlan(jobId: string): Promise<void> {
       jobId,
       ownerId: latest?.ownerId,
       mode: "plan",
-      engine: "claude",
+      engine: latest ? getJobAgentProvider(latest) : config.AGENT_PROVIDER,
       error: err instanceof Error ? err.message : String(err),
     });
   }
@@ -268,7 +274,7 @@ async function runQuestion(jobId: string): Promise<void> {
     jobId,
     ownerId: job.ownerId,
     mode: "question",
-    engine: "claude",
+    engine: getJobAgentProvider(job),
     attachmentCount: job.attachments?.length,
   });
 
@@ -320,6 +326,7 @@ async function runQuestion(jobId: string): Promise<void> {
       {
         mode: "question",
         jobId,
+        agentProvider: getJobAgentProvider(job),
         attachments: stagedAttachments,
         conversationHistory: job.conversationHistory,
       }
@@ -344,7 +351,7 @@ async function runQuestion(jobId: string): Promise<void> {
       jobId,
       ownerId: job.ownerId,
       mode: "question",
-      engine: "claude",
+      engine: getJobAgentProvider(job),
       durationMs: Date.now() - operationStartedAt,
     });
   } catch (err) {
@@ -367,7 +374,7 @@ async function runQuestion(jobId: string): Promise<void> {
       jobId,
       ownerId: job.ownerId,
       mode: "question",
-      engine: "claude",
+      engine: getJobAgentProvider(job),
       durationMs: Date.now() - operationStartedAt,
       error: err instanceof Error ? err.message : String(err),
     });
@@ -461,6 +468,7 @@ jobsRouter.post("/", handleJobImagesUpload, (req, res) => {
     ownerId: job.ownerId,
     mode: "question",
     attachmentCount: data.attachments?.length,
+    engine: getJobAgentProvider(data),
   });
 
   void runQuestion(job.jobId);
@@ -490,6 +498,7 @@ jobsRouter.post("/plan", handleJobImagesUpload, (req, res) => {
     ownerId: job.ownerId,
     mode: "plan",
     attachmentCount: data.attachments?.length,
+    engine: getJobAgentProvider(data),
   });
 
   void runQueuedPlan(job.jobId);
@@ -528,6 +537,7 @@ jobsRouter.post("/:jobId/execute", (req, res) => {
     jobId,
     ownerId: job.ownerId,
     mode: "execute",
+    engine: getJobAgentProvider(job),
   });
   void processJob(jobId);
 

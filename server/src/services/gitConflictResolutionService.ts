@@ -76,6 +76,7 @@ export function createJobConflictResolver(jobId: string): GitConflictResolver {
       {
         mode: "execute",
         jobId,
+        agentProvider: job.agentProvider,
         systemPrompt: CONFLICT_SYSTEM_PROMPT,
         permissionMode: "acceptEdits",
       }

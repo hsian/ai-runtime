@@ -1,6 +1,6 @@
 # AI Runtime
 
-面向公司内网的 AI 代码任务工作台。React Web 提供项目问答、代码修改 Plan、实时执行进度、附件、TAPD、Git 合并和回滚能力；Node.js 服务负责 Claude Code、任务队列、Git worktree 和操作日志。
+面向公司内网的 AI 代码任务工作台。React Web 提供项目问答、代码修改 Plan、执行引擎切换、实时执行进度、附件、TAPD、Git 合并和回滚能力；Node.js 服务负责 Claude Code / Codex CLI、任务队列、Git worktree 和操作日志。
 
 ## 项目结构
 
@@ -73,5 +73,23 @@ http://服务器内网IP:6080
 - 每 6 小时清理过期文件
 - 不记录完整 Prompt、图片和 Agent 流式输出
 - Token 和带密码 URL 会自动脱敏
+
+## Agent 执行引擎
+
+前端输入框下方可按任务选择 `Claude` 或 `Codex`。服务端默认值由 `server/.env` 的 `AGENT_PROVIDER` 控制：
+
+```env
+AGENT_PROVIDER=claude
+CODEX_CLI_PATH=codex
+CODEX_ENABLE_SYSTEM_PROXY=true
+CODEX_DISABLE_WEBSOCKETS=true
+```
+
+使用 Codex 前，需要在服务端机器上安装 Codex CLI 并完成登录：
+
+```powershell
+codex login
+codex doctor
+```
 
 相关配置参见 `server/.env.example`。

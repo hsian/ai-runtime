@@ -30,6 +30,7 @@ const tapdContextSchema = z.object({
 
 const submitFieldsSchema = z.object({
   prompt: z.string().min(1, "prompt 不能为空"),
+  agentProvider: z.enum(["claude", "codex"]).optional(),
   pageContext: pageContextSchema.optional(),
   tapdContext: tapdContextSchema.optional(),
   submittedBy: z.string().optional(),
@@ -64,6 +65,7 @@ export function parseJobSubmitBody(req: Request): { data?: JobRequest; error?: s
   const tapdContextRaw = parseJsonField(req.body?.tapdContext);
   const parsed = submitFieldsSchema.safeParse({
     prompt: req.body?.prompt,
+    agentProvider: req.body?.agentProvider,
     pageContext: pageContextRaw,
     tapdContext: tapdContextRaw,
     submittedBy: req.body?.submittedBy,

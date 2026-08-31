@@ -34,6 +34,7 @@ export interface TapdContext {
 
 export interface JobRequest {
   prompt: string;
+  agentProvider?: "claude" | "codex";
   pageContext?: PageContext;
   tapdContext?: TapdContext;
   submittedBy?: string;
@@ -65,6 +66,7 @@ export interface Job {
   remoteIp?: string;
   status: JobStatus;
   prompt: string;
+  agentProvider?: "claude" | "codex";
   pageContext?: PageContext;
   tapdContext?: TapdContext;
   submittedBy?: string;

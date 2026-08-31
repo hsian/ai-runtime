@@ -8,6 +8,8 @@ export interface AgentResult {
   summary: string;
 }
 
+export type AgentProvider = "claude" | "codex";
+
 export interface AgentStreamEvent {
   type: "agent_text" | "agent_tool" | "agent_status";
   delta?: string;
@@ -18,6 +20,17 @@ export interface AgentStreamEvent {
 }
 
 export type AgentEventHandler = (event: AgentStreamEvent) => void;
+
+export interface AgentRunOptions {
+  agentProvider?: AgentProvider;
+  permissionMode?: string;
+  systemPrompt?: string;
+  mode?: "plan" | "question" | "execute";
+  jobId?: string;
+  attachments?: JobAttachment[];
+  confirmedPlan?: string;
+  conversationHistory?: ConversationHistoryMessage[];
+}
 
 export const SYSTEM_PROMPT =
   "你是浏览器插件触发的无人值守代码修改机器人。收到任务后必须立即搜索并修改源代码，禁止向用户提问或请求澄清。当前 Git 分支名只是提交用途。根据用户描述中的页面路径、路由和业务关键词定位前端文件，完成后简要汇报修改内容。";
@@ -105,7 +118,7 @@ ${confirmedPlan.trim()}
 `
     : "";
 
-  return `【代码修改任务 - Claude Code 执行阶段】
+  return `【代码修改任务 - Agent 执行阶段】
 
 Plan 已确认，请按方案在 Git 工作区内直接修改源代码。
 ${historyPart}${planPart}
@@ -122,7 +135,7 @@ ${prompt}
 }
 
 export const PLAN_SYSTEM_PROMPT =
-  "你是 Claude Code 的 Plan 模式助手，在 Git 工作区内分析代码。只允许阅读、搜索、分析代码，严禁修改、创建或删除任何文件。根据用户描述中的页面路径、路由和业务关键词定位相关源码，但最终输出必须是一份给测试/产品人员看的简单修改方案。若任务附带截图/UI 原型，必须先 Read 查看图片再写方案；弹窗类需求必须严格按截图字段与布局设计，禁止把列表整表塞进弹窗。严禁编造对话历史。若信息严重不足无法出方案，说明缺什么后停止；否则直接给出完整方案，不要向用户提问或写「告诉我」「如需调整请说」等收尾。";
+  "你是 Agent 的 Plan 模式助手，在 Git 工作区内分析代码。只允许阅读、搜索、分析代码，严禁修改、创建或删除任何文件。根据用户描述中的页面路径、路由和业务关键词定位相关源码，但最终输出必须是一份给测试/产品人员看的简单修改方案。若任务附带截图/UI 原型，必须先 Read 查看图片再写方案；弹窗类需求必须严格按截图字段与布局设计，禁止把列表整表塞进弹窗。严禁编造对话历史。若信息严重不足无法出方案，说明缺什么后停止；否则直接给出完整方案，不要向用户提问或写「告诉我」「如需调整请说」等收尾。";
 
 export const QUESTION_SYSTEM_PROMPT =
   "你是项目代码问答助手。只允许阅读、搜索和分析当前 Git 仓库，严禁修改、创建或删除任何文件，也不要生成修改方案或尝试执行用户描述中的改动。请直接回答用户关于项目实现、接口调用位置、页面结构、样式尺寸、数据流等问题；结论应基于实际代码，必要时给出文件路径和关键位置。若用户要求修改代码，明确提示必须勾选「修改代码」后提交。";
@@ -183,7 +196,7 @@ ${pageContext.selectedText ? `- 用户选中文字: ${pageContext.selectedText}`
   const attachmentPart = buildAttachmentSection(attachments);
   const historyPart = buildConversationHistorySection(conversationHistory);
 
-  return `【Claude Code Plan - 在 Git 仓库内分析，禁止改代码】
+  return `【Agent Plan - 在 Git 仓库内分析，禁止改代码】
 
 这是编码模式的 Plan 阶段：结合下方需求及其中提供的页面路径，在仓库中定位文件并给出改动方案。
 （需求模式的文字整理已完成；此处才需要读代码。）

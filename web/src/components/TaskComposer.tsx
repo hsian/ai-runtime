@@ -1,19 +1,21 @@
 import { CloseOutlined, LinkOutlined, PaperClipOutlined, SendOutlined } from "@ant-design/icons";
-import { App as AntApp, Button, Image, Input, Switch, Tag, Tooltip } from "antd";
+import { App as AntApp, Button, Image, Input, Select, Switch, Tag, Tooltip } from "antd";
 import type { ClipboardEvent } from "react";
 import { useEffect, useRef, useState } from "react";
 
-import type { TapdContext, TapdImageOption } from "../types";
+import type { AgentProvider, TapdContext, TapdImageOption } from "../types";
 
 export function TaskComposer(props: {
   value: string;
   modifyCode: boolean;
+  agentProvider: AgentProvider;
   files: File[];
   tapdContext?: TapdContext;
   tapdImages: TapdImageOption[];
   submitting: boolean;
   onChange: (value: string) => void;
   onModifyCodeChange: (value: boolean) => void;
+  onAgentProviderChange: (value: AgentProvider) => void;
   onFilesChange: (files: File[]) => void;
   onOpenTapd: () => void;
   onRemoveTapd: () => void;
@@ -106,6 +108,17 @@ export function TaskComposer(props: {
       />
       <div className="composer-toolbar">
         <div className="composer-tools">
+          <Select
+            className="agent-provider-select"
+            size="small"
+            value={props.agentProvider}
+            options={[
+              { label: "默认", value: "claude" },
+              { label: "Codex", value: "codex" },
+            ]}
+            popupMatchSelectWidth={false}
+            onChange={props.onAgentProviderChange}
+          />
           <input ref={inputRef} hidden type="file" accept="image/*" multiple onChange={(event) => addFiles(event.target.files)} />
           <Tooltip title="选择图片，也可以在输入框中直接 Ctrl+V 粘贴截图">
             <Button className="composer-tool-button" type="text" icon={<PaperClipOutlined />} disabled={props.files.length + tapdImageCount >= 3} onClick={() => inputRef.current?.click()}>图片</Button>
