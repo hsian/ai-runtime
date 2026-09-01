@@ -521,7 +521,7 @@ jobsRouter.post("/:jobId/execute", (req, res) => {
     return;
   }
 
-  const body = req.body as { planSummary?: unknown } | undefined;
+  const body = req.body as { planSummary?: unknown; agentProvider?: unknown } | undefined;
   const planSummary =
     typeof body?.planSummary === "string" ? body.planSummary.trim() : job.planSummary?.trim();
   if (!planSummary) {
@@ -529,7 +529,15 @@ jobsRouter.post("/:jobId/execute", (req, res) => {
     return;
   }
 
-  updateJob(jobId, { status: "pending", message: "已确认执行，正在准备独立工作区...", planSummary });
+  if (body?.agentProvider !== undefined && body.agentProvider !== "claude" && body.agentProvider !== "codex") {
+    res.status(400).json({ error: "请选择有效的执行引擎" });
+    return;
+  }
+  const agentProvider = body?.agentProvider === "claude" || body?.agentProvider === "codex"
+    ? body.agentProvider
+    : getJobAgentProvider(job);
+
+  updateJob(jobId, { status: "pending", message: "已确认执行，正在准备独立工作区...", planSummary, agentProvider });
   appendJobEvent(jobId, { type: "stage", phase: "execute_confirmed", text: "已确认执行，正在准备独立工作区..." });
   logOperation({
     action: "plan_confirm",
@@ -537,7 +545,7 @@ jobsRouter.post("/:jobId/execute", (req, res) => {
     jobId,
     ownerId: job.ownerId,
     mode: "execute",
-    engine: getJobAgentProvider(job),
+    engine: agentProvider,
   });
   void processJob(jobId);
 

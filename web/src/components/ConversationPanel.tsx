@@ -2,13 +2,14 @@ import { CheckCircleOutlined, CodeOutlined, FileTextOutlined, ToolOutlined, User
 import { Alert, Button, Card, Divider, Image, Input, Space, Tag, Typography } from "antd";
 import { useMemo } from "react";
 
-import type { JobEvent, JobStatus } from "../types";
+import type { AgentProvider, JobEvent, JobStatus } from "../types";
 
 function JobTurn(props: {
   job: JobStatus;
   events: JobEvent[];
   busy: boolean;
   isCurrent: boolean;
+  agentProvider: AgentProvider;
   planDraft?: string;
   onPlanChange: (jobId: string, value: string) => void;
   onExecute: (planSummary: string) => void;
@@ -59,7 +60,11 @@ function JobTurn(props: {
           )}
           {props.isCurrent && props.job.status === "awaiting_confirm" && (
             <div className="plan-actions">
-              <Alert type="warning" showIcon message="可先补充或调整方案，Agent 将按编辑后的内容执行" />
+              <Alert
+                type="warning"
+                showIcon
+                message={`可先调整方案，将使用 ${props.agentProvider === "codex" ? "Codex" : "默认模式"}执行代码修改`}
+              />
               <Button
                 type="primary"
                 size="large"
@@ -105,6 +110,7 @@ export function ConversationPanel(props: {
   jobs: JobStatus[];
   currentJob?: JobStatus;
   modifyCode: boolean;
+  agentProvider: AgentProvider;
   eventsByJob: Record<string, JobEvent[]>;
   planDrafts: Record<string, string>;
   busy: boolean;
@@ -152,6 +158,7 @@ export function ConversationPanel(props: {
             events={props.eventsByJob[job.jobId] ?? []}
             busy={props.busy}
             isCurrent={job.jobId === props.currentJob?.jobId}
+            agentProvider={props.agentProvider}
             planDraft={props.planDrafts[job.jobId]}
             onPlanChange={props.onPlanChange}
             onExecute={props.onExecute}

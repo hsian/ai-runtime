@@ -311,7 +311,7 @@ export default function App() {
     if (notificationPermission === "default") void enableDesktopNotifications(false);
     return runAction(async () => {
       const jobId = selectedJob!.jobId;
-      await api.execute(jobId, planSummary);
+      await api.execute(jobId, planSummary, agentProvider);
       setPlanDrafts((current) => {
         const next = { ...current };
         delete next[jobId];
@@ -529,6 +529,7 @@ export default function App() {
             jobs={conversationJobs}
             currentJob={selectedJob}
             modifyCode={modifyCode}
+            agentProvider={agentProvider}
             eventsByJob={store.events}
             planDrafts={planDrafts}
             busy={busy}

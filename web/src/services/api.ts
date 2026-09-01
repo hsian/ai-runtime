@@ -1,4 +1,5 @@
 import type {
+  AgentProvider,
   JobEvent,
   JobStatus,
   OperationLogEntry,
@@ -89,10 +90,10 @@ export const api = {
     });
   },
 
-  async execute(jobId: string, planSummary?: string): Promise<SubmitResponse> {
+  async execute(jobId: string, planSummary: string | undefined, agentProvider: AgentProvider): Promise<SubmitResponse> {
     return request(`/api/jobs/${encodeURIComponent(jobId)}/execute`, {
       method: "POST",
-      body: JSON.stringify(planSummary ? { planSummary } : {}),
+      body: JSON.stringify({ planSummary, agentProvider }),
     });
   },
 

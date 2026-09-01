@@ -59,7 +59,9 @@ function buildConversationHistory(request: JobRequest): ConversationHistoryMessa
       FROM jobs
       WHERE owner_id = ?
         AND conversation_id = ?
-        AND status IN ('completed', 'awaiting_confirm', 'awaiting_input', 'awaiting_merge')
+        -- 未确认或信息不足的 Plan 只是草稿，不应污染后续问答上下文。
+        -- awaiting_merge 已经经过用户确认并完成代码修改，需要继续保留。
+        AND status IN ('completed', 'awaiting_merge')
       ORDER BY created_at DESC
       LIMIT ?
     `)

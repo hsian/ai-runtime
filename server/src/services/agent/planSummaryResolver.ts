@@ -13,6 +13,10 @@ export function isPlanFilePlaceholder(text: string): boolean {
   return false;
 }
 
+function isReadablePlan(text: string): boolean {
+  return text.includes("【本次处理】");
+}
+
 export function pickPlanOutput(finalSummary: string, streamedText: string): string {
   const final = finalSummary.trim();
   const streamed = streamedText.trim();
@@ -20,6 +24,8 @@ export function pickPlanOutput(finalSummary: string, streamedText: string): stri
   if (!final) return streamed;
   if (!streamed) return final;
   if (isPlanFilePlaceholder(final)) return streamed.length > final.length ? streamed : final;
+  if (isReadablePlan(final)) return final;
+  if (isReadablePlan(streamed)) return streamed;
   return streamed.length > final.length * 1.5 ? streamed : final;
 }
 
