@@ -201,6 +201,7 @@ code { font-family: "SFMono-Regular", Consolas, monospace; font-size: 12px; }
 
 .tapd-image-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; max-height: 360px; overflow: auto; }
 .tapd-image-option { position: relative; padding: 5px; overflow: hidden; border: 2px solid transparent; border-radius: 10px; background: #f4f6fa; cursor: pointer; }
+.tapd-image-option .ant-image { display: block; width: 100%; }
 .tapd-image-option img { display: block; width: 100%; height: 105px; border-radius: 6px; object-fit: cover; }
 .tapd-image-option span { display: block; padding: 6px 2px 2px; color: #667085; font-size: 12px; }
 .tapd-image-option.is-selected { border-color: #315cf4; background: #eef2ff; }

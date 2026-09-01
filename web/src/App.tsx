@@ -1,4 +1,4 @@
-import { App as AntApp, Button, Input, Modal, Select, Space, Tooltip, Typography } from "antd";
+import { App as AntApp, Button, Image, Input, Modal, Select, Space, Tooltip, Typography } from "antd";
 import { BellOutlined, ReloadOutlined, SafetyCertificateOutlined } from "@ant-design/icons";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
@@ -349,8 +349,7 @@ export default function App() {
     try {
       const context = await api.resolveTapd(tapdUrl.trim());
       const candidates = await api.tapdDescriptionImages(context);
-      const availableSlots = Math.max(0, 3 - files.length);
-      const withSelection = candidates.map((item, index) => ({ ...item, selected: index < availableSlots }));
+      const withSelection = candidates.map((item) => ({ ...item, selected: true }));
       if (withSelection.length === 0) {
         setTapdContext(context);
         revokeTapdPreviews(tapdImages);
@@ -385,13 +384,8 @@ export default function App() {
 
   const toggleTapdImage = (sourceIndex: number) => {
     setTapdCandidates((current) => {
-      const selectedCount = current.filter((item) => item.selected).length;
       return current.map((item) => {
         if (item.sourceIndex !== sourceIndex) return item;
-        if (!item.selected && selectedCount + files.length >= 3) {
-          message.warning("TAPD 配图和手动截图合计最多 3 张");
-          return item;
-        }
         return { ...item, selected: !item.selected };
       });
     });
@@ -557,6 +551,11 @@ export default function App() {
             onModifyCodeChange={setModifyCode}
             onAgentProviderChange={setAgentProvider}
             onFilesChange={setFiles}
+            onTapdImagesChange={(images) => {
+              const retainedUrls = new Set(images.map((image) => image.previewUrl));
+              revokeTapdPreviews(tapdImages.filter((image) => !retainedUrls.has(image.previewUrl)));
+              setTapdImages(images);
+            }}
             onOpenTapd={() => setTapdOpen(true)}
             onRemoveTapd={() => {
               setTapdContext(undefined);
@@ -610,7 +609,7 @@ export default function App() {
         ) : (
           <>
             <Typography.Paragraph strong>{resolvedTapd.title}</Typography.Paragraph>
-            <Typography.Paragraph type="secondary">选择随任务发送的描述配图。与手动截图合计最多 3 张。</Typography.Paragraph>
+            <Typography.Paragraph type="secondary">选择随任务发送的描述配图。</Typography.Paragraph>
             <div className="tapd-image-grid">
               {tapdCandidates.map((item) => (
                 <button
@@ -619,7 +618,11 @@ export default function App() {
                   className={`tapd-image-option${item.selected ? " is-selected" : ""}`}
                   onClick={() => toggleTapdImage(item.sourceIndex)}
                 >
-                  <img src={item.previewUrl} alt={`TAPD 配图${item.sourceIndex}`} />
+                  <Image
+                    src={item.previewUrl}
+                    alt={`TAPD 配图${item.sourceIndex}`}
+                    onClick={(event) => event.stopPropagation()}
+                  />
                   <span>配图{item.sourceIndex}</span>
                 </button>
               ))}

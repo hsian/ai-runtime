@@ -76,7 +76,6 @@ const envSchema = z.object({
   UPLOAD_MAX_BYTES: z.coerce.number().default(300 * 1024),
   /** TAPD 描述配图从远端下载时的体积上限（下载后会由插件压缩再上传） */
   TAPD_IMAGE_MAX_BYTES: z.coerce.number().default(5 * 1024 * 1024),
-  UPLOAD_MAX_COUNT: z.coerce.number().default(3),
   OPERATION_LOG_ENABLED: z
     .string()
     .transform((v) => v === "true")

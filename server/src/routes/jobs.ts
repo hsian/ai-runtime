@@ -394,7 +394,7 @@ function handleJobImagesUpload(
     return;
   }
 
-  jobImagesUpload.array("images", config.UPLOAD_MAX_COUNT)(req, res, (err) => {
+  jobImagesUpload.array("images")(req, res, (err) => {
     if (err) {
       res.status(400).json({ error: multerErrorMessage(err) });
       return;

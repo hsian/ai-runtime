@@ -4,7 +4,6 @@ import {
   getTapdImageDownloadUrl,
 } from "./tapdClient.js";
 
-export const MAX_TAPD_DESCRIPTION_IMAGES = 8;
 const TAPD_REMOTE_IMAGE_TIMEOUT_MS = 12000;
 
 const IMG_ATTR_PATTERNS = [
@@ -195,7 +194,7 @@ export async function downloadImagesFromHtml(
   workspaceId?: string,
   cfg: TapdConfig = getTapdConfig()
 ): Promise<TapdImageDownloadReport> {
-  const urls = extractImageUrlsFromHtml(html).slice(0, MAX_TAPD_DESCRIPTION_IMAGES);
+  const urls = extractImageUrlsFromHtml(html);
   const wsId = workspaceId?.trim() || cfg.workspaceId;
   if (urls.length === 0) {
     return { images: [], expected: countImagesInHtml(html), failedUrls: [] };
@@ -225,8 +224,6 @@ export async function downloadImagesFromHtml(
       name: `tapd-${index + 1}.${ext}`,
       size: downloaded.buffer.length,
     });
-
-    if (images.length >= MAX_TAPD_DESCRIPTION_IMAGES) break;
   }
 
   return { images, expected: countImagesInHtml(html), failedUrls };

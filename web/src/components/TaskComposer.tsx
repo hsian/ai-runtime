@@ -17,6 +17,7 @@ export function TaskComposer(props: {
   onModifyCodeChange: (value: boolean) => void;
   onAgentProviderChange: (value: AgentProvider) => void;
   onFilesChange: (files: File[]) => void;
+  onTapdImagesChange: (images: TapdImageOption[]) => void;
   onOpenTapd: () => void;
   onRemoveTapd: () => void;
   onSubmit: () => void;
@@ -31,15 +32,9 @@ export function TaskComposer(props: {
     return () => previews.forEach((preview) => URL.revokeObjectURL(preview.url));
   }, [props.files]);
   const addImages = (images: File[]): number => {
-    const available = Math.max(0, 3 - tapdImageCount - props.files.length);
-    if (available === 0) {
-      message.warning("TAPD 配图和手动截图合计最多 3 张");
-      return 0;
-    }
-    const accepted = images.filter((file) => file.type.startsWith("image/")).slice(0, available);
+    const accepted = images.filter((file) => file.type.startsWith("image/"));
     if (accepted.length === 0) return 0;
     props.onFilesChange([...props.files, ...accepted]);
-    if (images.length > accepted.length) message.warning("最多添加 3 张图片，多余图片未加入");
     return accepted.length;
   };
   const addFiles = (list: FileList | null) => {
@@ -72,6 +67,15 @@ export function TaskComposer(props: {
                 <div className="composer-image" key={`tapd-${image.sourceIndex}`}>
                   <Image src={image.previewUrl} alt={`TAPD 配图${image.sourceIndex}`} />
                   <span>TAPD 配图{image.sourceIndex}</span>
+                  <Button
+                    className="composer-image-remove"
+                    type="text"
+                    danger
+                    size="small"
+                    icon={<CloseOutlined />}
+                    aria-label={`移除 TAPD 配图${image.sourceIndex}`}
+                    onClick={() => props.onTapdImagesChange(props.tapdImages.filter((item) => item.sourceIndex !== image.sourceIndex))}
+                  />
                 </div>
               ))}
               {filePreviews.map((preview, index) => (
@@ -121,7 +125,7 @@ export function TaskComposer(props: {
           />
           <input ref={inputRef} hidden type="file" accept="image/*" multiple onChange={(event) => addFiles(event.target.files)} />
           <Tooltip title="选择图片，也可以在输入框中直接 Ctrl+V 粘贴截图">
-            <Button className="composer-tool-button" type="text" icon={<PaperClipOutlined />} disabled={props.files.length + tapdImageCount >= 3} onClick={() => inputRef.current?.click()}>图片</Button>
+            <Button className="composer-tool-button" type="text" icon={<PaperClipOutlined />} onClick={() => inputRef.current?.click()}>图片</Button>
           </Tooltip>
           <Tooltip title="关联 TAPD 需求、任务或缺陷">
             <Button className="composer-tool-button" type="text" icon={<LinkOutlined />} onClick={props.onOpenTapd}>TAPD</Button>

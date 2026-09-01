@@ -23,7 +23,6 @@ export const jobImagesUpload = multer({
   }),
   limits: {
     fileSize: config.UPLOAD_MAX_BYTES,
-    files: config.UPLOAD_MAX_COUNT,
   },
   fileFilter: (_req, file, cb) => {
     if (IMAGE_MIME.test(file.mimetype)) {
@@ -98,9 +97,6 @@ export function multerErrorMessage(err: unknown): string {
   if (err instanceof multer.MulterError) {
     if (err.code === "LIMIT_FILE_SIZE") {
       return `单张图片不能超过 ${Math.round(config.UPLOAD_MAX_BYTES / 1024)}KB`;
-    }
-    if (err.code === "LIMIT_FILE_COUNT") {
-      return `最多上传 ${config.UPLOAD_MAX_COUNT} 张图片`;
     }
     return err.message;
   }
