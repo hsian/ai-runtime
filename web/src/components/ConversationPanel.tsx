@@ -1,4 +1,4 @@
-import { CheckCircleOutlined, CodeOutlined, FileTextOutlined, ToolOutlined, UserOutlined } from "@ant-design/icons";
+import { CodeOutlined, FileTextOutlined, ToolOutlined, UserOutlined } from "@ant-design/icons";
 import { Alert, Button, Card, Divider, Image, Input, Space, Tag, Typography } from "antd";
 import { useMemo } from "react";
 
@@ -91,12 +91,6 @@ function JobTurn(props: {
       {agentText && (
         <Card className="agent-card" title={<Space><CodeOutlined />Agent 输出</Space>}>
           <div className="rich-text">{agentText}</div>
-        </Card>
-      )}
-
-      {props.job.status === "completed" && (
-        <Card className="result-card" title={<Space><CheckCircleOutlined />任务完成</Space>}>
-          <div className="rich-text">{props.job.message}</div>
         </Card>
       )}
 
