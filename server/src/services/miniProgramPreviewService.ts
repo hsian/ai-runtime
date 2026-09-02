@@ -169,6 +169,7 @@ export async function generateMiniProgramPreview(
   mkdirSync(previewOutputDir, { recursive: true });
   const outputPath = getMiniProgramPreviewPath(jobId);
   const { default: miniprogramCi } = await import("miniprogram-ci");
+  miniprogramCi.cleanCache();
   const { Project, preview } = miniprogramCi;
   const createProject = () => new Project({
     appid: miniProgram.appId,
@@ -217,6 +218,7 @@ export async function uploadMiniProgramCode(
   }
 
   const { default: miniprogramCi } = await import("miniprogram-ci");
+  miniprogramCi.cleanCache();
   const createProject = () => new miniprogramCi.Project({
     appid: miniProgram.appId,
     type: "miniProgram",
