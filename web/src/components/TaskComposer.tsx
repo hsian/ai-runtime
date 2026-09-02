@@ -1,5 +1,5 @@
 import { CloseOutlined, LinkOutlined, PaperClipOutlined, SendOutlined } from "@ant-design/icons";
-import { App as AntApp, Button, Image, Input, Select, Switch, Tag, Tooltip } from "antd";
+import { App as AntApp, Button, Image, Input, Switch, Tag, Tooltip } from "antd";
 import type { ClipboardEvent } from "react";
 import { useEffect, useRef, useState } from "react";
 
@@ -112,17 +112,23 @@ export function TaskComposer(props: {
       />
       <div className="composer-toolbar">
         <div className="composer-tools">
-          <Select
-            className="agent-provider-select"
-            size="small"
-            value={props.agentProvider}
-            options={[
-              { label: "默认", value: "claude" },
-              { label: "Codex", value: "codex" },
-            ]}
-            popupMatchSelectWidth={false}
-            onChange={props.onAgentProviderChange}
-          />
+          <div className="agent-provider-pills" role="radiogroup" aria-label="执行模型">
+            {([
+              ["claude", "默认模式"],
+              ["codex", "Codex"],
+            ] as const).map(([value, label]) => (
+              <button
+                key={value}
+                type="button"
+                role="radio"
+                aria-checked={props.agentProvider === value}
+                className={`agent-provider-pill${props.agentProvider === value ? " is-active" : ""}`}
+                onClick={() => props.onAgentProviderChange(value)}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
           <input ref={inputRef} hidden type="file" accept="image/*" multiple onChange={(event) => addFiles(event.target.files)} />
           <Tooltip title="选择图片，也可以在输入框中直接 Ctrl+V 粘贴截图">
             <Button className="composer-tool-button" type="text" icon={<PaperClipOutlined />} onClick={() => inputRef.current?.click()}>图片</Button>

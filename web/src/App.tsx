@@ -1,5 +1,5 @@
 import { App as AntApp, Button, Image, Input, Modal, Select, Space, Tooltip, Typography } from "antd";
-import { BellOutlined, ReloadOutlined, SafetyCertificateOutlined } from "@ant-design/icons";
+import { BellOutlined, SafetyCertificateOutlined } from "@ant-design/icons";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { ConversationPanel } from "./components/ConversationPanel";
@@ -8,7 +8,7 @@ import { TaskDetailPanel } from "./components/TaskDetailPanel";
 import { TaskSidebar } from "./components/TaskSidebar";
 import { api, openJobStream } from "./services/api";
 import { useTaskStore } from "./stores/taskStore";
-import type { AgentProvider, JobStatus, TapdContext, TapdImageOption, TapdIteration, TapdWorkspace } from "./types";
+import type { AgentProvider, JobStatus, ProjectProfile, TapdContext, TapdImageOption, TapdIteration, TapdWorkspace } from "./types";
 import { compressImage } from "./utils/imageCompress";
 import {
   getDesktopNotificationPermission,
@@ -25,6 +25,12 @@ function newConversationId(): string {
   return createUniqueId();
 }
 
+function defaultMiniProgramVersion(): string {
+  const now = new Date();
+  const pad = (value: number) => String(value).padStart(2, "0");
+  return `${now.getFullYear()}.${pad(now.getMonth() + 1)}.${pad(now.getDate())}.${pad(now.getHours())}${pad(now.getMinutes())}`;
+}
+
 function revokeTapdPreviews(images: TapdImageOption[]): void {
   images.forEach((image) => URL.revokeObjectURL(image.previewUrl));
 }
@@ -35,6 +41,8 @@ export default function App() {
   const [draft, setDraft] = useState("");
   const [modifyCode, setModifyCode] = useState(true);
   const [agentProvider, setAgentProvider] = useState<AgentProvider>("claude");
+  const [projects, setProjects] = useState<ProjectProfile[]>([]);
+  const [projectId, setProjectId] = useState("b2b-composite");
   const [files, setFiles] = useState<File[]>([]);
   const [conversationId, setConversationId] = useState(newConversationId);
   const [tapdContext, setTapdContext] = useState<TapdContext>();
@@ -51,6 +59,9 @@ export default function App() {
   const [releaseBranch, setReleaseBranch] = useState<string>();
   const [releaseJobIds, setReleaseJobIds] = useState<string[]>([]);
   const [bugOpen, setBugOpen] = useState(false);
+  const [miniProgramUploadOpen, setMiniProgramUploadOpen] = useState(false);
+  const [miniProgramUploadVersion, setMiniProgramUploadVersion] = useState(defaultMiniProgramVersion);
+  const [miniProgramUploadDescription, setMiniProgramUploadDescription] = useState("");
   const [workspaces, setWorkspaces] = useState<TapdWorkspace[]>([]);
   const [workspaceId, setWorkspaceId] = useState<string>();
   const [iterations, setIterations] = useState<TapdIteration[]>([]);
@@ -144,9 +155,10 @@ export default function App() {
     if (!selectedJob) return [];
     const key = selectedJob.conversationId || selectedJob.jobId;
     return store.jobs
-      .filter((job) => (job.conversationId || job.jobId) === key)
+      .filter((job) => job.projectId === selectedJob.projectId && (job.conversationId || job.jobId) === key)
       .sort((left, right) => new Date(left.createdAt).getTime() - new Date(right.createdAt).getTime());
   }, [selectedJob, store.jobs]);
+  const selectedProject = projects.find((project) => project.id === selectedJob?.projectId);
 
   const refreshJobs = useCallback(async (keepSelection = true) => {
     try {
@@ -179,6 +191,7 @@ export default function App() {
     store.setLoading(true);
     void Promise.all([
       refreshJobs(false),
+      api.listProjects().then((items) => setProjects(items)),
       api.getClient().then((client) => store.setRemoteIp(client.remoteIp)).catch(() => store.setRemoteIp("服务未连接")),
     ]).finally(() => store.setLoading(false));
     const timer = window.setInterval(() => void refreshJobs(), 10_000);
@@ -191,7 +204,7 @@ export default function App() {
     const currentState = useTaskStore.getState();
     const currentJob = currentState.jobs.find((job) => job.jobId === jobId);
     const conversationKey = currentJob?.conversationId || jobId;
-    const relatedJobs = currentState.jobs.filter((job) => (job.conversationId || job.jobId) === conversationKey);
+    const relatedJobs = currentState.jobs.filter((job) => job.projectId === currentJob?.projectId && (job.conversationId || job.jobId) === conversationKey);
     void Promise.all([
       ...relatedJobs.map((job) => api.getEvents(job.jobId).then((events) => store.setEvents(job.jobId, events))),
       refreshJob(jobId),
@@ -215,7 +228,8 @@ export default function App() {
 
   useEffect(() => {
     if (selectedJob?.conversationId) setConversationId(selectedJob.conversationId);
-  }, [selectedJob?.conversationId]);
+    if (selectedJob?.projectId) setProjectId(selectedJob.projectId);
+  }, [selectedJob?.conversationId, selectedJob?.projectId]);
 
   const selectJob = (jobId: string) => store.selectJob(jobId);
   const startNew = () => {
@@ -228,7 +242,7 @@ export default function App() {
     setTapdImages([]);
   };
 
-  const deleteConversation = (targetConversationId: string, title: string) => modal.confirm({
+  const deleteConversation = (targetConversationId: string, targetProjectId: string, title: string) => modal.confirm({
     title: "确认删除这条任务记录？",
     content: `“${title}”将从当前终端的列表中删除，同时清理附件和执行事件；已经推送的代码不会被撤回。`,
     okText: "确认删除",
@@ -236,9 +250,9 @@ export default function App() {
     cancelText: "取消",
     onOk: async () => {
       try {
-        await api.deleteConversation(targetConversationId);
+        await api.deleteConversation(targetConversationId, targetProjectId);
         const selected = useTaskStore.getState().jobs.find((job) => job.jobId === useTaskStore.getState().selectedJobId);
-        if (selected && (selected.conversationId || selected.jobId) === targetConversationId) startNew();
+        if (selected && selected.projectId === targetProjectId && (selected.conversationId || selected.jobId) === targetConversationId) startNew();
         await refreshJobs();
         message.success("任务记录已删除");
       } catch (error) {
@@ -266,6 +280,7 @@ export default function App() {
       const result = await api.submit({
         prompt,
         conversationId,
+        projectId,
         agentProvider,
         tapdContext: submittedTapdContext,
         images: compressed,
@@ -328,6 +343,23 @@ export default function App() {
     onOk: () => runAction(() => api.cancel(selectedJob!.jobId), "任务已取消"),
   });
   const mergeJob = () => runAction(() => api.merge(selectedJob!.jobId, createMergeRequest), createMergeRequest ? "正在创建 Merge Request" : "正在合并代码");
+  const generateMiniProgramPreview = () => runAction(() => api.generateMiniProgramPreview(selectedJob!.jobId), "体验版二维码已生成");
+  const openMiniProgramUpload = () => {
+    if (!selectedJob) return;
+    setMiniProgramUploadVersion(defaultMiniProgramVersion());
+    setMiniProgramUploadDescription((selectedJob.prompt || "小程序代码更新").slice(0, 100));
+    setMiniProgramUploadOpen(true);
+  };
+  const confirmMiniProgramUpload = () => {
+    if (!miniProgramUploadVersion.trim()) {
+      message.error("请填写上传版本号");
+      return;
+    }
+    return runAction(async () => {
+      await api.uploadMiniProgramCode(selectedJob!.jobId, miniProgramUploadVersion.trim(), miniProgramUploadDescription.trim());
+      setMiniProgramUploadOpen(false);
+    }, "小程序开发版本已上传");
+  };
   const discardMerge = () => modal.confirm({
     title: "放弃本次合并？",
     content: "任务分支和未合并改动将被清理。",
@@ -492,10 +524,14 @@ export default function App() {
     <div className="app-shell">
       <TaskSidebar
         jobs={store.jobs}
+        projects={projects}
+        projectId={projectId}
+        projectLocked={Boolean(selectedJob)}
         selectedJobId={store.selectedJobId}
         loading={store.loading}
         onSelect={selectJob}
         onNew={startNew}
+        onProjectChange={setProjectId}
         onDelete={deleteConversation}
       />
 
@@ -520,7 +556,6 @@ export default function App() {
                 onClick={() => void enableDesktopNotifications()}
               />
             </Tooltip>
-            <Tooltip title="刷新任务"><Button type="text" icon={<ReloadOutlined />} onClick={() => void refreshJobs()} /></Tooltip>
           </Space>
         </header>
 
@@ -570,6 +605,7 @@ export default function App() {
 
       <TaskDetailPanel
         job={selectedJob}
+        project={selectedProject}
         jobs={conversationJobs}
         events={selectedEvents}
         busy={busy}
@@ -579,6 +615,8 @@ export default function App() {
         onRelease={() => void openRelease()}
         onRevert={revertJob}
         onTapdBug={() => void openBug()}
+        onMiniProgramPreview={() => void generateMiniProgramPreview()}
+        onMiniProgramUpload={openMiniProgramUpload}
         onSelectJob={selectJob}
         onBatchRelease={(jobIds) => void openRelease(jobIds)}
         onBatchRevert={batchRevert}
@@ -630,6 +668,22 @@ export default function App() {
             </div>
           </>
         )}
+      </Modal>
+
+      <Modal
+        title="上传小程序代码"
+        open={miniProgramUploadOpen}
+        onCancel={() => setMiniProgramUploadOpen(false)}
+        onOk={() => void confirmMiniProgramUpload()}
+        okText="确认上传"
+        confirmLoading={busy}
+        okButtonProps={{ disabled: !miniProgramUploadVersion.trim() }}
+      >
+        <Space direction="vertical" style={{ width: "100%" }}>
+          <Typography.Text type="secondary">将上传到微信公众平台的开发版本，不会自动提交审核或发布。</Typography.Text>
+          <Input value={miniProgramUploadVersion} onChange={(event) => setMiniProgramUploadVersion(event.target.value)} maxLength={64} placeholder="版本号，例如 1.0.0" />
+          <Input.TextArea value={miniProgramUploadDescription} onChange={(event) => setMiniProgramUploadDescription(event.target.value)} maxLength={100} rows={3} placeholder="上传备注" />
+        </Space>
       </Modal>
 
       <Modal

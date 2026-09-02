@@ -3,6 +3,7 @@ import type {
   JobEvent,
   JobStatus,
   OperationLogEntry,
+  ProjectProfile,
   SubmitInput,
   SubmitResponse,
   TapdContext,
@@ -49,6 +50,7 @@ function submitBody(input: SubmitInput): BodyInit {
     const form = new FormData();
     form.append("prompt", input.prompt);
     form.append("conversationId", input.conversationId);
+    form.append("projectId", input.projectId);
     if (input.agentProvider) form.append("agentProvider", input.agentProvider);
     if (input.tapdContext) form.append("tapdContext", JSON.stringify(input.tapdContext));
     input.images.forEach((image, index) => {
@@ -59,12 +61,18 @@ function submitBody(input: SubmitInput): BodyInit {
   return JSON.stringify({
     prompt: input.prompt,
     conversationId: input.conversationId,
+    projectId: input.projectId,
     agentProvider: input.agentProvider,
     tapdContext: input.tapdContext,
   });
 }
 
 export const api = {
+  async listProjects(): Promise<ProjectProfile[]> {
+    const data = await request<{ projects: ProjectProfile[] }>("/api/projects");
+    return data.projects ?? [];
+  },
+
   async getClient(): Promise<{ remoteIp: string }> {
     return request("/api/client");
   },
@@ -101,8 +109,8 @@ export const api = {
     await request(`/api/jobs/${encodeURIComponent(jobId)}/cancel`, { method: "POST", body: "{}" });
   },
 
-  async deleteConversation(conversationId: string): Promise<{ deleted: number }> {
-    return request(`/api/jobs/conversation/${encodeURIComponent(conversationId)}`, { method: "DELETE" });
+  async deleteConversation(conversationId: string, projectId: string): Promise<{ deleted: number }> {
+    return request(`/api/jobs/conversation/${encodeURIComponent(conversationId)}?projectId=${encodeURIComponent(projectId)}`, { method: "DELETE" });
   },
 
   async merge(jobId: string, createMergeRequest = false): Promise<SubmitResponse> {
@@ -133,6 +141,19 @@ export const api = {
     const data = await request<{ job: JobStatus }>(`/api/jobs/${encodeURIComponent(jobId)}/revert-default`, {
       method: "POST",
       body: "{}",
+    });
+    return data.job;
+  },
+
+  async generateMiniProgramPreview(jobId: string): Promise<JobStatus> {
+    const data = await request<{ job: JobStatus }>(`/api/jobs/${encodeURIComponent(jobId)}/mini-program-preview`, { method: "POST", body: "{}" });
+    return data.job;
+  },
+
+  async uploadMiniProgramCode(jobId: string, version: string, description: string): Promise<JobStatus> {
+    const data = await request<{ job: JobStatus }>(`/api/jobs/${encodeURIComponent(jobId)}/mini-program-upload`, {
+      method: "POST",
+      body: JSON.stringify({ version, description }),
     });
     return data.job;
   },

@@ -1,11 +1,12 @@
-import { config } from "../config.js";
 import { getJob, updateJob } from "./jobStore.js";
-import { GitMergeConflictError, GitRemoteUnavailableError, gitService } from "./gitService.js";
+import { GitMergeConflictError, GitRemoteUnavailableError } from "./gitService.js";
 import { appendJobEvent } from "./jobEvents.js";
 import { createJobConflictResolver } from "./gitConflictResolutionService.js";
 import type { ReleaseMergeRecord } from "../types.js";
 import { buildMergeMessage } from "./commitMessage.js";
 import { logOperation } from "./operationLog.js";
+import { getProject } from "./projectRegistry.js";
+import { getProjectGitService } from "./projectRuntime.js";
 
 export async function confirmJobMerge(jobId: string): Promise<void> {
   const job = getJob(jobId);
@@ -17,7 +18,9 @@ export async function confirmJobMerge(jobId: string): Promise<void> {
     throw new Error("缺少待合并分支");
   }
 
-  const defaultBranch = config.GIT_DEFAULT_BRANCH;
+  const project = getProject(job.projectId);
+  const gitService = getProjectGitService(job.projectId);
+  const defaultBranch = project.defaultBranch;
   updateJob(jobId, { status: "running", message: `正在合并到 ${defaultBranch}...` });
   appendJobEvent(jobId, {
     type: "stage",
@@ -202,7 +205,9 @@ export async function createJobMergeRequest(jobId: string): Promise<void> {
     throw new Error("缺少待提交分支");
   }
 
-  const defaultBranch = config.GIT_DEFAULT_BRANCH;
+  const project = getProject(job.projectId);
+  const gitService = getProjectGitService(job.projectId);
+  const defaultBranch = project.defaultBranch;
   updateJob(jobId, { status: "running", message: "正在提交 Merge Request..." });
   appendJobEvent(jobId, {
     type: "stage",
@@ -274,11 +279,14 @@ export async function createJobMergeRequest(jobId: string): Promise<void> {
 export async function mergeCompletedJobToBranch(jobId: string, targetBranch: string): Promise<void> {
   const job = getJob(jobId);
   if (!job) throw new Error("任务不存在");
+  const project = getProject(job.projectId);
+  const gitService = getProjectGitService(job.projectId);
+  const defaultBranch = project.defaultBranch;
   if (job.status !== "completed") {
     throw new Error(`当前状态不可合并到其他分支: ${job.status}`);
   }
-  if (job.mergedToDefaultBranch !== config.GIT_DEFAULT_BRANCH || job.branch !== config.GIT_DEFAULT_BRANCH) {
-    throw new Error(`任务尚未合并到 ${config.GIT_DEFAULT_BRANCH}`);
+  if (job.mergedToDefaultBranch !== defaultBranch || job.branch !== defaultBranch) {
+    throw new Error(`任务尚未合并到 ${defaultBranch}`);
   }
   const sourceBranch = job.sourceBranch;
   if (!sourceBranch) {
@@ -288,8 +296,8 @@ export async function mergeCompletedJobToBranch(jobId: string, targetBranch: str
   if (!sourceCommitSha) {
     throw new Error("缺少本次改动提交，无法合并到其他分支");
   }
-  if (targetBranch === config.GIT_DEFAULT_BRANCH) {
-    throw new Error(`目标分支不能是 ${config.GIT_DEFAULT_BRANCH}`);
+  if (targetBranch === defaultBranch) {
+    throw new Error(`目标分支不能是 ${defaultBranch}`);
   }
   if (targetBranch === sourceBranch) {
     throw new Error("目标分支不能是本次改动分支");
@@ -386,30 +394,33 @@ export async function mergeCompletedJobToBranch(jobId: string, targetBranch: str
 export async function revertCompletedJobFromDefaultBranch(jobId: string): Promise<void> {
   const job = getJob(jobId);
   if (!job) throw new Error("任务不存在");
+  const project = getProject(job.projectId);
+  const gitService = getProjectGitService(job.projectId);
+  const defaultBranch = project.defaultBranch;
   if (job.status !== "completed") {
     throw new Error(`当前状态不可撤回: ${job.status}`);
   }
-  if (job.mergedToDefaultBranch !== config.GIT_DEFAULT_BRANCH || job.branch !== config.GIT_DEFAULT_BRANCH) {
-    throw new Error(`任务尚未合并到 ${config.GIT_DEFAULT_BRANCH}`);
+  if (job.mergedToDefaultBranch !== defaultBranch || job.branch !== defaultBranch) {
+    throw new Error(`任务尚未合并到 ${defaultBranch}`);
   }
   if (!job.commitSha) {
-    throw new Error("缺少 test 合并提交，无法撤回");
+    throw new Error(`缺少 ${defaultBranch} 合并提交，无法撤回`);
   }
   if (job.revertedFromDefaultAt) {
-    throw new Error(`${config.GIT_DEFAULT_BRANCH} 上的本次改动已撤回`);
+    throw new Error(`${defaultBranch} 上的本次改动已撤回`);
   }
 
-  updateJob(jobId, { message: `正在从 ${config.GIT_DEFAULT_BRANCH} 撤回本次改动...`, revertError: undefined });
+  updateJob(jobId, { message: `正在从 ${defaultBranch} 撤回本次改动...`, revertError: undefined });
   appendJobEvent(jobId, {
     type: "stage",
     phase: "default_revert",
-    text: `正在从 ${config.GIT_DEFAULT_BRANCH} revert ${job.commitSha} 并推送...`,
+    text: `正在从 ${defaultBranch} revert ${job.commitSha} 并推送...`,
   });
 
   try {
-    const revertSha = await gitService.revertCommitOnBranch(job.commitSha, config.GIT_DEFAULT_BRANCH);
+    const revertSha = await gitService.revertCommitOnBranch(job.commitSha, defaultBranch);
     updateJob(jobId, {
-      message: `${job.message ?? "修改已完成"}\n\n${config.GIT_DEFAULT_BRANCH} 已撤回`,
+      message: `${job.message ?? "修改已完成"}\n\n${defaultBranch} 已撤回`,
       revertedFromDefaultAt: new Date().toISOString(),
       revertCommitSha: revertSha,
       revertError: undefined,
@@ -417,8 +428,8 @@ export async function revertCompletedJobFromDefaultBranch(jobId: string): Promis
     appendJobEvent(jobId, {
       type: "stage",
       phase: "default_revert_done",
-      text: `${config.GIT_DEFAULT_BRANCH} 已撤回本次改动`,
-      branch: config.GIT_DEFAULT_BRANCH,
+      text: `${defaultBranch} 已撤回本次改动`,
+      branch: defaultBranch,
       commitSha: revertSha,
     });
     logOperation({
@@ -426,7 +437,7 @@ export async function revertCompletedJobFromDefaultBranch(jobId: string): Promis
       status: "success",
       jobId,
       ownerId: job.ownerId,
-      targetBranch: config.GIT_DEFAULT_BRANCH,
+      targetBranch: defaultBranch,
       commitSha: revertSha,
     });
   } catch (err) {
@@ -436,14 +447,14 @@ export async function revertCompletedJobFromDefaultBranch(jobId: string): Promis
       status: "failed",
       jobId,
       ownerId: job.ownerId,
-      targetBranch: config.GIT_DEFAULT_BRANCH,
+      targetBranch: defaultBranch,
       error,
     });
     updateJob(jobId, {
-      message: `${job.message ?? "修改已完成"}\n\n${config.GIT_DEFAULT_BRANCH} 撤回失败: ${error}`,
+      message: `${job.message ?? "修改已完成"}\n\n${defaultBranch} 撤回失败: ${error}`,
       revertError: error,
     });
-    appendJobEvent(jobId, { type: "error", message: error, text: `${config.GIT_DEFAULT_BRANCH} 撤回失败: ${error}` });
+    appendJobEvent(jobId, { type: "error", message: error, text: `${defaultBranch} 撤回失败: ${error}` });
     throw err;
   } finally {
     try {
@@ -460,6 +471,8 @@ export async function revertCompletedJobFromDefaultBranch(jobId: string): Promis
 export async function discardJobMerge(jobId: string): Promise<void> {
   const job = getJob(jobId);
   if (!job) throw new Error("任务不存在");
+  const project = getProject(job.projectId);
+  const gitService = getProjectGitService(job.projectId);
   if (job.status !== "awaiting_merge" && job.status !== "pending") {
     throw new Error(`当前状态不可放弃合并: ${job.status}`);
   }
@@ -478,11 +491,11 @@ export async function discardJobMerge(jobId: string): Promise<void> {
     await gitService.restoreBaseBranch();
   }
 
-  updateJob(jobId, { status: "cancelled", message: "已放弃合并，test 分支未改动", worktreePath: undefined });
+  updateJob(jobId, { status: "cancelled", message: `已放弃合并，${project.defaultBranch} 分支未改动`, worktreePath: undefined });
   appendJobEvent(jobId, {
     type: "cancelled",
     message: "已放弃合并",
-    text: "已放弃合并：已切回 test 分支，test 未做任何改动",
+    text: `已放弃合并：已切回 ${project.defaultBranch} 分支，${project.defaultBranch} 未做任何改动`,
   });
   logOperation({
     action: "merge_discard",
@@ -490,6 +503,6 @@ export async function discardJobMerge(jobId: string): Promise<void> {
     jobId,
     ownerId: job.ownerId,
     branch: job.branch,
-    targetBranch: config.GIT_DEFAULT_BRANCH,
+    targetBranch: project.defaultBranch,
   });
 }

@@ -10,13 +10,13 @@ import { jobsRouter } from "./routes/jobs.js";
 
 import { tapdRouter } from "./routes/tapd.js";
 
-import { gitService } from "./services/gitService.js";
-
 import { initJobStore } from "./services/jobStore.js";
 import { closeDatabase } from "./services/database.js";
 import { initHousekeeping } from "./services/housekeeping.js";
 import { clientIdentityMiddleware, getClientIdentity } from "./services/clientIdentity.js";
 import { operationLogsRouter } from "./routes/operationLogs.js";
+import { projectsRouter } from "./routes/projects.js";
+import { resetAllProjectWorkspaces } from "./services/projectRuntime.js";
 
 
 
@@ -25,17 +25,7 @@ initHousekeeping();
 
 
 
-void gitService.resetWorkspaceAfterRestart().catch((err) => {
-
-  console.warn(
-
-    "[AI Runtime] 重启后工作区清理失败:",
-
-    err instanceof Error ? err.message : String(err)
-
-  );
-
-});
+void resetAllProjectWorkspaces();
 
 
 
@@ -78,6 +68,7 @@ app.get("/api/client", (req, res) => {
 
 
 app.use("/api/jobs", jobsRouter);
+app.use("/api/projects", projectsRouter);
 
 app.use("/api/tapd", tapdRouter);
 app.use("/api/operation-logs", operationLogsRouter);

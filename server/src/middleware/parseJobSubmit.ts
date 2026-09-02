@@ -1,6 +1,7 @@
 import type { Request } from "express";
 import { z } from "zod";
 import type { JobRequest } from "../types.js";
+import { getProject } from "../services/projectRegistry.js";
 
 const pageContextSchema = z.object({
   url: z.string(),
@@ -30,6 +31,7 @@ const tapdContextSchema = z.object({
 
 const submitFieldsSchema = z.object({
   prompt: z.string().min(1, "prompt 不能为空"),
+  projectId: z.string().regex(/^[a-z0-9-]+$/).optional(),
   agentProvider: z.enum(["claude", "codex"]).optional(),
   pageContext: pageContextSchema.optional(),
   tapdContext: tapdContextSchema.optional(),
@@ -58,13 +60,15 @@ export function parseJobSubmitBody(req: Request): { data?: JobRequest; error?: s
     if (!parsed.success) {
       return { error: parsed.error.errors[0]?.message ?? "参数无效" };
     }
-    return { data: parsed.data };
+    try { getProject(parsed.data.projectId); return { data: parsed.data }; }
+    catch (err) { return { error: err instanceof Error ? err.message : "项目无效" }; }
   }
 
   const pageContextRaw = parseJsonField(req.body?.pageContext);
   const tapdContextRaw = parseJsonField(req.body?.tapdContext);
   const parsed = submitFieldsSchema.safeParse({
     prompt: req.body?.prompt,
+    projectId: req.body?.projectId,
     agentProvider: req.body?.agentProvider,
     pageContext: pageContextRaw,
     tapdContext: tapdContextRaw,
@@ -76,7 +80,8 @@ export function parseJobSubmitBody(req: Request): { data?: JobRequest; error?: s
     return { error: parsed.error.errors[0]?.message ?? "参数无效" };
   }
 
-  return { data: parsed.data };
+  try { getProject(parsed.data.projectId); return { data: parsed.data }; }
+  catch (err) { return { error: err instanceof Error ? err.message : "项目无效" }; }
 }
 
 export function isMultipartSubmit(req: Request): boolean {

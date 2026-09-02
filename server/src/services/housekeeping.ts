@@ -1,6 +1,7 @@
 import { config } from "../config.js";
 import { getDatabase } from "./database.js";
-import { gitService } from "./gitService.js";
+import { getProjectGitService } from "./projectRuntime.js";
+import { deleteMiniProgramPreview } from "./miniProgramPreviewService.js";
 import { deleteJobIfExpired, listExpiredJobs } from "./jobStore.js";
 import { cleanupExpiredOperationLogs } from "./operationLog.js";
 import {
@@ -19,6 +20,7 @@ export async function cleanupExpiredJobs(): Promise<number> {
   let deleted = 0;
 
   for (const job of expired) {
+    const gitService = getProjectGitService(job.projectId);
     // 条件删除先于文件清理，避免用户恰好恢复操作时误删仍在使用的附件。
     if (!deleteJobIfExpired(job.jobId, cutoff)) continue;
     deleted += 1;
@@ -37,6 +39,7 @@ export async function cleanupExpiredJobs(): Promise<number> {
         err instanceof Error ? err.message : String(err)
       );
     });
+    await deleteMiniProgramPreview(job.jobId).catch(() => undefined);
   }
 
   if (deleted > 0) {

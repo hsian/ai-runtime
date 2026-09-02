@@ -1,6 +1,6 @@
 import { config } from "../config.js";
 import { getJob, updateJob } from "./jobStore.js";
-import { GitMergeConflictError, GitRemoteUnavailableError, gitService } from "./gitService.js";
+import { GitMergeConflictError, GitRemoteUnavailableError, type GitService } from "./gitService.js";
 import { runAgent } from "./agent/index.js";
 import { looksLikeClarification } from "./agent/types.js";
 import { buildCommitMessage, buildMergeMessage, formatGitError } from "./commitMessage.js";
@@ -11,6 +11,8 @@ import type { AgentStreamEvent } from "./agent/types.js";
 import { createJobConflictResolver } from "./gitConflictResolutionService.js";
 import { buildPromptWithTapdContext } from "./tapd/tapdContext.js";
 import { logOperation } from "./operationLog.js";
+import { getProject } from "./projectRegistry.js";
+import { getProjectGitService } from "./projectRuntime.js";
 
 function isNoChangesError(err: unknown): boolean {
   return err instanceof Error && err.message.includes("没有文件变更");
@@ -65,7 +67,7 @@ function buildCodexRetryPrompt(prompt: string): string {
   ].join("\n");
 }
 
-async function abortIfCancelled(jobId: string, phase: string, repoPath?: string): Promise<boolean> {
+async function abortIfCancelled(jobId: string, phase: string, gitService: GitService, repoPath?: string): Promise<boolean> {
   if (!isCancelled(jobId)) return false;
   appendJobEvent(jobId, { type: "stage", phase: "abort", text: `任务已取消，停止在阶段: ${phase}` });
   await gitService.discardUncommittedChanges(repoPath);
@@ -140,6 +142,8 @@ export async function processJob(jobId: string): Promise<void> {
   if (!job) return;
   const agentStartedAt = Date.now();
   const engine = job.agentProvider ?? config.AGENT_PROVIDER;
+  const project = getProject(job.projectId);
+  const gitService = getProjectGitService(job.projectId);
   logOperation({
     action: "job_execute",
     status: "started",
@@ -160,7 +164,7 @@ export async function processJob(jobId: string): Promise<void> {
   }
 
   const branchName = `plugin-fix/${jobId.slice(0, 8)}`;
-  const defaultBranch = config.GIT_DEFAULT_BRANCH;
+  const defaultBranch = project.defaultBranch;
   let repoPath: string | undefined;
   let taskCommitSha: string | undefined;
   let implementationSummary: string | undefined;
@@ -182,10 +186,10 @@ export async function processJob(jobId: string): Promise<void> {
     emitStage(jobId, "pull", `正在基于 ${defaultBranch} 创建独立工作区...`);
     repoPath = await gitService.createJobWorktree(jobId, branchName);
     updateJob(jobId, { worktreePath: repoPath });
-    if (await abortIfCancelled(jobId, "pull", repoPath)) return;
+    if (await abortIfCancelled(jobId, "pull", gitService, repoPath)) return;
 
     emitStage(jobId, "branch", `已创建独立工作区和分支 ${branchName}`);
-    if (await abortIfCancelled(jobId, "branch", repoPath)) return;
+    if (await abortIfCancelled(jobId, "branch", gitService, repoPath)) return;
 
     const stagedAttachments = await stageAttachmentsForAgent(job.attachments, repoPath, jobId);
     if (stagedAttachments?.length) {
@@ -218,7 +222,7 @@ export async function processJob(jobId: string): Promise<void> {
       engine,
       durationMs: Date.now() - agentStartedAt,
     });
-    if (await abortIfCancelled(jobId, "agent", repoPath)) return;
+    if (await abortIfCancelled(jobId, "agent", gitService, repoPath)) return;
 
     let hasChanges = await gitService.hasUncommittedChanges(repoPath);
 
@@ -284,9 +288,9 @@ export async function processJob(jobId: string): Promise<void> {
       "commit",
       config.PUSH_FEATURE_BRANCH
         ? "正在提交并推送代码..."
-        : "正在提交代码（feature 分支不推送，仅合并后推送 test）..."
+        : `正在提交代码（feature 分支不推送，仅合并后推送 ${defaultBranch}）...`
     );
-    if (await abortIfCancelled(jobId, "commit", repoPath)) return;
+    if (await abortIfCancelled(jobId, "commit", gitService, repoPath)) return;
     const commitMessage = buildCommitMessage(result.summary, jobId);
     const commitSha = await gitService.commitAndPush(branchName, commitMessage, repoPath);
     taskCommitSha = commitSha;
@@ -305,9 +309,9 @@ export async function processJob(jobId: string): Promise<void> {
 
     let previewUrl: string | undefined;
     let previewFilter: string | undefined;
-    let previewNotice = "未能从本次改动推断可预览的 app 或端口";
+    let previewNotice = project.type === "wechat-mini-program" ? "代码合并后可在任务详情生成体验版二维码" : "未能从本次改动推断可预览的 app 或端口";
 
-    try {
+    if (project.type === "web") try {
       const changedFiles = await gitService.listChangedFilesAgainstDefault(branchName, repoPath);
       const preview = await resolveJobPreviewLink({
         repoPath,
@@ -324,8 +328,15 @@ export async function processJob(jobId: string): Promise<void> {
     let finalBranch = branchName;
     let mergeSha = commitSha;
 
+    if (!project.autoMerge) {
+      const readyMessage = `代码修改已完成，等待确认是否合并到 ${defaultBranch}`;
+      updateJob(jobId, { status: "awaiting_merge", message: readyMessage, sourceBranch: branchName, sourceCommitSha: commitSha, worktreePath: repoPath, branch: branchName, commitSha, previewUrl, previewFilter, previewMessage: previewNotice, mergeRetryable: false, implementationSummary: result.summary });
+      appendJobEvent(jobId, { type: "stage", phase: "execute_ready", text: readyMessage, branch: branchName, commitSha, previewUrl, previewMessage: previewNotice });
+      return;
+    }
+
     emitStage(jobId, "merge", `正在合并到 ${defaultBranch} 并推送...`);
-    if (await abortIfCancelled(jobId, "merge", repoPath)) return;
+    if (await abortIfCancelled(jobId, "merge", gitService, repoPath)) return;
     const mergeMessage = buildMergeMessage(result.summary, jobId);
     mergeSha = await gitService.mergeIntoDefaultBranch(
       branchName,
@@ -364,7 +375,7 @@ export async function processJob(jobId: string): Promise<void> {
     });
   } catch (err) {
     if (err instanceof GitRemoteUnavailableError && repoPath && taskCommitSha) {
-      const retryMessage = `${err.message}。代码修改和任务分支已保留，请在仓库恢复后重试合并到 ${config.GIT_DEFAULT_BRANCH}`;
+      const retryMessage = `${err.message}。代码修改和任务分支已保留，请在仓库恢复后重试合并到 ${defaultBranch}`;
       updateJob(jobId, {
         status: "awaiting_merge",
         error: err.message,
@@ -375,7 +386,7 @@ export async function processJob(jobId: string): Promise<void> {
         branch: branchName,
         commitSha: taskCommitSha,
         previewUrl: undefined,
-        previewMessage: `远程 ${config.GIT_DEFAULT_BRANCH} 尚未更新，当前预览仍是旧代码`,
+        previewMessage: `远程 ${defaultBranch} 尚未更新，当前预览仍是旧代码`,
         mergeRetryable: true,
         implementationSummary,
       });
@@ -383,14 +394,14 @@ export async function processJob(jobId: string): Promise<void> {
         type: "stage",
         phase: "merge_retryable",
         text: retryMessage,
-        previewMessage: `远程 ${config.GIT_DEFAULT_BRANCH} 尚未更新，当前预览仍是旧代码`,
+        previewMessage: `远程 ${defaultBranch} 尚未更新，当前预览仍是旧代码`,
         mergeRetryable: true,
       });
       return;
     }
 
     if (err instanceof GitMergeConflictError && repoPath) {
-      const fallbackMessage = `自动合并到 ${config.GIT_DEFAULT_BRANCH} 失败，已保留任务分支，请转 Merge Request 或人工处理。${err.message}`;
+      const fallbackMessage = `自动合并到 ${defaultBranch} 失败，已保留任务分支，请转 Merge Request 或人工处理。${err.message}`;
       updateJob(jobId, {
         status: "awaiting_merge",
         error: err.message,
@@ -401,7 +412,7 @@ export async function processJob(jobId: string): Promise<void> {
         branch: branchName,
         commitSha: taskCommitSha,
         previewUrl: undefined,
-        previewMessage: "自动合并尚未完成，当前预览仍是 test 旧代码",
+        previewMessage: `自动合并尚未完成，当前预览仍是 ${defaultBranch} 旧代码`,
         mergeRetryable: false,
         implementationSummary,
       });
@@ -409,7 +420,7 @@ export async function processJob(jobId: string): Promise<void> {
         type: "stage",
         phase: "execute_ready",
         text: fallbackMessage,
-        previewMessage: "自动合并尚未完成，当前预览仍是 test 旧代码",
+        previewMessage: `自动合并尚未完成，当前预览仍是 ${defaultBranch} 旧代码`,
         mergeRetryable: false,
       });
       return;

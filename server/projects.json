@@ -1,0 +1,32 @@
+[
+  {
+    "id": "b2b-composite",
+    "name": "B2B 管理后台",
+    "type": "web",
+    "gitRepoUrl": "http://git.b2bwings.com/frontend_b2bwings/b2b-wings-composite.git",
+    "defaultBranch": "test",
+    "packageManager": "pnpm",
+    "buildCommand": null,
+    "workspaceDir": "D:/myProject/ai-runtime-project/b2b-wings-composite",
+    "worktreeDir": "./data/wt",
+    "autoMerge": true
+  },
+  {
+    "id": "yuenongjiao-mini",
+    "name": "粤农交小程序",
+    "type": "wechat-mini-program",
+    "gitRepoUrl": "http://git.b2bwings.com/frontend_b2bwings/b2b-wings-property-mini",
+    "defaultBranch": "demo-version",
+    "packageManager": "npm",
+    "buildCommand": null,
+    "workspaceDir": "../workspace/yuenongjiao-mini",
+    "worktreeDir": "./data/wt/yuenongjiao-mini",
+    "autoMerge": true,
+    "miniProgram": {
+      "appId": "wx6f72dafae81cb659",
+      "projectRoot": ".",
+      "robot": 1,
+      "privateKeyPathEnv": "YUENONGJIAO_MINI_PRIVATE_KEY_PATH"
+    }
+  }
+]

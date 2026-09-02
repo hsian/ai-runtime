@@ -1,6 +1,7 @@
 import { v4 as uuidv4 } from "uuid";
 
 import type { ConversationHistoryMessage, Job, JobRequest, JobStatus } from "../types.js";
+import { DEFAULT_PROJECT_ID } from "./projectRegistry.js";
 import { getDatabase, initDatabase } from "./database.js";
 
 const MAX_HISTORY_JOBS = 10;
@@ -20,7 +21,8 @@ export interface ConversationContextStats {
 
 function parseJob(row: JobRow | undefined): Job | undefined {
   if (!row) return undefined;
-  return JSON.parse(row.data) as Job;
+  const job = JSON.parse(row.data) as Job;
+  return { ...job, projectId: job.projectId || DEFAULT_PROJECT_ID };
 }
 
 function persistJob(job: Job): void {
@@ -59,13 +61,14 @@ function buildConversationHistory(request: JobRequest): ConversationHistoryMessa
       FROM jobs
       WHERE owner_id = ?
         AND conversation_id = ?
+        AND COALESCE(json_extract(data, '$.projectId'), ?) = ?
         -- 未确认或信息不足的 Plan 只是草稿，不应污染后续问答上下文。
         -- awaiting_merge 已经经过用户确认并完成代码修改，需要继续保留。
         AND status IN ('completed', 'awaiting_merge')
       ORDER BY created_at DESC
       LIMIT ?
     `)
-    .all(request.ownerId ?? "anonymous", request.conversationId, MAX_HISTORY_JOBS) as JobRow[];
+    .all(request.ownerId ?? "anonymous", request.conversationId, DEFAULT_PROJECT_ID, request.projectId ?? DEFAULT_PROJECT_ID, MAX_HISTORY_JOBS) as JobRow[];
   const related = rows.map((row) => parseJob(row)!).reverse();
 
   const turns: ConversationHistoryMessage[][] = [];
@@ -95,9 +98,10 @@ function buildConversationHistory(request: JobRequest): ConversationHistoryMessa
 
 export function getConversationContextStats(
   ownerId: string,
-  conversationId: string
+  conversationId: string,
+  projectId = DEFAULT_PROJECT_ID
 ): ConversationContextStats {
-  const history = buildConversationHistory({ prompt: "", ownerId, conversationId }) ?? [];
+  const history = buildConversationHistory({ prompt: "", ownerId, conversationId, projectId }) ?? [];
   return {
     usedJobs: history.filter((message) => message.role === "user").length,
     maxJobs: MAX_HISTORY_JOBS,
@@ -136,6 +140,7 @@ export function createJob(request: JobRequest): Job {
   const now = new Date().toISOString();
   const job: Job = {
     jobId: uuidv4(),
+    projectId: request.projectId ?? DEFAULT_PROJECT_ID,
     ownerId: request.ownerId ?? "anonymous",
     remoteIp: request.remoteIp,
     status: "pending",

@@ -1,7 +1,7 @@
-import { DeleteOutlined, PlusOutlined, RobotOutlined } from "@ant-design/icons";
-import { Button, Empty, Skeleton, Tooltip } from "antd";
+import { DeleteOutlined, DownOutlined, PlusOutlined, RobotOutlined } from "@ant-design/icons";
+import { Button, Dropdown, Empty, Skeleton, Tooltip } from "antd";
 
-import type { JobStatus } from "../types";
+import type { JobStatus, ProjectProfile } from "../types";
 import { StatusBadge } from "./StatusBadge";
 
 function relativeDate(value: string): string {
@@ -17,13 +17,19 @@ export function TaskSidebar(props: {
   jobs: JobStatus[];
   selectedJobId?: string;
   loading: boolean;
+  projects: ProjectProfile[];
+  projectId: string;
+  projectLocked: boolean;
   onSelect: (jobId: string) => void;
   onNew: () => void;
-  onDelete: (conversationId: string, title: string) => void;
+  onProjectChange: (projectId: string) => void;
+  onDelete: (conversationId: string, projectId: string, title: string) => void;
 }) {
+  const projectNames = new Map(props.projects.map((project) => [project.id, project.name]));
+  const selectedProject = props.projects.find((project) => project.id === props.projectId);
   const conversations = Array.from(
     props.jobs.reduce((groups, job) => {
-      const key = job.conversationId || job.jobId;
+      const key = `${job.projectId}:${job.conversationId || job.jobId}`;
       const current = groups.get(key) ?? [];
       current.push(job);
       groups.set(key, current);
@@ -31,7 +37,7 @@ export function TaskSidebar(props: {
     }, new Map<string, JobStatus[]>()).entries()
   ).map(([id, jobs]) => {
     const ordered = [...jobs].sort((left, right) => new Date(left.createdAt).getTime() - new Date(right.createdAt).getTime());
-    return { id, jobs: ordered, first: ordered[0], latest: ordered[ordered.length - 1] };
+    return { id, conversationId: ordered[0].conversationId || ordered[0].jobId, projectId: ordered[0].projectId, jobs: ordered, first: ordered[0], latest: ordered[ordered.length - 1] };
   }).sort((left, right) => new Date(right.latest.updatedAt).getTime() - new Date(left.latest.updatedAt).getTime());
 
   return (
@@ -44,9 +50,32 @@ export function TaskSidebar(props: {
         </div>
       </div>
 
-      <Button type="primary" icon={<PlusOutlined />} block size="large" onClick={props.onNew}>
-        新建任务
-      </Button>
+      <div className="sidebar-task-actions">
+        <Button type="primary" icon={<PlusOutlined />} block size="large" onClick={props.onNew}>
+          新建任务
+        </Button>
+        <Dropdown
+          disabled={props.projectLocked}
+          trigger={["click"]}
+          menu={{
+            selectedKeys: [props.projectId],
+            items: props.projects.map((project) => ({
+              key: project.id,
+              label: project.type === "wechat-mini-program" ? `${project.name} · 小程序` : project.name,
+            })),
+            onClick: ({ key }) => props.onProjectChange(key),
+          }}
+        >
+          <Button
+            className="sidebar-project-trigger"
+            disabled={props.projectLocked}
+            title={props.projectLocked ? "当前会话已绑定项目；新建任务后可切换" : "选择任务项目"}
+          >
+            <span>{selectedProject?.name ?? "选择项目"}</span>
+            <DownOutlined />
+          </Button>
+        </Dropdown>
+      </div>
 
       <div className="sidebar-section-title">
         <span>最近任务</span>
@@ -83,7 +112,7 @@ export function TaskSidebar(props: {
                       icon={<DeleteOutlined />}
                       onClick={(event) => {
                         event.stopPropagation();
-                        props.onDelete(conversation.id, conversation.first.prompt || "未命名会话");
+                        props.onDelete(conversation.conversationId, conversation.projectId, conversation.first.prompt || "未命名会话");
                       }}
                     />
                   </Tooltip>
@@ -93,6 +122,8 @@ export function TaskSidebar(props: {
                 <div className="task-item-title">{conversation.first.prompt || "未命名会话"}</div>
               </Tooltip>
               <div className="task-item-meta">
+                {projectNames.get(conversation.latest.projectId) || "B2B 管理后台"}
+                {" · "}
                 {conversation.latest.requiresConfirm ? "代码修改" : "项目问答"}
                 {conversation.jobs.length > 1 ? ` · ${conversation.jobs.length} 轮` : ""}
               </div>

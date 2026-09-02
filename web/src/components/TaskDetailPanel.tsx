@@ -3,12 +3,13 @@ import {
   CloseCircleOutlined,
   CloudUploadOutlined,
   LinkOutlined,
+  QrcodeOutlined,
   RollbackOutlined,
   StopOutlined,
 } from "@ant-design/icons";
-import { Button, Card, Descriptions, Divider, Empty, Tag, Typography } from "antd";
+import { Button, Card, Descriptions, Divider, Empty, Image, Tag, Typography } from "antd";
 
-import type { JobEvent, JobStatus } from "../types";
+import type { JobEvent, JobStatus, ProjectProfile } from "../types";
 import { ExecutionTimeline } from "./ExecutionTimeline";
 import { StatusBadge } from "./StatusBadge";
 
@@ -16,6 +17,7 @@ const cancellable = new Set(["planning", "pending", "running"]);
 
 export function TaskDetailPanel(props: {
   job?: JobStatus;
+  project?: ProjectProfile;
   jobs: JobStatus[];
   events: JobEvent[];
   busy: boolean;
@@ -25,6 +27,8 @@ export function TaskDetailPanel(props: {
   onRelease: () => void;
   onRevert: () => void;
   onTapdBug: () => void;
+  onMiniProgramPreview: () => void;
+  onMiniProgramUpload: () => void;
   onSelectJob: (jobId: string) => void;
   onBatchRelease: (jobIds: string[]) => void;
   onBatchRevert: (jobIds: string[]) => void;
@@ -84,12 +88,15 @@ export function TaskDetailPanel(props: {
 
       <Card size="small" className="meta-card">
         <Descriptions column={1} size="small" colon={false}>
+          {props.project && <Descriptions.Item label="项目">{props.project.name}</Descriptions.Item>}
           <Descriptions.Item label="模式">{job.requiresConfirm ? "代码修改" : "项目问答"}</Descriptions.Item>
           {job.branch && <Descriptions.Item label="当前分支"><code>{job.branch}</code></Descriptions.Item>}
           {job.sourceBranch && <Descriptions.Item label="任务分支"><code>{job.sourceBranch}</code></Descriptions.Item>}
           {job.commitSha && <Descriptions.Item label="Commit"><code>{job.commitSha.slice(0, 10)}</code></Descriptions.Item>}
+          {job.miniProgramUploadedAt && <Descriptions.Item label="小程序开发版本">{job.miniProgramUploadVersion} · {new Date(job.miniProgramUploadedAt).toLocaleString("zh-CN")}</Descriptions.Item>}
         </Descriptions>
         {job.previewUrl && <Button icon={<LinkOutlined />} block href={job.previewUrl} target="_blank">打开预览页面</Button>}
+        {job.miniProgramPreviewUrl && <div className="mini-program-preview"><Image src={`${job.miniProgramPreviewUrl}?v=${encodeURIComponent(job.miniProgramPreviewCreatedAt || "latest")}`} alt="小程序体验版二维码" width={180} /><Typography.Text type="secondary">微信扫码打开体验版</Typography.Text></div>}
       </Card>
 
       <Divider titlePlacement="start">执行进度</Divider>
@@ -105,6 +112,8 @@ export function TaskDetailPanel(props: {
         )}
         {job.status === "completed" && !job.revertedFromDefaultAt && hasCodeCommit && (
           <>
+            {props.project?.supportsMiniProgramPreview && job.mergedToDefaultBranch && <Button type="primary" icon={<QrcodeOutlined />} loading={props.busy} onClick={props.onMiniProgramPreview}>{job.miniProgramPreviewUrl ? "重新生成体验版二维码" : "生成体验版二维码"}</Button>}
+            {props.project?.supportsMiniProgramPreview && job.mergedToDefaultBranch && <Button icon={<CloudUploadOutlined />} loading={props.busy} onClick={props.onMiniProgramUpload}>上传代码</Button>}
             <Button icon={<BranchesOutlined />} loading={props.busy} onClick={props.onRelease}>合并到其他分支</Button>
             {job.mergedToDefaultBranch && (
               <Button danger icon={<RollbackOutlined />} loading={props.busy} onClick={props.onRevert}>撤回默认分支</Button>

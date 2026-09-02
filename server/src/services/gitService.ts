@@ -2,7 +2,8 @@ import { cp, mkdir, rm, stat } from "fs/promises";
 import { randomUUID } from "crypto";
 import { dirname, resolve } from "path";
 import { simpleGit, type SimpleGit } from "simple-git";
-import { config, getAuthenticatedRepoUrl } from "../config.js";
+import { config } from "../config.js";
+import type { ProjectProfile } from "./projectRegistry.js";
 
 interface MergeRequestPayload {
   sourceBranch: string;
@@ -55,6 +56,11 @@ function getRepoPathFromUrl(repoUrl: string): { url: URL; path: string } {
     throw new Error("无法从 GIT_REPO_URL 解析仓库路径");
   }
   return { url, path };
+}
+
+function repoIdentity(repoUrl: string): string {
+  const url = new URL(repoUrl);
+  return `${url.hostname.toLowerCase()}/${url.pathname.replace(/^\/+/, "").replace(/\.git$/, "").toLowerCase()}`;
 }
 
 async function readErrorResponse(res: Response): Promise<string> {
@@ -133,9 +139,28 @@ export class GitService {
   private worktreeRoot: string;
   private git: SimpleGit | null = null;
 
-  constructor() {
-    this.repoPath = resolve(config.WORKSPACE_DIR);
-    this.worktreeRoot = resolve(config.WORKTREE_DIR);
+  constructor(private readonly project: ProjectProfile) {
+    this.repoPath = resolve(project.workspaceDir);
+    this.worktreeRoot = resolve(project.worktreeDir);
+  }
+
+  private getAuthenticatedRepoUrl(): string {
+    const url = new URL(this.project.gitRepoUrl);
+    url.username = "oauth2";
+    url.password = config.GIT_ACCESS_TOKEN;
+    return url.toString();
+  }
+
+  private async checkoutBaseBranch(git: SimpleGit): Promise<void> {
+    const branch = this.project.defaultBranch;
+    const remoteBranch = `origin/${branch}`;
+    await git.fetch("origin");
+    await git.raw(["rev-parse", "--verify", remoteBranch]).catch(() => {
+      throw new Error(`远端仓库不存在分支 ${remoteBranch}，请检查项目默认分支配置`);
+    });
+    // 托管副本只服务于 Agent，可直接让本地基线分支跟踪并对齐远端分支。
+    await git.raw(["checkout", "-B", branch, remoteBranch]);
+    await git.raw(["branch", "--set-upstream-to", remoteBranch, branch]);
   }
 
   private async getGit(): Promise<SimpleGit> {
@@ -145,10 +170,17 @@ export class GitService {
       this.git = simpleGit(this.repoPath);
     }
 
-    const isRepo = await this.git.checkIsRepo();
-    if (!isRepo) {
-      await simpleGit().clone(getAuthenticatedRepoUrl(), this.repoPath);
+    const detectedRoot = await this.git.revparse(["--show-toplevel"]).catch(() => "");
+    const isManagedRepo = Boolean(detectedRoot.trim()) && resolve(detectedRoot.trim()) === this.repoPath;
+    if (!isManagedRepo) {
+      await simpleGit().clone(this.getAuthenticatedRepoUrl(), this.repoPath);
       this.git = simpleGit(this.repoPath);
+    } else {
+      const remotes = await this.git.getRemotes(true);
+      const origin = remotes.find((remote) => remote.name === "origin")?.refs.fetch;
+      if (!origin || repoIdentity(origin) !== repoIdentity(this.project.gitRepoUrl)) {
+        throw new Error(`项目 ${this.project.name} 的托管目录仓库不匹配：${this.repoPath}`);
+      }
     }
 
     return this.git;
@@ -291,7 +323,7 @@ export class GitService {
         "-b",
         branchName,
         worktreePath,
-        `origin/${config.GIT_DEFAULT_BRANCH}`,
+        `origin/${this.project.defaultBranch}`,
       ]);
     } catch (err) {
       await git.raw(["worktree", "remove", "--force", worktreePath]).catch(() => {});
@@ -320,9 +352,7 @@ export class GitService {
   /** 拉取远程并切到基线分支，供 Plan 和执行阶段同步最新代码 */
   async prepareBaseBranch(): Promise<SimpleGit> {
     const git = await this.getGit();
-    await git.fetch("origin");
-    await git.checkout(config.GIT_DEFAULT_BRANCH);
-    await git.pull("origin", config.GIT_DEFAULT_BRANCH);
+    await this.checkoutBaseBranch(git);
     return git;
   }
 
@@ -334,6 +364,11 @@ export class GitService {
   async getCurrentBranch(repoPath = this.repoPath): Promise<string> {
     const git = repoPath === this.repoPath ? await this.getGit() : await this.getGitAt(repoPath);
     return (await git.revparse(["--abbrev-ref", "HEAD"])).trim();
+  }
+
+  async getHeadCommit(repoPath = this.repoPath): Promise<string> {
+    const git = repoPath === this.repoPath ? await this.getGit() : await this.getGitAt(repoPath);
+    return (await git.revparse(["HEAD"])).trim();
   }
 
   async commitAndPush(branchName: string, message: string, repoPath = this.repoPath): Promise<string> {
@@ -379,7 +414,7 @@ export class GitService {
   }
 
   async createMergeRequest(payload: MergeRequestPayload): Promise<MergeRequestResult> {
-    const { url, path } = getRepoPathFromUrl(config.GIT_REPO_URL);
+    const { url, path } = getRepoPathFromUrl(this.project.gitRepoUrl);
 
     if (url.hostname.includes("github")) {
       const [owner, repo] = path.split("/");
@@ -397,7 +432,7 @@ export class GitService {
         body: JSON.stringify({
           title: payload.title,
           head: payload.sourceBranch,
-          base: config.GIT_DEFAULT_BRANCH,
+          base: this.project.defaultBranch,
           body: payload.description,
         }),
       });
@@ -418,7 +453,7 @@ export class GitService {
       },
       body: JSON.stringify({
         source_branch: payload.sourceBranch,
-        target_branch: config.GIT_DEFAULT_BRANCH,
+        target_branch: this.project.defaultBranch,
         title: payload.title,
         description: payload.description,
       }),
@@ -438,7 +473,7 @@ export class GitService {
   ): Promise<string> {
     return this.mergeIntoBranch(
       branchName,
-      config.GIT_DEFAULT_BRANCH,
+      this.project.defaultBranch,
       mergeMessage,
       conflictResolver
     );
@@ -602,7 +637,7 @@ export class GitService {
 
   async listChangedFilesAgainstDefault(branchName: string, repoPath = this.repoPath): Promise<string[]> {
     const git = repoPath === this.repoPath ? await this.getGit() : await this.getGitAt(repoPath);
-    const output = await git.diff(["--name-only", `origin/${config.GIT_DEFAULT_BRANCH}...${branchName}`]);
+    const output = await git.diff(["--name-only", `origin/${this.project.defaultBranch}...${branchName}`]);
     return output
       .split(/\r?\n/)
       .map((line) => line.trim())
@@ -612,15 +647,15 @@ export class GitService {
   async restoreBaseBranch(): Promise<void> {
     const git = await this.getGit();
     const current = await this.getCurrentBranch();
-    if (current !== config.GIT_DEFAULT_BRANCH) {
-      await git.checkout(config.GIT_DEFAULT_BRANCH);
+    if (current !== this.project.defaultBranch) {
+      await this.checkoutBaseBranch(git);
     }
   }
 
   /** 放弃合并：切回 test 并删除本地 feature 分支，test 保持远端最新 */
   async discardFeatureBranch(branchName: string, worktreePath?: string): Promise<void> {
     const git = await this.getGit();
-    const defaultBranch = config.GIT_DEFAULT_BRANCH;
+    const defaultBranch = this.project.defaultBranch;
 
     if (worktreePath) {
       await this.removeJobWorktree(worktreePath, branchName);
@@ -704,19 +739,12 @@ export class GitService {
   /** 服务重启后：还原工作区、回到基线分支、清理 plugin-fix 分支 */
   async resetWorkspaceAfterRestart(): Promise<void> {
     const git = await this.getGit();
-    const defaultBranch = config.GIT_DEFAULT_BRANCH;
+    const defaultBranch = this.project.defaultBranch;
 
     await git.reset(["--hard", "HEAD"]);
     await git.clean("f", ["-d"]);
 
-    await git.fetch("origin").catch(() => {});
-
-    const current = (await git.revparse(["--abbrev-ref", "HEAD"])).trim();
-    if (current !== defaultBranch) {
-      await git.checkout(defaultBranch);
-    }
-
-    await git.pull("origin", defaultBranch).catch((err) => {
+    await this.checkoutBaseBranch(git).catch((err) => {
       console.warn("[GitService] 拉取基线分支失败:", err instanceof Error ? err.message : err);
     });
 
@@ -739,5 +767,3 @@ export class GitService {
     return files;
   }
 }
-
-export const gitService = new GitService();

@@ -20,6 +20,7 @@ export interface ReleaseMergeRecord {
 
 export interface JobStatus {
   jobId: string;
+  projectId: string;
   status: JobStatusType;
   prompt?: string;
   agentProvider?: AgentProvider;
@@ -41,6 +42,12 @@ export interface JobStatus {
   previewUrl?: string;
   previewFilter?: string;
   previewMessage?: string;
+  miniProgramPreviewUrl?: string;
+  miniProgramPreviewCreatedAt?: string;
+  miniProgramPreviewCommitSha?: string;
+  miniProgramUploadVersion?: string;
+  miniProgramUploadDescription?: string;
+  miniProgramUploadedAt?: string;
   mergeRetryable?: boolean;
   error?: string;
   planSummary?: string;
@@ -96,6 +103,7 @@ export interface TapdContext {
 export interface SubmitInput {
   prompt: string;
   conversationId: string;
+  projectId: string;
   agentProvider?: AgentProvider;
   tapdContext?: TapdContext;
   images?: Blob[];
@@ -103,6 +111,16 @@ export interface SubmitInput {
 }
 
 export type AgentProvider = "claude" | "codex";
+
+export interface ProjectProfile {
+  id: string;
+  name: string;
+  type: "web" | "wechat-mini-program" | "generic";
+  defaultBranch: string;
+  autoMerge: boolean;
+  supportsMiniProgramPreview: boolean;
+  packageManager?: "npm" | "pnpm" | "yarn";
+}
 
 export interface SubmitResponse {
   jobId: string;

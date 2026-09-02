@@ -34,6 +34,7 @@ export interface TapdContext {
 
 export interface JobRequest {
   prompt: string;
+  projectId?: string;
   agentProvider?: "claude" | "codex";
   pageContext?: PageContext;
   tapdContext?: TapdContext;
@@ -62,6 +63,7 @@ export type JobStatus =
 
 export interface Job {
   jobId: string;
+  projectId: string;
   ownerId: string;
   remoteIp?: string;
   status: JobStatus;
@@ -101,6 +103,12 @@ export interface Job {
   previewFilter?: string;
   previewMessage?: string;
   previewHost?: string;
+  miniProgramPreviewUrl?: string;
+  miniProgramPreviewCreatedAt?: string;
+  miniProgramPreviewCommitSha?: string;
+  miniProgramUploadVersion?: string;
+  miniProgramUploadDescription?: string;
+  miniProgramUploadedAt?: string;
   /** Git 远程暂时不可用，代码已保留，可仅重试合并 */
   mergeRetryable?: boolean;
   error?: string;
