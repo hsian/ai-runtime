@@ -1,11 +1,125 @@
+import { spawn } from "child_process";
+import { createHash } from "crypto";
 import { existsSync, mkdirSync } from "fs";
-import { rm } from "fs/promises";
+import { readFile, readdir, rm, writeFile } from "fs/promises";
 import { relative, resolve } from "path";
 
 import { getProject } from "./projectRegistry.js";
 import { getProjectGitService } from "./projectRuntime.js";
 
 const previewOutputDir = resolve(process.cwd(), "data", "miniprogram-previews");
+const npmCacheDir = resolve(process.cwd(), "data", "npm-cache");
+const npmPreparationPromises = new Map<string, Promise<void>>();
+type MiniProgramCiProject = InstanceType<(typeof import("miniprogram-ci"))["Project"]>;
+
+async function runNpmInstall(projectPath: string): Promise<void> {
+  mkdirSync(npmCacheDir, { recursive: true });
+  const npmArgs = existsSync(resolve(projectPath, "package-lock.json"))
+    ? ["ci", "--no-audit", "--no-fund"]
+    : ["install", "--no-audit", "--no-fund"];
+  const isWindows = process.platform === "win32";
+  const command = isWindows ? process.env.ComSpec || "cmd.exe" : "npm";
+  const args = isWindows ? ["/d", "/s", "/c", `npm.cmd ${npmArgs.join(" ")}`] : npmArgs;
+
+  await new Promise<void>((resolvePromise, reject) => {
+    const child = spawn(command, args, {
+      cwd: projectPath,
+      windowsHide: true,
+      env: { ...process.env, npm_config_cache: npmCacheDir },
+    });
+    let output = "";
+    const collect = (chunk: Buffer) => {
+      output = `${output}${chunk.toString("utf8")}`.slice(-20_000);
+    };
+    child.stdout?.on("data", collect);
+    child.stderr?.on("data", collect);
+    child.once("error", (error) => reject(new Error(`无法启动 npm：${error.message}`)));
+    child.once("exit", (code) => {
+      if (code === 0) {
+        resolvePromise();
+        return;
+      }
+      reject(new Error(`npm ${npmArgs[0]} 执行失败${output.trim() ? `：${output.trim()}` : ""}`));
+    });
+  });
+}
+
+async function dependencyFingerprint(projectPath: string): Promise<string> {
+  const hash = createHash("sha256").update(process.version);
+  for (const name of ["package.json", "package-lock.json"]) {
+    const filePath = resolve(projectPath, name);
+    if (existsSync(filePath)) hash.update(await readFile(filePath));
+  }
+  return hash.digest("hex");
+}
+
+async function containsJavaScript(directory: string): Promise<boolean> {
+  if (!existsSync(directory)) return false;
+  for (const entry of await readdir(directory, { withFileTypes: true })) {
+    if (entry.isFile() && entry.name.endsWith(".js")) return true;
+    if (entry.isDirectory() && await containsJavaScript(resolve(directory, entry.name))) return true;
+  }
+  return false;
+}
+
+async function hasCompleteMiniProgramNpm(projectPath: string): Promise<boolean> {
+  const packageJson = JSON.parse(await readFile(resolve(projectPath, "package.json"), "utf8")) as {
+    dependencies?: Record<string, string>;
+  };
+  const dependencies = Object.keys(packageJson.dependencies || {});
+  if (dependencies.length === 0) return true;
+  for (const dependency of dependencies) {
+    if (!existsSync(resolve(projectPath, "node_modules", ...dependency.split("/")))) return false;
+    if (!await containsJavaScript(resolve(projectPath, "miniprogram_npm", ...dependency.split("/")))) return false;
+  }
+  return true;
+}
+
+async function prepareMiniProgramNpm(
+  projectPath: string,
+  createProject: () => MiniProgramCiProject,
+  packNpm: (project: Parameters<(typeof import("miniprogram-ci"))["packNpm"]>[0]) => Promise<unknown>
+): Promise<MiniProgramCiProject> {
+  const existing = npmPreparationPromises.get(projectPath);
+  if (existing) {
+    await existing;
+    return createProject();
+  }
+
+  let preparedProject: MiniProgramCiProject | undefined;
+
+  const preparation = (async () => {
+    if (!existsSync(resolve(projectPath, "package.json"))) {
+      preparedProject = createProject();
+      return;
+    }
+    const fingerprint = await dependencyFingerprint(projectPath);
+    const markerPath = resolve(projectPath, "node_modules", ".ai-runtime-miniprogram-npm.json");
+    const marker = existsSync(markerPath)
+      ? await readFile(markerPath, "utf8").then((value) => JSON.parse(value) as { fingerprint?: string }).catch(() => undefined)
+      : undefined;
+    if (marker?.fingerprint === fingerprint && await hasCompleteMiniProgramNpm(projectPath)) {
+      preparedProject = createProject();
+      return;
+    }
+
+    await runNpmInstall(projectPath).catch((error) => {
+      throw new Error(`小程序依赖安装失败：${error instanceof Error ? error.message : String(error)}`);
+    });
+    preparedProject = createProject();
+    await packNpm(preparedProject).catch((error) => {
+      throw new Error(`小程序 npm 构建失败：${error instanceof Error ? error.message : String(error)}`);
+    });
+    if (!await hasCompleteMiniProgramNpm(projectPath)) {
+      throw new Error("小程序 npm 构建不完整，请检查 package.json 中的依赖配置");
+    }
+    await writeFile(markerPath, JSON.stringify({ fingerprint, preparedAt: new Date().toISOString() }), "utf8");
+  })().finally(() => npmPreparationPromises.delete(projectPath));
+
+  npmPreparationPromises.set(projectPath, preparation);
+  await preparation;
+  return preparedProject || createProject();
+}
 
 function assertInside(parent: string, child: string): void {
   const pathFromParent = relative(parent, child);
@@ -56,13 +170,14 @@ export async function generateMiniProgramPreview(
   const outputPath = getMiniProgramPreviewPath(jobId);
   const { default: miniprogramCi } = await import("miniprogram-ci");
   const { Project, preview } = miniprogramCi;
-  const ciProject = new Project({
+  const createProject = () => new Project({
     appid: miniProgram.appId,
     type: "miniProgram",
     projectPath,
     privateKeyPath,
     ignores: ["node_modules/**/*"],
   });
+  const ciProject = await prepareMiniProgramNpm(projectPath, createProject, miniprogramCi.packNpm);
   await preview({
     project: ciProject,
     version: version.slice(0, 20),
@@ -102,13 +217,14 @@ export async function uploadMiniProgramCode(
   }
 
   const { default: miniprogramCi } = await import("miniprogram-ci");
-  const ciProject = new miniprogramCi.Project({
+  const createProject = () => new miniprogramCi.Project({
     appid: miniProgram.appId,
     type: "miniProgram",
     projectPath,
     privateKeyPath,
     ignores: ["node_modules/**/*"],
   });
+  const ciProject = await prepareMiniProgramNpm(projectPath, createProject, miniprogramCi.packNpm);
   await miniprogramCi.upload({
     project: ciProject,
     version,
