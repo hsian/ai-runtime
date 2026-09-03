@@ -118,7 +118,7 @@ export function ConversationPanel(props: {
         <div className="welcome-icon"><CodeOutlined /></div>
         <Typography.Title level={2}>从一个问题或修改需求开始</Typography.Title>
         <Typography.Paragraph>
-          可以先询问项目实现，也可以开启“修改代码”，由 Agent 先生成方案，确认后再进入独立工作区执行。
+          支持的项目：B2B 管理后台（村财、监管、村居委、产权、支付中台）和粤农交测试版小程序；其他项目暂不支持。
         </Typography.Paragraph>
         <div className="starter-grid">
           <button
