@@ -207,7 +207,8 @@ function runClaudeCommand(
   stdinText: string,
   jobId?: string,
   onEvent?: AgentEventHandler,
-  timeoutMs = config.CLAUDE_TIMEOUT_MS
+  timeoutMs = config.CLAUDE_TIMEOUT_MS,
+  idleTimeoutMs?: number
 ): Promise<string> {
   return new Promise((resolve, reject) => {
     let aborted = false;
@@ -228,10 +229,12 @@ function runClaudeCommand(
 
     let settled = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
+    let idleTimer: ReturnType<typeof setTimeout> | undefined;
     const finish = (output: string, terminateProcess = false) => {
       if (settled) return;
       settled = true;
       if (timer) clearTimeout(timer);
+      if (idleTimer) clearTimeout(idleTimer);
       if (jobId) unregisterAgentProcess(jobId);
       if (terminateProcess) killChildProcess(child);
       resolve(output);
@@ -240,6 +243,7 @@ function runClaudeCommand(
       if (settled) return;
       settled = true;
       if (timer) clearTimeout(timer);
+      if (idleTimer) clearTimeout(idleTimer);
       if (jobId) unregisterAgentProcess(jobId);
       reject(error);
     };
@@ -256,10 +260,21 @@ function runClaudeCommand(
     let stderr = "";
     let lastActivityAt = Date.now();
     let lastEventLabel = "process started";
+    const armIdleTimeout = () => {
+      if (!idleTimeoutMs || settled) return;
+      if (idleTimer) clearTimeout(idleTimer);
+      idleTimer = setTimeout(() => {
+        const idleSeconds = Math.round((Date.now() - lastActivityAt) / 1000);
+        killChildProcess(child);
+        fail(new Error(`执行无响应超时（连续 ${idleSeconds}s 没有新输出，最后事件: ${lastEventLabel}）`));
+      }, idleTimeoutMs);
+    };
+    armIdleTimeout();
 
     child.stdout.on("data", (chunk: Buffer) => {
       if (settled) return;
       lastActivityAt = Date.now();
+      armIdleTimeout();
       buffer += chunk.toString();
       const lines = buffer.split("\n");
       buffer = lines.pop() ?? "";
@@ -298,6 +313,7 @@ function runClaudeCommand(
 
     child.stderr.on("data", (chunk: Buffer) => {
       lastActivityAt = Date.now();
+      armIdleTimeout();
       lastEventLabel = "stderr";
       stderr += chunk.toString();
     });
@@ -309,7 +325,7 @@ function runClaudeCommand(
       const stderrTail = stderr.trim().slice(-300);
       const detail = `最后活动 ${idleSeconds}s 前，最后事件: ${lastEventLabel}`;
       const stderrDetail = stderrTail ? `，stderr: ${stderrTail}` : "";
-      fail(new Error(`执行超时（${timeoutMs}ms，${detail}${stderrDetail}）`));
+      fail(new Error(`执行总时长超限（${timeoutMs}ms，${detail}${stderrDetail}）`));
     }, timeoutMs);
 
     child.on("error", (err) => {
@@ -470,7 +486,8 @@ export async function runClaudeAgent(
     userPrompt,
     options?.jobId,
     onEvent,
-    isTestCase ? config.CLAUDE_TEST_CASE_TIMEOUT_MS : config.CLAUDE_TIMEOUT_MS
+    isTestCase ? config.CLAUDE_TEST_CASE_TIMEOUT_MS : config.CLAUDE_TIMEOUT_MS,
+    isTestCase ? config.CLAUDE_TEST_CASE_IDLE_TIMEOUT_MS : undefined
   );
 
   return {
