@@ -42,6 +42,29 @@ const document = parseTestCaseDocument(JSON.stringify({
   ],
 }));
 
+const normalizedAssessment = parseTestCaseDocument(JSON.stringify({
+  moduleName: "格式兼容验证",
+  functionDescription: "验证推荐依据和缺口允许使用字符串",
+  implementationAssessment: {
+    recommendedResult: "部分实现",
+    summary: "存在需要人工确认的内容。",
+    evidence: "页面具备查询入口；结果区域能够展示数据",
+    gaps: "异常提示需要人工验证",
+  },
+  cases: [{
+    priority: "中",
+    levelOneModule: "示例功能",
+    levelTwoModule: "查询页面",
+    requirementPoint: "查询",
+    testPoint: "查询结果",
+    preconditions: "用户已进入页面",
+    steps: ["点击查询"],
+    expectedResult: "页面展示查询结果",
+  }],
+}));
+assert.deepEqual(normalizedAssessment.implementationAssessment?.evidence, ["页面具备查询入口", "结果区域能够展示数据"]);
+assert.deepEqual(normalizedAssessment.implementationAssessment?.gaps, ["异常提示需要人工验证"]);
+
 const job = {
   jobId: "verification",
   projectId: "verification",

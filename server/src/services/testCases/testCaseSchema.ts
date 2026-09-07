@@ -30,11 +30,20 @@ const generatedCaseSchema = z.object({
   expectedResult: nonEmptyText,
 });
 
+const textListSchema = z.preprocess((value) => {
+  if (value == null || value === "") return [];
+  if (typeof value !== "string") return value;
+  return value
+    .split(/\r?\n|[；;]/)
+    .map((item) => item.replace(/^\s*\d+[.、)]\s*/, "").trim())
+    .filter(Boolean);
+}, z.array(nonEmptyText).max(30));
+
 const implementationAssessmentSchema = z.object({
   recommendedResult: z.enum(["已实现", "部分实现", "未实现", "无法判断"]),
   summary: nonEmptyText,
-  evidence: z.array(nonEmptyText).max(30),
-  gaps: z.array(nonEmptyText).max(30),
+  evidence: textListSchema,
+  gaps: textListSchema,
 });
 
 const generatedDocumentSchema = z.object({
