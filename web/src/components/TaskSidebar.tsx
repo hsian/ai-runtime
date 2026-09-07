@@ -3,6 +3,7 @@ import { Button, Dropdown, Empty, Skeleton, Tooltip } from "antd";
 
 import type { JobStatus, ProjectProfile } from "../types";
 import { StatusBadge } from "./StatusBadge";
+import { resolveTaskMode, taskModeLabels } from "../utils/taskMode";
 
 function relativeDate(value: string): string {
   const date = new Date(value);
@@ -124,7 +125,7 @@ export function TaskSidebar(props: {
               <div className="task-item-meta">
                 {projectNames.get(conversation.latest.projectId) || "B2B 管理后台"}
                 {" · "}
-                {conversation.latest.requiresConfirm ? "代码修改" : "项目问答"}
+                {taskModeLabels[resolveTaskMode(conversation.latest)]}
                 {conversation.jobs.length > 1 ? ` · ${conversation.jobs.length} 轮` : ""}
               </div>
             </div>

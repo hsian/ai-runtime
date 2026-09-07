@@ -1,4 +1,7 @@
 import { spawn, type ChildProcess } from "child_process";
+import { mkdtemp, readFile, rm, writeFile } from "fs/promises";
+import { tmpdir } from "os";
+import { join } from "path";
 import { config } from "../../config.js";
 import type { PageContext } from "../../types.js";
 import {
@@ -270,11 +273,14 @@ export async function runCodexAgent(
 ): Promise<AgentResult> {
   const isPlan = options?.mode === "plan";
   const isQuestion = options?.mode === "question";
-  const isReadOnly = isPlan || isQuestion;
+  const isTestCase = options?.mode === "test-case";
+  const isReadOnly = isPlan || isQuestion || isTestCase;
   const systemPrompt =
     options?.systemPrompt ??
     (isPlan ? PLAN_SYSTEM_PROMPT : isQuestion ? QUESTION_SYSTEM_PROMPT : SYSTEM_PROMPT);
-  const userPrompt = isPlan
+  const userPrompt = isTestCase
+    ? prompt
+    : isPlan
     ? buildClaudePlanPrompt(
         prompt,
         pageContext,
@@ -305,6 +311,16 @@ export async function runCodexAgent(
     repoPath,
     "--ephemeral",
   ];
+
+  let structuredOutputDir: string | undefined;
+  let structuredOutputPath: string | undefined;
+  if (options?.jsonSchema) {
+    structuredOutputDir = await mkdtemp(join(tmpdir(), "ai-runtime-codex-schema-"));
+    const schemaPath = join(structuredOutputDir, "schema.json");
+    structuredOutputPath = join(structuredOutputDir, "last-message.json");
+    await writeFile(schemaPath, JSON.stringify(options.jsonSchema), "utf8");
+    args.push("--output-schema", schemaPath, "--output-last-message", structuredOutputPath);
+  }
 
   if (config.CODEX_BYPASS_SANDBOX && !isReadOnly) {
     args.push("--dangerously-bypass-approvals-and-sandbox");
@@ -350,23 +366,41 @@ export async function runCodexAgent(
     `[AI Runtime] Codex CLI，模式: ${
       isPlan
         ? "plan（读仓库出方案）"
-        : isQuestion
+        : isTestCase
+          ? "test-case（只读生成测试用例）"
+          : isQuestion
           ? "question（只读项目问答）"
           : "execute（改代码）"
     }，目录: ${repoPath}`
   );
   console.log(`[AI Runtime] 任务: ${prompt}`);
 
-  const output = await runCodexCommand(
-    args,
-    repoPath,
-    `${systemPrompt}\n\n${isReadOnly ? "" : `${CODEX_EXECUTION_PROMPT}\n\n`}${userPrompt}`,
-    options?.jobId,
-    onEvent,
-    config.CODEX_TIMEOUT_MS
-  );
+  let output = "";
+  try {
+    output = await runCodexCommand(
+      args,
+      repoPath,
+      `${systemPrompt}\n\n${isReadOnly ? "" : `${CODEX_EXECUTION_PROMPT}\n\n`}${userPrompt}`,
+      options?.jobId,
+      onEvent,
+      config.CODEX_TIMEOUT_MS
+    );
+
+    if (structuredOutputPath) {
+      const structuredOutput = await readFile(structuredOutputPath, "utf8").catch(() => "");
+      if (structuredOutput.trim()) output = structuredOutput.trim();
+    }
+  } finally {
+    if (structuredOutputDir) {
+      await rm(structuredOutputDir, { recursive: true, force: true }).catch(() => undefined);
+    }
+  }
+
+  if (!output.trim() && isTestCase) {
+    throw new Error("Codex 执行引擎未返回有效文本");
+  }
 
   return {
-    summary: pickPlanOutput(output, output) || (isPlan ? "Plan 分析完成" : isQuestion ? "未获得有效回答" : "已完成代码修改"),
+    summary: pickPlanOutput(output, output) || (isPlan ? "Plan 分析完成" : isTestCase ? "未获得有效测试用例" : isQuestion ? "未获得有效回答" : "已完成代码修改"),
   };
 }

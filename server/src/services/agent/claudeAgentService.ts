@@ -1,4 +1,6 @@
 import { spawn, type ChildProcess } from "child_process";
+import { existsSync } from "fs";
+import { dirname, extname, isAbsolute, join } from "path";
 import { config } from "../../config.js";
 import type {
   ConversationHistoryMessage,
@@ -28,6 +30,31 @@ import { AgentAbortedError } from "./errors.js";
 export { killAgentForJob };
 
 const IS_WINDOWS = process.platform === "win32";
+
+function resolveClaudeLaunch(): { command: string; shell: boolean } {
+  if (!IS_WINDOWS) return { command: config.CLAUDE_CLI_PATH, shell: false };
+
+  const configured = config.CLAUDE_CLI_PATH.trim();
+  const extension = extname(configured).toLowerCase();
+  const candidates: string[] = [];
+
+  if (extension === ".exe") {
+    return { command: configured, shell: false };
+  }
+
+  if (isAbsolute(configured) && (extension === ".cmd" || extension === ".ps1")) {
+    candidates.push(join(dirname(configured), "node_modules", "@anthropic-ai", "claude-code", "bin", "claude.exe"));
+  }
+
+  if (["claude", "claude.cmd", "claude.ps1"].includes(configured.toLowerCase()) && process.env.APPDATA) {
+    candidates.push(join(process.env.APPDATA, "npm", "node_modules", "@anthropic-ai", "claude-code", "bin", "claude.exe"));
+  }
+
+  const nativeExecutable = candidates.find((candidate) => existsSync(candidate));
+  if (nativeExecutable) return { command: nativeExecutable, shell: false };
+
+  return { command: configured, shell: true };
+}
 
 function killChildProcess(child: ChildProcess): void {
   if (!child.pid) return;
@@ -156,6 +183,24 @@ function handleStreamJsonLine(line: string, onEvent: AgentEventHandler | undefin
   return "";
 }
 
+function extractStructuredOutput(parsed: Record<string, unknown>): string | undefined {
+  if (parsed.structured_output && typeof parsed.structured_output === "object") {
+    return JSON.stringify(parsed.structured_output);
+  }
+
+  if (parsed.type !== "assistant" || !parsed.message || typeof parsed.message !== "object") return undefined;
+  const content = (parsed.message as { content?: unknown[] }).content;
+  if (!Array.isArray(content)) return undefined;
+  for (const block of content) {
+    if (!block || typeof block !== "object") continue;
+    const candidate = block as { type?: string; name?: string; input?: unknown };
+    if (candidate.type === "tool_use" && candidate.name === "StructuredOutput" && candidate.input && typeof candidate.input === "object") {
+      return JSON.stringify(candidate.input);
+    }
+  }
+  return undefined;
+}
+
 function runClaudeCommand(
   args: string[],
   cwd: string,
@@ -166,9 +211,14 @@ function runClaudeCommand(
 ): Promise<string> {
   return new Promise((resolve, reject) => {
     let aborted = false;
-    const child = spawn(config.CLAUDE_CLI_PATH, args, {
+    const launch = resolveClaudeLaunch();
+    if (IS_WINDOWS && launch.shell && args.includes("--json-schema")) {
+      reject(new Error("Claude Code 结构化输出需要直接启动 claude.exe；请将 CLAUDE_CLI_PATH 配置为 claude.exe 的完整路径"));
+      return;
+    }
+    const child = spawn(launch.command, args, {
       cwd,
-      shell: IS_WINDOWS,
+      shell: launch.shell,
       stdio: ["pipe", "pipe", "pipe"],
       env: process.env,
       windowsHide: IS_WINDOWS,
@@ -176,9 +226,28 @@ function runClaudeCommand(
 
     if (jobId) registerAgentProcess(jobId, child);
 
+    let settled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const finish = (output: string, terminateProcess = false) => {
+      if (settled) return;
+      settled = true;
+      if (timer) clearTimeout(timer);
+      if (jobId) unregisterAgentProcess(jobId);
+      if (terminateProcess) killChildProcess(child);
+      resolve(output);
+    };
+    const fail = (error: Error) => {
+      if (settled) return;
+      settled = true;
+      if (timer) clearTimeout(timer);
+      if (jobId) unregisterAgentProcess(jobId);
+      reject(error);
+    };
+
     let buffer = "";
     let streamedText = "";
     let finalSummary = "";
+    let resultError = "";
     const parseState: StreamParseState = {
       seenTools: new Set<string>(),
       lastStatusAt: 0,
@@ -189,6 +258,7 @@ function runClaudeCommand(
     let lastEventLabel = "process started";
 
     child.stdout.on("data", (chunk: Buffer) => {
+      if (settled) return;
       lastActivityAt = Date.now();
       buffer += chunk.toString();
       const lines = buffer.split("\n");
@@ -201,9 +271,19 @@ function runClaudeCommand(
 
         try {
           const parsed = JSON.parse(trimmed) as Record<string, unknown>;
+          const structuredOutput = extractStructuredOutput(parsed);
+          if (structuredOutput) {
+            finalSummary = structuredOutput;
+            finish(structuredOutput, parsed.type === "assistant");
+            return;
+          }
           if (parsed.type === "result") {
             const resultText = typeof parsed.result === "string" ? parsed.result.trim() : "";
             if (resultText) finalSummary = resultText;
+            if (parsed.is_error === true) {
+              const errors = Array.isArray(parsed.errors) ? parsed.errors.join("；") : String(parsed.errors ?? resultText ?? "未知错误");
+              resultError = errors;
+            }
           }
         } catch {
           // ignore malformed line
@@ -222,31 +302,28 @@ function runClaudeCommand(
       stderr += chunk.toString();
     });
 
-    const timer = setTimeout(() => {
+    timer = setTimeout(() => {
       aborted = true;
       killChildProcess(child);
       const idleSeconds = Math.round((Date.now() - lastActivityAt) / 1000);
       const stderrTail = stderr.trim().slice(-300);
       const detail = `最后活动 ${idleSeconds}s 前，最后事件: ${lastEventLabel}`;
       const stderrDetail = stderrTail ? `，stderr: ${stderrTail}` : "";
-      reject(new Error(`执行超时（${timeoutMs}ms，${detail}${stderrDetail}）`));
+      fail(new Error(`执行超时（${timeoutMs}ms，${detail}${stderrDetail}）`));
     }, timeoutMs);
 
     child.on("error", (err) => {
-      clearTimeout(timer);
-      if (jobId) unregisterAgentProcess(jobId);
       const hint = IS_WINDOWS
         ? "请确认服务端执行引擎路径配置可用"
         : "请确认服务端已安装执行引擎，必要时在 .env 设置执行引擎绝对路径";
-      reject(new Error(`无法启动执行引擎: ${err.message}。${hint}`));
+      fail(new Error(`无法启动执行引擎: ${err.message}。${hint}`));
     });
 
     child.on("close", (code, signal) => {
-      clearTimeout(timer);
-      if (jobId) unregisterAgentProcess(jobId);
+      if (settled) return;
 
       if (aborted || signal === "SIGTERM" || signal === "SIGKILL") {
-        reject(new AgentAbortedError());
+        fail(new AgentAbortedError());
         return;
       }
 
@@ -255,9 +332,15 @@ function runClaudeCommand(
         lastEventLabel = describeStreamLine(tail);
         try {
           const parsed = JSON.parse(tail) as Record<string, unknown>;
+          const structuredOutput = extractStructuredOutput(parsed);
+          if (structuredOutput) finalSummary = structuredOutput;
           if (parsed.type === "result") {
             const resultText = typeof parsed.result === "string" ? parsed.result.trim() : "";
             if (resultText) finalSummary = resultText;
+            if (parsed.is_error === true) {
+              const errors = Array.isArray(parsed.errors) ? parsed.errors.join("；") : String(parsed.errors ?? resultText ?? "未知错误");
+              resultError = errors;
+            }
           }
         } catch {
           // ignore
@@ -267,12 +350,16 @@ function runClaudeCommand(
 
       if (code === 0) {
         const output = pickPlanOutput(finalSummary, streamedText);
-        resolve(output);
+        if (!output) {
+          fail(new Error(resultError ? `执行失败: ${resultError.slice(0, 500)}` : "执行引擎未返回有效文本"));
+          return;
+        }
+        finish(output);
         return;
       }
 
       const detail = stderr.trim() || streamedText.trim() || `exit code ${code}`;
-      reject(new Error(`执行失败: ${detail.slice(0, 500)}`));
+      fail(new Error(`执行失败: ${detail.slice(0, 500)}`));
     });
 
     child.stdin.write(stdinText);
@@ -289,14 +376,17 @@ export async function runClaudeAgent(
 ): Promise<AgentResult> {
   const isPlan = options?.mode === "plan";
   const isQuestion = options?.mode === "question";
-  const isReadOnly = isPlan || isQuestion;
+  const isTestCase = options?.mode === "test-case";
+  const isReadOnly = isPlan || isQuestion || isTestCase;
   const permissionMode = isReadOnly
     ? "dontAsk"
     : (options?.permissionMode ?? config.CLAUDE_PERMISSION_MODE);
   const systemPrompt =
     options?.systemPrompt ??
     (isPlan ? PLAN_SYSTEM_PROMPT : isQuestion ? QUESTION_SYSTEM_PROMPT : SYSTEM_PROMPT);
-  const userPrompt = isPlan
+  const userPrompt = isTestCase
+    ? prompt
+    : isPlan
     ? buildClaudePlanPrompt(
         prompt,
         pageContext,
@@ -338,21 +428,36 @@ export async function runClaudeAgent(
     args.splice(1, 0, "--dangerously-skip-permissions");
   }
 
-  if (isPlan) {
+  if (isTestCase) {
+    args.push(
+      "--safe-mode",
+      "--tools",
+      options?.disableTools ? "" : "Read,Grep",
+      "--effort",
+      config.CLAUDE_TEST_CASE_EFFORT
+    );
+  } else if (isPlan) {
     args.push("--allowedTools", "Read,Grep,Glob,WebFetch,WebSearch");
   } else if (isQuestion) {
     args.push("--allowedTools", "Read,Grep,Glob");
   }
 
-  if (config.CLAUDE_MODEL) {
-    args.push("--model", config.CLAUDE_MODEL);
+  const model = isTestCase ? config.CLAUDE_TEST_CASE_MODEL : config.CLAUDE_MODEL;
+  if (model) {
+    args.push("--model", model);
+  }
+
+  if (options?.jsonSchema) {
+    args.push("--json-schema", JSON.stringify(options.jsonSchema));
   }
 
   console.log(
     `[AI Runtime] Claude Code CLI，模式: ${
       isPlan
         ? "plan（读仓库出方案）"
-        : isQuestion
+        : isTestCase
+          ? "test-case（只读生成测试用例）"
+          : isQuestion
           ? "question（只读项目问答）"
           : "execute（改代码）"
     }，目录: ${repoPath}`
@@ -365,10 +470,10 @@ export async function runClaudeAgent(
     userPrompt,
     options?.jobId,
     onEvent,
-    config.CLAUDE_TIMEOUT_MS
+    isTestCase ? config.CLAUDE_TEST_CASE_TIMEOUT_MS : config.CLAUDE_TIMEOUT_MS
   );
 
   return {
-    summary: output || (isPlan ? "Plan 分析完成" : isQuestion ? "未获得有效回答" : "已完成代码修改"),
+    summary: output || (isPlan ? "Plan 分析完成" : isTestCase ? "未获得有效测试用例" : isQuestion ? "未获得有效回答" : "已完成代码修改"),
   };
 }

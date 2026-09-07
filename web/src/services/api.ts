@@ -10,6 +10,7 @@ import type {
   TapdIteration,
   TapdImageOption,
   TapdWorkspace,
+  TaskMode,
 } from "../types";
 
 function dataUrlToBlob(dataUrl: string, typeHint?: string): Blob {
@@ -52,6 +53,7 @@ function submitBody(input: SubmitInput): BodyInit {
     form.append("conversationId", input.conversationId);
     form.append("projectId", input.projectId);
     if (input.agentProvider) form.append("agentProvider", input.agentProvider);
+    if (input.taskMode) form.append("taskMode", input.taskMode);
     if (input.tapdContext) form.append("tapdContext", JSON.stringify(input.tapdContext));
     input.images.forEach((image, index) => {
       form.append("images", image, input.imageNames?.[index] || `screenshot-${index + 1}.webp`);
@@ -63,6 +65,7 @@ function submitBody(input: SubmitInput): BodyInit {
     conversationId: input.conversationId,
     projectId: input.projectId,
     agentProvider: input.agentProvider,
+    taskMode: input.taskMode,
     tapdContext: input.tapdContext,
   });
 }
@@ -91,11 +94,16 @@ export const api = {
     return data.events ?? [];
   },
 
-  async submit(input: SubmitInput, modifyCode: boolean): Promise<SubmitResponse> {
-    return request(modifyCode ? "/api/jobs/plan" : "/api/jobs", {
+  async submit(input: SubmitInput, taskMode: TaskMode): Promise<SubmitResponse> {
+    const path = taskMode === "code" ? "/api/jobs/plan" : taskMode === "test-case" ? "/api/test-cases" : "/api/jobs";
+    return request(path, {
       method: "POST",
       body: submitBody(input),
     });
+  },
+
+  testCaseDownloadUrl(jobId: string): string {
+    return `/api/test-cases/${encodeURIComponent(jobId)}/download`;
   },
 
   async execute(jobId: string, planSummary: string | undefined, agentProvider: AgentProvider): Promise<SubmitResponse> {

@@ -1,8 +1,9 @@
-import { CodeOutlined, FileTextOutlined, ToolOutlined, UserOutlined } from "@ant-design/icons";
+import { CodeOutlined, ExperimentOutlined, FileTextOutlined, ToolOutlined, UserOutlined } from "@ant-design/icons";
 import { Alert, Button, Card, Divider, Image, Input, Space, Tag, Typography } from "antd";
 import { useMemo } from "react";
 
-import type { AgentProvider, JobEvent, JobStatus } from "../types";
+import type { AgentProvider, JobEvent, JobStatus, TaskMode } from "../types";
+import { TestCaseResult } from "./TestCaseResult";
 
 function JobTurn(props: {
   job: JobStatus;
@@ -94,6 +95,8 @@ function JobTurn(props: {
         </Card>
       )}
 
+      {props.job.testCaseDocument && <TestCaseResult jobId={props.job.jobId} document={props.job.testCaseDocument} />}
+
       {props.job.status === "failed" && <Alert type="error" showIcon message="任务执行失败" description={props.job.error || props.job.message} />}
       {props.job.status === "cancelled" && <Alert type="info" showIcon message="任务已取消" />}
     </div>
@@ -103,12 +106,12 @@ function JobTurn(props: {
 export function ConversationPanel(props: {
   jobs: JobStatus[];
   currentJob?: JobStatus;
-  modifyCode: boolean;
+  taskMode: TaskMode;
   agentProvider: AgentProvider;
   eventsByJob: Record<string, JobEvent[]>;
   planDrafts: Record<string, string>;
   busy: boolean;
-  onModifyCodeChange: (value: boolean) => void;
+  onTaskModeChange: (value: TaskMode) => void;
   onPlanChange: (jobId: string, value: string) => void;
   onExecute: (planSummary: string) => void;
 }) {
@@ -116,26 +119,34 @@ export function ConversationPanel(props: {
     return (
       <div className="welcome-state">
         <div className="welcome-icon"><CodeOutlined /></div>
-        <Typography.Title level={2}>从一个问题或修改需求开始</Typography.Title>
+        <Typography.Title level={2}>从问题、修改需求或测试需求开始</Typography.Title>
         <Typography.Paragraph>
           支持的项目：B2B 管理后台（村财、监管、村居委、产权、支付中台）和粤农交测试版小程序；其他项目暂不支持。
         </Typography.Paragraph>
         <div className="starter-grid">
           <button
             type="button"
-            className={!props.modifyCode ? "is-active" : undefined}
-            aria-pressed={!props.modifyCode}
-            onClick={() => props.onModifyCodeChange(false)}
+            className={props.taskMode === "question" ? "is-active" : undefined}
+            aria-pressed={props.taskMode === "question"}
+            onClick={() => props.onTaskModeChange("question")}
           >
             <FileTextOutlined /><strong>项目问答</strong><span>读取仓库并回答，不修改代码</span>
           </button>
           <button
             type="button"
-            className={props.modifyCode ? "is-active" : undefined}
-            aria-pressed={props.modifyCode}
-            onClick={() => props.onModifyCodeChange(true)}
+            className={props.taskMode === "code" ? "is-active" : undefined}
+            aria-pressed={props.taskMode === "code"}
+            onClick={() => props.onTaskModeChange("code")}
           >
             <CodeOutlined /><strong>代码修改</strong><span>先出 Plan，确认后自动执行</span>
+          </button>
+          <button
+            type="button"
+            className={props.taskMode === "test-case" ? "is-active" : undefined}
+            aria-pressed={props.taskMode === "test-case"}
+            onClick={() => props.onTaskModeChange("test-case")}
+          >
+            <ExperimentOutlined /><strong>测试用例</strong><span>分析需求与代码，生成 Excel 用例</span>
           </button>
         </div>
       </div>

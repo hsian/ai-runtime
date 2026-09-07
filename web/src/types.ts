@@ -9,6 +9,34 @@ export type JobStatusType =
   | "failed"
   | "cancelled";
 
+export type TaskMode = "question" | "code" | "test-case";
+
+export interface TestCaseItem {
+  caseNumber: number;
+  priority: "高" | "中" | "低";
+  levelOneModule: string;
+  levelTwoModule: string;
+  requirementPoint: string;
+  testPoint: string;
+  preconditions: string;
+  steps: string[];
+  expectedResult: string;
+}
+
+export interface ImplementationAssessment {
+  recommendedResult: "已实现" | "部分实现" | "未实现" | "无法判断";
+  summary: string;
+  evidence: string[];
+  gaps: string[];
+}
+
+export interface TestCaseDocument {
+  moduleName: string;
+  functionDescription: string;
+  implementationAssessment?: ImplementationAssessment;
+  cases: TestCaseItem[];
+}
+
 export interface ReleaseMergeRecord {
   targetBranch: string;
   commitSha?: string;
@@ -26,6 +54,8 @@ export interface JobStatus {
   agentProvider?: AgentProvider;
   conversationId?: string;
   requiresConfirm?: boolean;
+  taskMode?: TaskMode;
+  testCaseDocument?: TestCaseDocument;
   message?: string;
   jobsAhead?: number;
   branch?: string;
@@ -108,6 +138,7 @@ export interface SubmitInput {
   tapdContext?: TapdContext;
   images?: Blob[];
   imageNames?: string[];
+  taskMode?: TaskMode;
 }
 
 export type AgentProvider = "claude" | "codex";

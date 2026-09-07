@@ -7,6 +7,7 @@ import cors from "cors";
 import { config } from "./config.js";
 
 import { jobsRouter } from "./routes/jobs.js";
+import { testCasesRouter } from "./routes/testCases.js";
 
 import { tapdRouter } from "./routes/tapd.js";
 
@@ -68,6 +69,7 @@ app.get("/api/client", (req, res) => {
 
 
 app.use("/api/jobs", jobsRouter);
+app.use("/api/test-cases", testCasesRouter);
 app.use("/api/projects", projectsRouter);
 
 app.use("/api/tapd", tapdRouter);

@@ -11,6 +11,10 @@ const phaseLabel: Record<string, string> = {
   branch: "创建任务分支",
   agent: "Agent 修改代码",
   attachments: "准备任务附件",
+  test_case: "分析需求和代码并生成测试用例",
+  test_case_rewrite: "转换为测试人员用语",
+  test_case_done: "测试用例生成完成",
+  test_case_retry: "重新生成测试用例",
   commit: "提交代码",
   merge: "合并并推送",
   default_merge_done: "合并完成",
@@ -34,7 +38,7 @@ export function ExecutionTimeline({ events }: { events: JobEvent[] }) {
         const eventIndex = events.findIndex((item) => item.id === event.id);
         const nextStage = stages[index + 1];
         const nextStageIndex = nextStage ? events.findIndex((item) => item.id === nextStage.id) : events.length;
-        const liveEvent = ["agent", "plan", "question"].includes(event.phase ?? "")
+        const liveEvent = ["agent", "plan", "question", "test_case"].includes(event.phase ?? "")
           ? events.slice(eventIndex + 1, nextStageIndex).reverse().find(
               (item) => item.type === "agent_status" || item.type === "agent_tool"
             )

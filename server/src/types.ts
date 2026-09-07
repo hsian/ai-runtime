@@ -13,6 +13,34 @@ export interface JobAttachment {
   sizeBytes?: number;
 }
 
+export type TaskMode = "question" | "code" | "test-case";
+
+export interface TestCaseItem {
+  caseNumber: number;
+  priority: "高" | "中" | "低";
+  levelOneModule: string;
+  levelTwoModule: string;
+  requirementPoint: string;
+  testPoint: string;
+  preconditions: string;
+  steps: string[];
+  expectedResult: string;
+}
+
+export interface ImplementationAssessment {
+  recommendedResult: "已实现" | "部分实现" | "未实现" | "无法判断";
+  summary: string;
+  evidence: string[];
+  gaps: string[];
+}
+
+export interface TestCaseDocument {
+  moduleName: string;
+  functionDescription: string;
+  implementationAssessment?: ImplementationAssessment;
+  cases: TestCaseItem[];
+}
+
 export type TapdItemType = "story" | "task" | "bug";
 
 export interface TapdContext {
@@ -43,6 +71,7 @@ export interface JobRequest {
   ownerId?: string;
   remoteIp?: string;
   attachments?: JobAttachment[];
+  taskMode?: TaskMode;
 }
 
 export interface ConversationHistoryMessage {
@@ -75,6 +104,8 @@ export interface Job {
   conversationId?: string;
   conversationHistory?: ConversationHistoryMessage[];
   attachments?: JobAttachment[];
+  taskMode?: TaskMode;
+  testCaseDocument?: TestCaseDocument;
   message?: string;
   /** 前面还有多少任务（含正在执行的），0 表示即将/正在处理 */
   jobsAhead?: number;

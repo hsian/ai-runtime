@@ -15,6 +15,9 @@ const envSchema = z.object({
   AGENT_PROVIDER: z.enum(["claude", "codex"]).default("claude"),
   CLAUDE_CLI_PATH: z.string().default("claude"),
   CLAUDE_MODEL: z.string().optional(),
+  CLAUDE_TEST_CASE_MODEL: z.string().default("sonnet"),
+  CLAUDE_TEST_CASE_EFFORT: z.enum(["low", "medium", "high"]).default("low"),
+  CLAUDE_TEST_CASE_TIMEOUT_MS: z.coerce.number().default(300_000),
   CLAUDE_TIMEOUT_MS: z.coerce.number().default(1_200_000),
   CLAUDE_PERMISSION_MODE: z
     .enum(["acceptEdits", "bypassPermissions", "default", "dontAsk", "auto", "plan"])
@@ -73,6 +76,7 @@ const envSchema = z.object({
     .default("true"),
   CORS_ORIGIN: z.string().default("http://localhost:5173"),
   UPLOAD_DIR: z.string().default("./data/uploads"),
+  TEST_CASE_TEMPLATE_PATH: z.string().default("./assets/test-case-template.xlsx"),
   UPLOAD_MAX_BYTES: z.coerce.number().default(300 * 1024),
   /** TAPD 描述配图从远端下载时的体积上限（下载后会由插件压缩再上传） */
   TAPD_IMAGE_MAX_BYTES: z.coerce.number().default(5 * 1024 * 1024),
@@ -143,6 +147,7 @@ function loadConfig() {
   return {
     ...parsed.data,
     UPLOAD_DIR: resolve(process.cwd(), parsed.data.UPLOAD_DIR),
+    TEST_CASE_TEMPLATE_PATH: resolve(process.cwd(), parsed.data.TEST_CASE_TEMPLATE_PATH),
     WORKSPACE_DIR: resolve(process.cwd(), parsed.data.WORKSPACE_DIR),
     WORKTREE_DIR: resolve(process.cwd(), parsed.data.WORKTREE_DIR),
     OPERATION_LOG_DIR: resolve(process.cwd(), parsed.data.OPERATION_LOG_DIR),

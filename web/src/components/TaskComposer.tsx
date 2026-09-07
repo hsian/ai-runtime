@@ -1,20 +1,21 @@
-import { CloseOutlined, LinkOutlined, PaperClipOutlined, SendOutlined } from "@ant-design/icons";
-import { App as AntApp, Button, Image, Input, Switch, Tag, Tooltip } from "antd";
+import { CloseOutlined, DownOutlined, LinkOutlined, PaperClipOutlined, SendOutlined } from "@ant-design/icons";
+import { App as AntApp, Button, Dropdown, Image, Input, Tag, Tooltip } from "antd";
 import type { ClipboardEvent } from "react";
 import { useEffect, useRef, useState } from "react";
 
-import type { AgentProvider, TapdContext, TapdImageOption } from "../types";
+import type { AgentProvider, TapdContext, TapdImageOption, TaskMode } from "../types";
+import { taskModeLabels } from "../utils/taskMode";
 
 export function TaskComposer(props: {
   value: string;
-  modifyCode: boolean;
+  taskMode: TaskMode;
   agentProvider: AgentProvider;
   files: File[];
   tapdContext?: TapdContext;
   tapdImages: TapdImageOption[];
   submitting: boolean;
   onChange: (value: string) => void;
-  onModifyCodeChange: (value: boolean) => void;
+  onTaskModeChange: (value: TaskMode) => void;
   onAgentProviderChange: (value: AgentProvider) => void;
   onFilesChange: (files: File[]) => void;
   onTapdImagesChange: (images: TapdImageOption[]) => void;
@@ -102,7 +103,7 @@ export function TaskComposer(props: {
         onChange={(event) => props.onChange(event.target.value)}
         onPaste={pasteImages}
         autoSize={{ minRows: 2, maxRows: 7 }}
-        placeholder="描述问题或修改需求，涉及页面时请附上路径……"
+        placeholder={props.taskMode === "test-case" ? "描述需要生成测试用例的需求，可关联 TAPD 或上传截图……" : "描述问题或修改需求，涉及页面时请附上路径……"}
         onPressEnter={(event) => {
           if (!event.shiftKey) {
             event.preventDefault();
@@ -115,7 +116,7 @@ export function TaskComposer(props: {
           <div className="agent-provider-pills" role="radiogroup" aria-label="执行模型">
             {([
               ["claude", "默认模式"],
-              ["codex", "Codex"],
+              ["codex", "智能模式"],
             ] as const).map(([value, label]) => (
               <button
                 key={value}
@@ -136,7 +137,22 @@ export function TaskComposer(props: {
           <Tooltip title="关联 TAPD 需求、任务或缺陷">
             <Button className="composer-tool-button" type="text" icon={<LinkOutlined />} onClick={props.onOpenTapd}>TAPD</Button>
           </Tooltip>
-          <span className="mode-switch"><Switch size="small" checked={props.modifyCode} onChange={props.onModifyCodeChange} /> 修改代码</span>
+          <Dropdown
+            trigger={["click"]}
+            menu={{
+              selectedKeys: [props.taskMode],
+              items: [
+                { key: "question", label: "项目问答" },
+                { key: "code", label: "修改代码" },
+                { key: "test-case", label: "测试用例" },
+              ],
+              onClick: ({ key }) => props.onTaskModeChange(key as TaskMode),
+            }}
+          >
+            <Button className="task-mode-trigger" type="text">
+              {taskModeLabels[props.taskMode]} <DownOutlined />
+            </Button>
+          </Dropdown>
         </div>
         <Button
           type="primary"

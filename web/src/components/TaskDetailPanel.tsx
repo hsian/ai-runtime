@@ -12,6 +12,7 @@ import { Button, Card, Descriptions, Divider, Empty, Image, Tag, Typography } fr
 import type { JobEvent, JobStatus, ProjectProfile } from "../types";
 import { ExecutionTimeline } from "./ExecutionTimeline";
 import { StatusBadge } from "./StatusBadge";
+import { resolveTaskMode, taskModeLabels } from "../utils/taskMode";
 
 const cancellable = new Set(["planning", "pending", "running"]);
 
@@ -89,7 +90,7 @@ export function TaskDetailPanel(props: {
       <Card size="small" className="meta-card">
         <Descriptions column={1} size="small" colon={false}>
           {props.project && <Descriptions.Item label="项目">{props.project.name}</Descriptions.Item>}
-          <Descriptions.Item label="模式">{job.requiresConfirm ? "代码修改" : "项目问答"}</Descriptions.Item>
+          <Descriptions.Item label="模式">{taskModeLabels[resolveTaskMode(job)]}</Descriptions.Item>
           {job.branch && <Descriptions.Item label="当前分支"><code>{job.branch}</code></Descriptions.Item>}
           {job.sourceBranch && <Descriptions.Item label="任务分支"><code>{job.sourceBranch}</code></Descriptions.Item>}
           {job.commitSha && <Descriptions.Item label="Commit"><code>{job.commitSha.slice(0, 10)}</code></Descriptions.Item>}

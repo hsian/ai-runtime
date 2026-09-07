@@ -8,6 +8,7 @@ import type { OperationLogEntry } from "../types";
 const actionLabels: Record<string, string> = {
   job_submit: "提交任务",
   question_execute: "项目问答",
+  test_case_generate: "生成测试用例",
   plan_generate: "生成方案",
   plan_confirm: "确认执行",
   job_execute: "代码任务",

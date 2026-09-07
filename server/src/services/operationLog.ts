@@ -11,7 +11,7 @@ export interface OperationLogEntry {
   jobId?: string;
   ownerId?: string;
   remoteIp?: string;
-  mode?: "plan" | "question" | "execute";
+  mode?: "plan" | "question" | "execute" | "test-case";
   engine?: string;
   durationMs?: number;
   branch?: string;

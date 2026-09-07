@@ -25,11 +25,13 @@ export interface AgentRunOptions {
   agentProvider?: AgentProvider;
   permissionMode?: string;
   systemPrompt?: string;
-  mode?: "plan" | "question" | "execute";
+  mode?: "plan" | "question" | "execute" | "test-case";
   jobId?: string;
   attachments?: JobAttachment[];
   confirmedPlan?: string;
   conversationHistory?: ConversationHistoryMessage[];
+  jsonSchema?: Record<string, unknown>;
+  disableTools?: boolean;
 }
 
 export const SYSTEM_PROMPT =

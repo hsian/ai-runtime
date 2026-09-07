@@ -8,7 +8,7 @@ import { TaskDetailPanel } from "./components/TaskDetailPanel";
 import { TaskSidebar } from "./components/TaskSidebar";
 import { api, openJobStream } from "./services/api";
 import { useTaskStore } from "./stores/taskStore";
-import type { AgentProvider, JobStatus, ProjectProfile, TapdContext, TapdImageOption, TapdIteration, TapdWorkspace } from "./types";
+import type { AgentProvider, JobStatus, ProjectProfile, TapdContext, TapdImageOption, TapdIteration, TapdWorkspace, TaskMode } from "./types";
 import { compressImage } from "./utils/imageCompress";
 import {
   getDesktopNotificationPermission,
@@ -18,6 +18,7 @@ import {
 } from "./utils/desktopNotification";
 import { startTitleAlert, stopTitleAlert } from "./utils/titleAlert";
 import { createUniqueId } from "./utils/uniqueId";
+import { resolveTaskMode } from "./utils/taskMode";
 
 const terminalStatuses = new Set(["completed", "failed", "cancelled", "awaiting_confirm", "awaiting_input", "awaiting_merge"]);
 
@@ -39,7 +40,7 @@ export default function App() {
   const { message, modal } = AntApp.useApp();
   const store = useTaskStore();
   const [draft, setDraft] = useState("");
-  const [modifyCode, setModifyCode] = useState(true);
+  const [taskMode, setTaskMode] = useState<TaskMode>("code");
   const [agentProvider, setAgentProvider] = useState<AgentProvider>("claude");
   const [projects, setProjects] = useState<ProjectProfile[]>([]);
   const [projectId, setProjectId] = useState("b2b-composite");
@@ -94,11 +95,13 @@ export default function App() {
         requireInteraction = true;
         break;
       case "completed":
-        body = job.mergedToDefaultBranch
-          ? "代码修改并合并成功"
-          : job.requiresConfirm
-            ? "代码修改已完成"
-            : "项目问答已完成";
+        body = resolveTaskMode(job) === "test-case"
+          ? "测试用例已生成，可下载 Excel"
+          : job.mergedToDefaultBranch
+            ? "代码修改并合并成功"
+            : job.requiresConfirm
+              ? "代码修改已完成"
+              : "项目问答已完成";
         break;
       case "failed":
         body = job.error ? `任务执行失败：${job.error.slice(0, 120)}` : "任务执行失败";
@@ -229,7 +232,8 @@ export default function App() {
   useEffect(() => {
     if (selectedJob?.conversationId) setConversationId(selectedJob.conversationId);
     if (selectedJob?.projectId) setProjectId(selectedJob.projectId);
-  }, [selectedJob?.conversationId, selectedJob?.projectId]);
+    if (selectedJob) setTaskMode(resolveTaskMode(selectedJob));
+  }, [selectedJob?.jobId, selectedJob?.conversationId, selectedJob?.projectId]);
 
   const selectJob = (jobId: string) => store.selectJob(jobId);
   const startNew = () => {
@@ -288,7 +292,8 @@ export default function App() {
           ...tapdImages.map((item) => `tapd-description-${item.sourceIndex}.webp`),
           ...files.map((file, index) => `${file.name.replace(/\.[^.]+$/, "") || `screenshot-${index + 1}`}.webp`),
         ],
-      }, modifyCode);
+        taskMode,
+      }, taskMode);
       setDraft("");
       setFiles([]);
       setTapdContext(undefined);
@@ -296,7 +301,7 @@ export default function App() {
       setTapdImages([]);
       await refreshJobs();
       store.selectJob(result.jobId);
-      message.success(modifyCode ? "已开始生成修改方案" : "已开始分析项目");
+      message.success(taskMode === "code" ? "已开始生成修改方案" : taskMode === "test-case" ? "已开始生成测试用例" : "已开始分析项目");
     } catch (error) {
       message.error(error instanceof Error ? error.message : "提交失败");
     } finally {
@@ -539,7 +544,7 @@ export default function App() {
         <header className="workspace-header">
           <div>
             <Typography.Title level={4}>{selectedJob?.prompt || "新建任务"}</Typography.Title>
-            <Typography.Text type="secondary">{selectedJob ? `Job ${selectedJob.jobId.slice(0, 8)}` : "在下方输入问题或修改需求"}</Typography.Text>
+            <Typography.Text type="secondary">{selectedJob ? `Job ${selectedJob.jobId.slice(0, 8)}` : "在下方选择模式并输入需求"}</Typography.Text>
           </div>
           <Space>
             {active && <span className="live-indicator"><i /> 实时连接</span>}
@@ -563,12 +568,12 @@ export default function App() {
           <ConversationPanel
             jobs={conversationJobs}
             currentJob={selectedJob}
-            modifyCode={modifyCode}
+            taskMode={taskMode}
             agentProvider={agentProvider}
             eventsByJob={store.events}
             planDrafts={planDrafts}
             busy={busy}
-            onModifyCodeChange={setModifyCode}
+            onTaskModeChange={setTaskMode}
             onPlanChange={(jobId, value) => setPlanDrafts((current) => ({ ...current, [jobId]: value }))}
             onExecute={confirmExecute}
           />
@@ -577,14 +582,14 @@ export default function App() {
         <footer className="workspace-composer">
           <TaskComposer
             value={draft}
-            modifyCode={modifyCode}
+            taskMode={taskMode}
             agentProvider={agentProvider}
             files={files}
             tapdContext={tapdContext}
             tapdImages={tapdImages}
             submitting={submitting}
             onChange={setDraft}
-            onModifyCodeChange={setModifyCode}
+            onTaskModeChange={setTaskMode}
             onAgentProviderChange={setAgentProvider}
             onFilesChange={setFiles}
             onTapdImagesChange={(images) => {

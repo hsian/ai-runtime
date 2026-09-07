@@ -8,6 +8,7 @@
     "build": "tsc",
     "verify:sqlite": "npm run build && node scripts/verify-sqlite-persistence.mjs",
     "verify:git-integration": "npm run build && node scripts/verify-integration-worktree.mjs",
+    "verify:test-cases": "npm run build && node scripts/verify-test-case-workbook.mjs",
     "start": "node dist/index.js",
     "stop": "node scripts/stop.mjs"
   },
@@ -15,6 +16,7 @@
     "better-sqlite3": "^11.10.0",
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
+    "exceljs": "^4.4.0",
     "express": "^4.19.2",
     "miniprogram-ci": "^2.1.31",
     "multer": "^2.2.0",

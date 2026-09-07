@@ -469,6 +469,7 @@ jobsRouter.post("/", handleJobImagesUpload, (req, res) => {
   }
 
   const { job, data } = created;
+  updateJob(job.jobId, { taskMode: "question" });
   emitUserSubmitEvents(job.jobId, data);
   logOperation({
     action: "job_submit",
@@ -498,7 +499,7 @@ jobsRouter.post("/plan", handleJobImagesUpload, (req, res) => {
   }
 
   const { job, data } = created;
-  updateJob(job.jobId, { requiresConfirm: true, status: "planning" });
+  updateJob(job.jobId, { taskMode: "code", requiresConfirm: true, status: "planning" });
   emitUserSubmitEvents(job.jobId, data);
   logOperation({
     action: "job_submit",
@@ -588,7 +589,11 @@ jobsRouter.post("/:jobId/cancel", async (req, res) => {
     status: "cancelled",
     jobId,
     ownerId: job.ownerId,
-    mode: job.requiresConfirm ? (job.status === "planning" ? "plan" : "execute") : "question",
+    mode: job.taskMode === "test-case"
+      ? "test-case"
+      : job.requiresConfirm
+        ? (job.status === "planning" ? "plan" : "execute")
+        : "question",
     message: `cancelled_from:${job.status}`,
   });
   const removedFromQueue = jobQueue.dequeue(jobId);

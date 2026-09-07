@@ -152,6 +152,7 @@ export function createJob(request: JobRequest): Job {
     conversationId: request.conversationId,
     conversationHistory: buildConversationHistory(request),
     attachments: request.attachments,
+    taskMode: request.taskMode,
     requiresConfirm: false,
     createdAt: now,
     updatedAt: now,

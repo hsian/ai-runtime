@@ -37,6 +37,7 @@ const submitFieldsSchema = z.object({
   tapdContext: tapdContextSchema.optional(),
   submittedBy: z.string().optional(),
   conversationId: z.string().min(1).max(128).optional(),
+  taskMode: z.enum(["question", "code", "test-case"]).optional(),
 });
 
 function parseJsonField(raw: unknown): unknown {
@@ -74,6 +75,7 @@ export function parseJobSubmitBody(req: Request): { data?: JobRequest; error?: s
     tapdContext: tapdContextRaw,
     submittedBy: req.body?.submittedBy,
     conversationId: req.body?.conversationId,
+    taskMode: req.body?.taskMode,
   });
 
   if (!parsed.success) {
