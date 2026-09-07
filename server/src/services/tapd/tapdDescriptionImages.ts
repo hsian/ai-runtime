@@ -204,7 +204,15 @@ export async function downloadImagesFromHtml(
   const failedUrls: string[] = [];
 
   for (const [index, url] of urls.entries()) {
-    const downloaded = await downloadSingleImage(url, wsId, cfg);
+    let downloaded: Awaited<ReturnType<typeof downloadSingleImage>>;
+    try {
+      downloaded = await downloadSingleImage(url, wsId, cfg);
+    } catch {
+      // A broken or inaccessible inline image must not prevent the TAPD item
+      // itself (or the remaining valid images) from being associated.
+      failedUrls.push(url);
+      continue;
+    }
     if (!downloaded) {
       failedUrls.push(url);
       continue;
