@@ -184,19 +184,8 @@ function handleStreamJsonLine(line: string, onEvent: AgentEventHandler | undefin
 }
 
 function extractStructuredOutput(parsed: Record<string, unknown>): string | undefined {
-  if (parsed.structured_output && typeof parsed.structured_output === "object") {
+  if (parsed.type === "result" && parsed.structured_output && typeof parsed.structured_output === "object") {
     return JSON.stringify(parsed.structured_output);
-  }
-
-  if (parsed.type !== "assistant" || !parsed.message || typeof parsed.message !== "object") return undefined;
-  const content = (parsed.message as { content?: unknown[] }).content;
-  if (!Array.isArray(content)) return undefined;
-  for (const block of content) {
-    if (!block || typeof block !== "object") continue;
-    const candidate = block as { type?: string; name?: string; input?: unknown };
-    if (candidate.type === "tool_use" && candidate.name === "StructuredOutput" && candidate.input && typeof candidate.input === "object") {
-      return JSON.stringify(candidate.input);
-    }
   }
   return undefined;
 }
@@ -289,7 +278,7 @@ function runClaudeCommand(
           const structuredOutput = extractStructuredOutput(parsed);
           if (structuredOutput) {
             finalSummary = structuredOutput;
-            finish(structuredOutput, parsed.type === "assistant");
+            finish(structuredOutput);
             return;
           }
           if (parsed.type === "result") {
@@ -318,15 +307,17 @@ function runClaudeCommand(
       stderr += chunk.toString();
     });
 
-    timer = setTimeout(() => {
-      aborted = true;
-      killChildProcess(child);
-      const idleSeconds = Math.round((Date.now() - lastActivityAt) / 1000);
-      const stderrTail = stderr.trim().slice(-300);
-      const detail = `最后活动 ${idleSeconds}s 前，最后事件: ${lastEventLabel}`;
-      const stderrDetail = stderrTail ? `，stderr: ${stderrTail}` : "";
-      fail(new Error(`执行总时长超限（${timeoutMs}ms，${detail}${stderrDetail}）`));
-    }, timeoutMs);
+    if (timeoutMs > 0) {
+      timer = setTimeout(() => {
+        aborted = true;
+        killChildProcess(child);
+        const idleSeconds = Math.round((Date.now() - lastActivityAt) / 1000);
+        const stderrTail = stderr.trim().slice(-300);
+        const detail = `最后活动 ${idleSeconds}s 前，最后事件: ${lastEventLabel}`;
+        const stderrDetail = stderrTail ? `，stderr: ${stderrTail}` : "";
+        fail(new Error(`执行总时长超限（${timeoutMs}ms，${detail}${stderrDetail}）`));
+      }, timeoutMs);
+    }
 
     child.on("error", (err) => {
       const hint = IS_WINDOWS
@@ -486,7 +477,7 @@ export async function runClaudeAgent(
     userPrompt,
     options?.jobId,
     onEvent,
-    isTestCase ? config.CLAUDE_TEST_CASE_TIMEOUT_MS : config.CLAUDE_TIMEOUT_MS,
+    isTestCase ? 0 : config.CLAUDE_TIMEOUT_MS,
     isTestCase ? config.CLAUDE_TEST_CASE_IDLE_TIMEOUT_MS : undefined
   );
 

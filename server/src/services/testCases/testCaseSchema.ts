@@ -4,46 +4,22 @@ import type { TestCaseDocument } from "../../types.js";
 
 const nonEmptyText = z.string().trim().min(1).max(5_000);
 
-const prioritySchema = z.preprocess((value) => {
-  if (value === "P0" || value === "P1" || value === "high") return "高";
-  if (value === "P2" || value === "medium") return "中";
-  if (value === "P3" || value === "low") return "低";
-  return value;
-}, z.enum(["高", "中", "低"]));
-
-const stepsSchema = z.preprocess((value) => {
-  if (typeof value !== "string") return value;
-  return value
-    .split(/\r?\n/)
-    .map((item) => item.replace(/^\s*\d+[.、)]\s*/, "").trim())
-    .filter(Boolean);
-}, z.array(nonEmptyText).min(1).max(30));
-
 const generatedCaseSchema = z.object({
-  priority: prioritySchema,
+  priority: z.enum(["高", "中", "低"]),
   levelOneModule: nonEmptyText,
   levelTwoModule: nonEmptyText,
   requirementPoint: nonEmptyText,
   testPoint: nonEmptyText,
   preconditions: nonEmptyText,
-  steps: stepsSchema,
+  steps: z.array(nonEmptyText).min(1).max(30),
   expectedResult: nonEmptyText,
 });
-
-const textListSchema = z.preprocess((value) => {
-  if (value == null || value === "") return [];
-  if (typeof value !== "string") return value;
-  return value
-    .split(/\r?\n|[；;]/)
-    .map((item) => item.replace(/^\s*\d+[.、)]\s*/, "").trim())
-    .filter(Boolean);
-}, z.array(nonEmptyText).max(30));
 
 const implementationAssessmentSchema = z.object({
   recommendedResult: z.enum(["已实现", "部分实现", "未实现", "无法判断"]),
   summary: nonEmptyText,
-  evidence: textListSchema,
-  gaps: textListSchema,
+  evidence: z.array(nonEmptyText).max(30),
+  gaps: z.array(nonEmptyText).max(30),
 });
 
 const generatedDocumentSchema = z.object({
@@ -67,7 +43,6 @@ export function parseTestCaseDocument(output: string): TestCaseDocument {
   for (const candidate of jsonCandidates(output)) {
     try {
       const raw = JSON.parse(candidate) as Record<string, unknown>;
-      if (!raw.cases && Array.isArray(raw.testCases)) raw.cases = raw.testCases;
       const parsed = generatedDocumentSchema.safeParse(raw);
       if (!parsed.success) {
         lastError = parsed.error.issues.map((issue) => `${issue.path.join(".")}: ${issue.message}`).join("；");

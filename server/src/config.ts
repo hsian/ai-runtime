@@ -17,7 +17,6 @@ const envSchema = z.object({
   CLAUDE_MODEL: z.string().optional(),
   CLAUDE_TEST_CASE_MODEL: z.string().default("sonnet"),
   CLAUDE_TEST_CASE_EFFORT: z.enum(["low", "medium", "high"]).default("low"),
-  CLAUDE_TEST_CASE_TIMEOUT_MS: z.coerce.number().default(600_000),
   CLAUDE_TEST_CASE_IDLE_TIMEOUT_MS: z.coerce.number().default(120_000),
   CLAUDE_TIMEOUT_MS: z.coerce.number().default(1_200_000),
   CLAUDE_PERMISSION_MODE: z
