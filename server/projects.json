@@ -7,8 +7,8 @@
     "defaultBranch": "test",
     "packageManager": "pnpm",
     "buildCommand": null,
-    "workspaceDir": "D:/myProject/ai-runtime-project/b2b-wings-composite",
-    "worktreeDir": "./data/wt",
+    "workspaceDir": "../workspace/b2b-wings-composite",
+    "worktreeDir": "./data/wt/b2b-composite",
     "autoMerge": true
   },
   {
