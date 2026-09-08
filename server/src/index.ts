@@ -22,11 +22,16 @@ import { resetAllProjectWorkspaces } from "./services/projectRuntime.js";
 
 
 initJobStore();
+
+try {
+  await resetAllProjectWorkspaces();
+} catch (error) {
+  console.error("[AI Runtime] 项目仓库初始化失败，服务未启动：", error);
+  closeDatabase();
+  process.exit(1);
+}
+
 initHousekeeping();
-
-
-
-void resetAllProjectWorkspaces();
 
 
 

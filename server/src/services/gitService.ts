@@ -1,4 +1,4 @@
-import { cp, mkdir, rm, stat } from "fs/promises";
+import { cp, mkdir, readdir, rename, rm, stat } from "fs/promises";
 import { randomUUID } from "crypto";
 import { dirname, resolve } from "path";
 import { simpleGit, type SimpleGit } from "simple-git";
@@ -138,6 +138,7 @@ export class GitService {
   private repoPath: string;
   private worktreeRoot: string;
   private git: SimpleGit | null = null;
+  private gitInitialization: Promise<SimpleGit> | null = null;
 
   constructor(private readonly project: ProjectProfile) {
     this.repoPath = resolve(project.workspaceDir);
@@ -149,6 +150,38 @@ export class GitService {
     url.username = "oauth2";
     url.password = config.GIT_ACCESS_TOKEN;
     return url.toString();
+  }
+
+  private async cloneManagedRepo(): Promise<void> {
+    const stageNames: Record<string, string> = {
+      counting: "统计对象",
+      compressing: "压缩对象",
+      receiving: "接收对象",
+      resolving: "解析增量",
+      writing: "写入对象",
+    };
+    let lastProgressKey = "";
+    let wroteProgress = false;
+    const cloneGit = simpleGit({
+      progress: ({ stage, progress, processed, total }) => {
+        const progressKey = `${stage}:${progress}`;
+        if (progressKey === lastProgressKey) return;
+        lastProgressKey = progressKey;
+        wroteProgress = true;
+        const stageName = stageNames[stage] || stage;
+        process.stdout.write(
+          `\r[AI Runtime] 克隆 ${this.project.name}：${stageName} ${progress}% (${processed}/${total})`
+        );
+      },
+    });
+
+    console.log(`[AI Runtime] 本地未找到 ${this.project.name}，开始从远端克隆...`);
+    try {
+      await cloneGit.clone(this.getAuthenticatedRepoUrl(), this.repoPath);
+    } finally {
+      if (wroteProgress) process.stdout.write("\n");
+    }
+    console.log(`[AI Runtime] ${this.project.name} 远端克隆完成`);
   }
 
   private async checkoutBaseBranch(git: SimpleGit): Promise<void> {
@@ -164,6 +197,34 @@ export class GitService {
   }
 
   private async getGit(): Promise<SimpleGit> {
+    if (!this.gitInitialization) {
+      this.gitInitialization = this.initializeGit().catch((error) => {
+        this.gitInitialization = null;
+        throw error;
+      });
+    }
+    return this.gitInitialization;
+  }
+
+  private async backupIncompleteRepo(): Promise<void> {
+    const backupPath = `${this.repoPath}.incomplete-${Date.now()}`;
+    this.git = null;
+    try {
+      await rename(this.repoPath, backupPath);
+    } catch (error) {
+      const code = error instanceof Error && "code" in error ? error.code : undefined;
+      if (code !== "EBUSY" && code !== "EPERM") throw error;
+
+      // Windows can keep the directory itself open while still allowing its
+      // contents to be copied and removed. Preserve the same backup guarantee
+      // and reuse the now-empty managed directory for the retry.
+      await cp(this.repoPath, backupPath, { recursive: true });
+      const entries = await readdir(this.repoPath);
+      await Promise.all(entries.map((entry) => rm(resolve(this.repoPath, entry), { recursive: true, force: true })));
+    }
+  }
+
+  private async initializeGit(): Promise<SimpleGit> {
     await mkdir(this.repoPath, { recursive: true });
 
     if (!this.git) {
@@ -173,13 +234,29 @@ export class GitService {
     const detectedRoot = await this.git.revparse(["--show-toplevel"]).catch(() => "");
     const isManagedRepo = Boolean(detectedRoot.trim()) && resolve(detectedRoot.trim()) === this.repoPath;
     if (!isManagedRepo) {
-      await simpleGit().clone(this.getAuthenticatedRepoUrl(), this.repoPath);
+      // An early clone failure may leave only a partial .git directory. Since
+      // this path sits inside the ai-runtime repository, git would otherwise
+      // resolve the parent repository and clone would fail on a non-empty target.
+      const hasNestedGit = await stat(resolve(this.repoPath, ".git")).then(() => true).catch(() => false);
+      if (hasNestedGit) await this.backupIncompleteRepo();
+      await this.cloneManagedRepo();
       this.git = simpleGit(this.repoPath);
     } else {
       const remotes = await this.git.getRemotes(true);
       const origin = remotes.find((remote) => remote.name === "origin")?.refs.fetch;
       if (!origin || repoIdentity(origin) !== repoIdentity(this.project.gitRepoUrl)) {
         throw new Error(`项目 ${this.project.name} 的托管目录仓库不匹配：${this.repoPath}`);
+      }
+
+      // A cancelled or failed clone can leave a .git directory and origin behind
+      // without downloading any commit. Treat it as incomplete instead of reusing
+      // it forever. Keep the directory as a backup in case it contains diagnostics
+      // or user files, then retry the clone into the configured managed path.
+      const hasHead = await this.git.revparse(["--verify", "HEAD"]).then(() => true).catch(() => false);
+      if (!hasHead) {
+        await this.backupIncompleteRepo();
+        await this.cloneManagedRepo();
+        this.git = simpleGit(this.repoPath);
       }
     }
 

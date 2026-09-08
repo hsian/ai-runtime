@@ -25,6 +25,8 @@ npm install
 npm run dev
 ```
 
+服务端会在监听端口前依次检查 `server/projects.json` 中注册的项目仓库。若托管目录不存在，会从远端克隆并在终端输出统计对象、接收对象、解析增量等进度；所有项目仓库初始化完成后，Web 服务才会启动。任一项目首次克隆失败时，服务端会直接启动失败并输出对应项目的错误，修复网络或凭据后重新启动即可重试。
+
 需要单独调试时，也可以使用 `npm run dev:server` 或 `npm run dev:web`。
 
 浏览器访问 `http://localhost:5173`。开发服务器会把 `/api` 请求代理到 `http://localhost:6080`；可通过 `VITE_API_PROXY` 修改目标地址。
