@@ -143,7 +143,7 @@ export function TaskComposer(props: {
               selectedKeys: [props.taskMode],
               items: [
                 { key: "question", label: "项目问答" },
-                { key: "code", label: "修改代码" },
+                { key: "code", label: "功能修改" },
                 { key: "test-case", label: "测试用例" },
               ],
               onClick: ({ key }) => props.onTaskModeChange(key as TaskMode),

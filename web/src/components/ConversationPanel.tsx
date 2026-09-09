@@ -161,7 +161,7 @@ export function ConversationPanel(props: {
             aria-pressed={props.taskMode === "code"}
             onClick={() => props.onTaskModeChange("code")}
           >
-            <CodeOutlined /><strong>代码修改</strong><span>先出 Plan，确认后自动执行</span>
+            <CodeOutlined /><strong>功能修改</strong><span>先确认修改方案，再自动执行</span>
           </button>
           <button
             type="button"

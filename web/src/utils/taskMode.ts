@@ -2,7 +2,7 @@ import type { JobStatus, TaskMode } from "../types";
 
 export const taskModeLabels: Record<TaskMode, string> = {
   question: "项目问答",
-  code: "代码修改",
+  code: "功能修改",
   "test-case": "测试用例",
 };
 
