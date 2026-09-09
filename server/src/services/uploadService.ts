@@ -35,7 +35,8 @@ export const jobImagesUpload = multer({
 
 export function finalizeJobAttachments(
   jobId: string,
-  files: Express.Multer.File[] | undefined
+  files: Express.Multer.File[] | undefined,
+  startIndex = 0
 ): JobAttachment[] {
   if (!files?.length) return [];
 
@@ -45,7 +46,7 @@ export function finalizeJobAttachments(
 
   return files.map((file, index) => {
     const ext = extname(file.originalname) || extname(file.filename) || ".webp";
-    const destPath = join(jobDir, `${index}${ext}`);
+    const destPath = join(jobDir, `${startIndex + index}${ext}`);
     renameSync(file.path, destPath);
     return {
       name: file.originalname || `screenshot-${index + 1}${ext}`,

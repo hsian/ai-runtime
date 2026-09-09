@@ -8,7 +8,7 @@ import { TaskDetailPanel } from "./components/TaskDetailPanel";
 import { TaskSidebar } from "./components/TaskSidebar";
 import { api, openJobStream } from "./services/api";
 import { useTaskStore } from "./stores/taskStore";
-import type { AgentProvider, JobStatus, ProjectProfile, TapdContext, TapdImageOption, TapdIteration, TapdWorkspace, TaskMode } from "./types";
+import type { AgentProvider, ClarificationAnswer, JobStatus, ProjectProfile, TapdContext, TapdImageOption, TapdIteration, TapdWorkspace, TaskMode } from "./types";
 import { compressImage } from "./utils/imageCompress";
 import {
   getDesktopNotificationPermission,
@@ -339,6 +339,19 @@ export default function App() {
       });
     }, "已按编辑后的方案开始执行代码修改");
   };
+  const clarifyPlan = (jobId: string, answers: ClarificationAnswer[], note: string, clarificationFiles: File[]) => {
+    if (notificationPermission === "default") void enableDesktopNotifications(false);
+    return runAction(async () => {
+      const compressed = await Promise.all(clarificationFiles.map(compressImage));
+      await api.clarify(
+        jobId,
+        answers,
+        note,
+        compressed,
+        clarificationFiles.map((file, index) => `${file.name.replace(/\.[^.]+$/, "") || `clarification-${index + 1}`}.webp`)
+      );
+    }, "已提交补充信息，Agent 正在继续分析");
+  };
   const cancelJob = () => modal.confirm({
     title: "确认取消当前任务？",
     content: "正在执行的 Agent 进程和临时工作区将被停止并清理。",
@@ -576,11 +589,14 @@ export default function App() {
             onTaskModeChange={setTaskMode}
             onPlanChange={(jobId, value) => setPlanDrafts((current) => ({ ...current, [jobId]: value }))}
             onExecute={confirmExecute}
+            onClarify={(jobId, answers, note, clarificationFiles) => void clarifyPlan(jobId, answers, note, clarificationFiles)}
           />
         </main>
 
         <footer className="workspace-composer">
-          <TaskComposer
+          {selectedJob?.status === "awaiting_input" ? (
+            <div className="clarification-composer-hint">请在上方回答 Agent 的问题；回答会继续当前任务。</div>
+          ) : <TaskComposer
             value={draft}
             taskMode={taskMode}
             agentProvider={agentProvider}
@@ -604,7 +620,7 @@ export default function App() {
               setTapdImages([]);
             }}
             onSubmit={() => void submit()}
-          />
+          />}
         </footer>
       </section>
 

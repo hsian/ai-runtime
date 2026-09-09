@@ -145,6 +145,21 @@ code { font-family: "SFMono-Regular", Consolas, monospace; font-size: 12px; }
 .plan-editor { padding: 12px 14px !important; border-color: #dce1eb !important; color: #25304a; line-height: 1.75; resize: vertical; }
 .plan-actions { display: flex; align-items: center; justify-content: space-between; gap: 18px; margin-top: 20px; padding-top: 18px; border-top: 1px solid #edf0f5; }
 .plan-actions .ant-alert { flex: 1; }
+.clarification-card { border: 1px solid #cad5ff !important; background: #f8faff !important; box-shadow: none !important; }
+.clarification-card .ant-card-head { min-height: 48px; border-bottom-color: #e4e9fa; }
+.clarification-card .ant-card-head-title { color: #2449c4; }
+.clarification-questions { display: flex; flex-direction: column; gap: 18px; margin: 18px 0; }
+.clarification-question { display: flex; flex-direction: column; gap: 10px; padding: 14px; border: 1px solid #e1e6f5; border-radius: 10px; background: #fff; }
+.clarification-reason { font-size: 12px; line-height: 1.6; }
+.clarification-question .ant-radio-group { width: 100%; }
+.clarification-question .ant-tag { margin-left: 7px; }
+.clarification-files { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
+.clarification-actions { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 16px; padding-top: 16px; border-top: 1px solid #e4e9f3; }
+.clarification-history-card { border: 0 !important; background: #f4f5f8 !important; box-shadow: none !important; }
+.clarification-history-card .ant-card-head { min-height: 40px; border-bottom: 0; color: #667085; font-size: 12px; }
+.clarification-history-card .ant-card-body { display: flex; flex-direction: column; gap: 10px; padding-top: 4px; }
+.clarification-history-item { display: grid; grid-template-columns: minmax(150px, 1fr) minmax(180px, 1.4fr); gap: 16px; font-size: 12px; }
+.clarification-composer-hint { width: min(840px, 100%); margin: 0 auto; padding: 13px 16px; border: 1px solid #d8def0; border-radius: 12px; background: #f3f5fa; color: #667085; font-size: 13px; text-align: center; }
 .tool-details { border: 0; border-radius: 10px; background: var(--conversation-surface); }
 .tool-details summary { padding: 11px 14px; color: #667085; cursor: pointer; list-style: none; }
 .tool-details summary .anticon { margin-right: 8px; }

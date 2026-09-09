@@ -22,9 +22,10 @@ import {
 } from "../services/uploadService.js";
 import { isMultipartSubmit, parseJobSubmitBody } from "../middleware/parseJobSubmit.js";
 import { confirmJobMerge, createJobMergeRequest, discardJobMerge, mergeCompletedJobToBranch, revertCompletedJobFromDefaultBranch } from "../services/jobMergeService.js";
-import type { JobRequest } from "../types.js";
+import type { ClarificationAnswer, Job, JobRequest } from "../types.js";
 import type { AgentProvider } from "../services/agent/index.js";
 import { resolvePlanSummary } from "../services/agent/planSummaryResolver.js";
+import { parsePlanResult, PLAN_RESULT_JSON_SCHEMA } from "../services/agent/planResult.js";
 import { isNonActionablePlanInput } from "../services/agent/planInputGuard.js";
 import { buildPromptWithTapdContext } from "../services/tapd/tapdContext.js";
 import { logOperation } from "../services/operationLog.js";
@@ -33,6 +34,8 @@ import { getProject } from "../services/projectRegistry.js";
 import { getProjectGitService } from "../services/projectRuntime.js";
 import { deleteMiniProgramPreview, generateMiniProgramPreview, getMiniProgramPreviewPath, uploadMiniProgramCode } from "../services/miniProgramPreviewService.js";
 import { existsSync } from "fs";
+
+const MAX_CLARIFICATION_ROUNDS = 2;
 
 function getRequestOwnerId(req: import("express").Request): string {
   return getClientIdentity(req).ownerId;
@@ -103,6 +106,26 @@ async function revertPlanWorkspaceChanges(jobId: string, reason: string): Promis
   });
 }
 
+function buildPlanRequest(job: Job): string {
+  const exchanges = job.clarificationHistory ?? [];
+  const policy = exchanges.length >= MAX_CLARIFICATION_ROUNDS
+    ? `\n\n【澄清限制】\n用户已经回答了 ${exchanges.length} 轮问题。请重新检查全部上下文：信息充分则返回 ready；仍无法正确、安全地形成方案则返回 needs_input，不得猜测。`
+    : `\n\n【澄清限制】\n先检查全部可用上下文。只有缺少用户才能决定的信息会使方案无法正确或安全地继续时才提问；每轮最多 2 个问题，当前已澄清 ${exchanges.length}/${MAX_CLARIFICATION_ROUNDS} 轮。`;
+  if (exchanges.length === 0) return `${job.prompt}${policy}`;
+  const clarificationText = exchanges.map((exchange, index) => {
+    const answers = exchange.answers
+      .map((answer) => `- ${answer.question}\n  用户回答：${answer.value}`)
+      .join("\n");
+    const note = exchange.note?.trim() ? `\n- 用户补充说明：${exchange.note.trim()}` : "";
+    return `第 ${index + 1} 轮：\n${answers}${note}`;
+  }).join("\n\n");
+  return `${job.prompt}\n\n【用户对 Plan 澄清问题的回答】\n${clarificationText}${policy}`;
+}
+
+function normalizeQuestionText(value: string): string {
+  return value.replace(/[\s，。！？、,.!?]/g, "").toLowerCase();
+}
+
 async function runPlan(jobId: string): Promise<void> {
   const job = updateJob(jobId, { status: "planning", requiresConfirm: true, jobsAhead: undefined });
   if (!job) return;
@@ -121,10 +144,17 @@ async function runPlan(jobId: string): Promise<void> {
   let shouldCleanupWorkspace = false;
 
   const trimmed = job.prompt.trim();
-  if (isNonActionablePlanInput(trimmed)) {
+  if (isNonActionablePlanInput(trimmed) && !(job.clarificationHistory?.length)) {
     updateJob(jobId, {
       status: "awaiting_input",
-      planSummary: "需求过于简单（例如仅“你好/测试”），无法判断要改什么。请补充：要改哪个模块？具体要改成什么效果？期望页面/按钮/字段是什么？",
+      planSummary: undefined,
+      clarificationQuestions: [{
+        id: "change_goal",
+        type: "text",
+        question: "请说明要修改哪个页面或功能，以及期望改成什么效果。",
+        reason: "当前输入没有包含可定位的修改目标。",
+        required: true,
+      }],
       message: "Plan 需要补充信息：请描述具体改动",
     });
     appendJobEvent(jobId, {
@@ -168,12 +198,10 @@ async function runPlan(jobId: string): Promise<void> {
     const planStartedAt = new Date();
     const result = await runAgent(
       repoPath,
-      buildPromptWithTapdContext(job.prompt, job.tapdContext),
+      buildPromptWithTapdContext(buildPlanRequest(job), job.tapdContext),
       job.pageContext,
       (event) => {
-        if (event.type === "agent_text" && event.delta) {
-          appendJobEvent(jobId, { type: "agent_text", delta: event.delta });
-        } else if (event.type === "agent_status" && event.statusText) {
+        if (event.type === "agent_status" && event.statusText) {
           updateJob(jobId, { message: event.statusText });
           appendJobEvent(jobId, {
             type: "agent_status",
@@ -201,6 +229,7 @@ async function runPlan(jobId: string): Promise<void> {
         agentProvider: getJobAgentProvider(job),
         attachments: stagedAttachments,
         conversationHistory: job.conversationHistory,
+        jsonSchema: PLAN_RESULT_JSON_SCHEMA,
       }
     );
 
@@ -210,11 +239,71 @@ async function runPlan(jobId: string): Promise<void> {
     const current = getJob(jobId);
     if (!current || current.status === "cancelled") return;
 
-    const planSummary = resolvePlanSummary(result.summary, repoPath, planStartedAt);
+    const planResult = parsePlanResult(result.summary);
+
+    const askedQuestions = new Set(
+      (job.clarificationHistory ?? []).flatMap((exchange) => exchange.questions)
+        .map((question) => normalizeQuestionText(question.question))
+    );
+    const freshQuestions = planResult.result === "needs_input"
+      ? planResult.questions.filter((question) => !askedQuestions.has(normalizeQuestionText(question.question))).slice(0, 2)
+      : [];
+
+    if (
+      planResult.result === "needs_input"
+      && freshQuestions.length > 0
+      && (job.clarificationHistory?.length ?? 0) < MAX_CLARIFICATION_ROUNDS
+    ) {
+      updateJob(jobId, {
+        status: "awaiting_input",
+        planSummary: undefined,
+        clarificationQuestions: freshQuestions,
+        message: planResult.summary || "Agent 需要补充业务信息后继续生成方案",
+      });
+      appendJobEvent(jobId, {
+        type: "stage",
+        phase: "plan_need_more",
+        text: `Agent 需要确认 ${freshQuestions.length} 个问题`,
+      });
+      logOperation({
+        action: "plan_generate",
+        status: "success",
+        jobId,
+        ownerId: job.ownerId,
+        mode: "plan",
+        engine: getJobAgentProvider(job),
+        durationMs: Date.now() - operationStartedAt,
+        message: "needs_more_input",
+      });
+      return;
+    }
+
+    if (planResult.result === "needs_input") {
+      const limitReached = (job.clarificationHistory?.length ?? 0) >= MAX_CLARIFICATION_ROUNDS;
+      const error = limitReached
+        ? "两轮补充后仍缺少完成方案所需的信息，为避免猜测已停止本次任务"
+        : "Agent 重复提出已经回答过的问题，为避免循环已停止本次任务";
+      updateJob(jobId, { status: "failed", error, message: error, clarificationQuestions: undefined });
+      appendJobEvent(jobId, { type: "error", phase: "plan_blocked", text: error, message: error });
+      logOperation({
+        action: "plan_generate",
+        status: "failed",
+        jobId,
+        ownerId: job.ownerId,
+        mode: "plan",
+        engine: getJobAgentProvider(job),
+        durationMs: Date.now() - operationStartedAt,
+        message: limitReached ? "clarification_limit_reached" : "repeated_clarification",
+      });
+      return;
+    }
+
+    const planSummary = resolvePlanSummary(planResult.summary, repoPath, planStartedAt);
 
     updateJob(jobId, {
       status: "awaiting_confirm",
       planSummary,
+      clarificationQuestions: undefined,
       message: "Plan 完成：请在插件端确认是否执行修改",
     });
 
@@ -459,6 +548,48 @@ function emitUserSubmitEvents(jobId: string, data: JobRequest): void {
   }
 }
 
+function parseClarificationAnswers(
+  raw: unknown,
+  job: Job
+): { answers?: ClarificationAnswer[]; error?: string } {
+  let value = raw;
+  if (typeof raw === "string") {
+    try { value = JSON.parse(raw); }
+    catch { return { error: "补充答案格式无效" }; }
+  }
+  if (!Array.isArray(value)) return { error: "请回答 Agent 提出的问题" };
+
+  const submitted = new Map<string, string>();
+  for (const item of value) {
+    if (!item || typeof item !== "object") continue;
+    const questionId = String((item as { questionId?: unknown }).questionId ?? "").trim();
+    const answer = String((item as { value?: unknown }).value ?? "").trim();
+    if (questionId && answer) submitted.set(questionId, answer.slice(0, 5_000));
+  }
+
+  const questions = job.clarificationQuestions ?? [];
+  const missing = questions.find((question) => question.required && !submitted.get(question.id));
+  if (missing) return { error: `请回答：${missing.question}` };
+  const invalidChoice = questions.find((question) => {
+    const answer = submitted.get(question.id);
+    return question.type === "single_choice"
+      && Boolean(answer)
+      && question.allowOther === false
+      && !(question.options ?? []).includes(answer!);
+  });
+  if (invalidChoice) return { error: `请选择有效答案：${invalidChoice.question}` };
+
+  return {
+    answers: questions
+      .filter((question) => submitted.has(question.id))
+      .map((question) => ({
+        questionId: question.id,
+        question: question.question,
+        value: submitted.get(question.id)!,
+      })),
+  };
+}
+
 export const jobsRouter = Router();
 
 jobsRouter.post("/", handleJobImagesUpload, (req, res) => {
@@ -517,6 +648,77 @@ jobsRouter.post("/plan", handleJobImagesUpload, (req, res) => {
     jobId: job.jobId,
     status: "planning",
     message: "已进入 Plan 分析（不改代码），完成后可确认执行",
+    jobsAhead: 0,
+  });
+});
+
+jobsRouter.post("/:jobId/clarify", handleJobImagesUpload, (req, res) => {
+  const jobId = req.params.jobId;
+  const job = getAuthorizedJob(req, res);
+  if (!job) return;
+  if (job.status !== "awaiting_input" || !job.clarificationQuestions?.length) {
+    res.status(400).json({ error: `当前状态不需要补充信息: ${job.status}` });
+    return;
+  }
+
+  const parsed = parseClarificationAnswers(req.body?.answers, job);
+  if (parsed.error || !parsed.answers) {
+    res.status(400).json({ error: parsed.error ?? "补充答案无效" });
+    return;
+  }
+  const note = typeof req.body?.note === "string" ? req.body.note.trim().slice(0, 5_000) : "";
+  const files = isMultipartSubmit(req)
+    ? (req.files as Express.Multer.File[] | undefined)
+    : undefined;
+  const addedAttachments = finalizeJobAttachments(jobId, files, job.attachments?.length ?? 0);
+  const attachments = [...(job.attachments ?? []), ...addedAttachments];
+  const answeredAt = new Date().toISOString();
+  const history = [
+    ...(job.clarificationHistory ?? []),
+    {
+      questions: job.clarificationQuestions,
+      answers: parsed.answers,
+      note: note || undefined,
+      answeredAt,
+    },
+  ];
+  const answerText = [
+    ...parsed.answers.map((answer) => `${answer.question}：${answer.value}`),
+    note ? `补充说明：${note}` : "",
+  ].filter(Boolean).join("\n");
+
+  updateJob(jobId, {
+    status: "planning",
+    message: "已收到补充信息，正在继续生成修改方案...",
+    clarificationQuestions: undefined,
+    clarificationHistory: history,
+    attachments,
+  });
+  appendJobEvent(jobId, {
+    type: "user",
+    text: answerText || "已补充信息",
+    attachmentCount: addedAttachments.length || undefined,
+  });
+  appendJobEvent(jobId, {
+    type: "stage",
+    phase: "plan_resume",
+    text: "已收到补充信息，正在继续分析修改方案",
+  });
+  logOperation({
+    action: "plan_clarify",
+    status: "success",
+    jobId,
+    ownerId: job.ownerId,
+    mode: "plan",
+    engine: getJobAgentProvider(job),
+    attachmentCount: addedAttachments.length || undefined,
+  });
+  void runQueuedPlan(jobId);
+
+  res.status(202).json({
+    jobId,
+    status: "planning",
+    message: "已收到补充信息，正在继续生成修改方案",
     jobsAhead: 0,
   });
 });

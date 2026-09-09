@@ -2,7 +2,8 @@ import { CodeOutlined, ExperimentOutlined, FileTextOutlined, ToolOutlined, UserO
 import { Alert, Button, Card, Divider, Image, Input, Space, Tag, Typography } from "antd";
 import { useMemo } from "react";
 
-import type { AgentProvider, JobEvent, JobStatus, TaskMode } from "../types";
+import type { AgentProvider, ClarificationAnswer, JobEvent, JobStatus, TaskMode } from "../types";
+import { ClarificationCard } from "./ClarificationCard";
 import { TestCaseResult } from "./TestCaseResult";
 
 function JobTurn(props: {
@@ -14,6 +15,7 @@ function JobTurn(props: {
   planDraft?: string;
   onPlanChange: (jobId: string, value: string) => void;
   onExecute: (planSummary: string) => void;
+  onClarify: (jobId: string, answers: ClarificationAnswer[], note: string, files: File[]) => void;
 }) {
   const agentText = useMemo(() => {
     const planDoneIndex = props.events.findIndex((event) => event.type === "stage" && event.phase === "plan_done");
@@ -95,6 +97,26 @@ function JobTurn(props: {
         </Card>
       )}
 
+      {props.job.clarificationHistory?.map((exchange) => (
+        <Card className="clarification-history-card" size="small" key={exchange.answeredAt} title="已补充的信息">
+          {exchange.answers.map((answer) => (
+            <div className="clarification-history-item" key={`${exchange.answeredAt}-${answer.questionId}`}>
+              <Typography.Text type="secondary">{answer.question}</Typography.Text>
+              <Typography.Text>{answer.value}</Typography.Text>
+            </div>
+          ))}
+          {exchange.note && <div className="clarification-history-item"><Typography.Text type="secondary">补充说明</Typography.Text><Typography.Text>{exchange.note}</Typography.Text></div>}
+        </Card>
+      ))}
+
+      {props.isCurrent && props.job.status === "awaiting_input" && Boolean(props.job.clarificationQuestions?.length) && (
+        <ClarificationCard
+          questions={props.job.clarificationQuestions!}
+          busy={props.busy}
+          onSubmit={(answers, note, files) => props.onClarify(props.job.jobId, answers, note, files)}
+        />
+      )}
+
       {props.job.testCaseDocument && <TestCaseResult jobId={props.job.jobId} document={props.job.testCaseDocument} />}
 
       {props.job.status === "failed" && <Alert type="error" showIcon message="任务执行失败" description={props.job.error || props.job.message} />}
@@ -114,6 +136,7 @@ export function ConversationPanel(props: {
   onTaskModeChange: (value: TaskMode) => void;
   onPlanChange: (jobId: string, value: string) => void;
   onExecute: (planSummary: string) => void;
+  onClarify: (jobId: string, answers: ClarificationAnswer[], note: string, files: File[]) => void;
 }) {
   if (props.jobs.length === 0) {
     return (
@@ -167,6 +190,7 @@ export function ConversationPanel(props: {
             planDraft={props.planDrafts[job.jobId]}
             onPlanChange={props.onPlanChange}
             onExecute={props.onExecute}
+            onClarify={props.onClarify}
           />
         </div>
       ))}

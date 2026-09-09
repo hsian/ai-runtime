@@ -6,6 +6,8 @@ import type { JobEvent } from "../types";
 const phaseLabel: Record<string, string> = {
   pull: "同步最新代码",
   plan: "分析修改方案",
+  plan_need_more: "等待补充信息",
+  plan_resume: "继续分析方案",
   plan_done: "方案生成完成",
   execute_confirmed: "确认执行",
   branch: "创建任务分支",

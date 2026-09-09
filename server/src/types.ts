@@ -34,6 +34,30 @@ export interface ImplementationAssessment {
   gaps: string[];
 }
 
+export interface ClarificationQuestion {
+  id: string;
+  type: "single_choice" | "text";
+  question: string;
+  reason?: string;
+  options?: string[];
+  recommendedOption?: string;
+  allowOther?: boolean;
+  required: boolean;
+}
+
+export interface ClarificationAnswer {
+  questionId: string;
+  question: string;
+  value: string;
+}
+
+export interface ClarificationExchange {
+  questions: ClarificationQuestion[];
+  answers: ClarificationAnswer[];
+  note?: string;
+  answeredAt: string;
+}
+
 export interface TestCaseDocument {
   moduleName: string;
   functionDescription: string;
@@ -113,6 +137,10 @@ export interface Job {
   requiresConfirm?: boolean;
   /** plan 总结（用于展示和回溯） */
   planSummary?: string;
+  /** Plan 阶段等待产品/测试人员补充的业务问题 */
+  clarificationQuestions?: ClarificationQuestion[];
+  /** 当前任务内已经完成的澄清记录 */
+  clarificationHistory?: ClarificationExchange[];
   /** AI 执行完成后的实际修改总结，用于生成 commit/merge 描述 */
   implementationSummary?: string;
   /** 本次改动所在的 feature 分支，完成后仍用于发版分支合并 */

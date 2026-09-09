@@ -10,6 +10,7 @@ const actionLabels: Record<string, string> = {
   question_execute: "项目问答",
   test_case_generate: "生成测试用例",
   plan_generate: "生成方案",
+  plan_clarify: "补充方案信息",
   plan_confirm: "确认执行",
   job_execute: "代码任务",
   agent_execute: "Agent 执行",

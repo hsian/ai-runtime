@@ -1,5 +1,6 @@
 import type {
   AgentProvider,
+  ClarificationAnswer,
   JobEvent,
   JobStatus,
   OperationLogEntry,
@@ -111,6 +112,29 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ planSummary, agentProvider }),
     });
+  },
+
+  async clarify(
+    jobId: string,
+    answers: ClarificationAnswer[],
+    note: string,
+    images: Blob[] = [],
+    imageNames: string[] = []
+  ): Promise<SubmitResponse> {
+    let body: BodyInit;
+    if (images.length > 0) {
+      const form = new FormData();
+      form.append("answers", JSON.stringify(answers.map(({ questionId, value }) => ({ questionId, value }))));
+      form.append("note", note);
+      images.forEach((image, index) => form.append("images", image, imageNames[index] || `clarification-${index + 1}.webp`));
+      body = form;
+    } else {
+      body = JSON.stringify({
+        answers: answers.map(({ questionId, value }) => ({ questionId, value })),
+        note,
+      });
+    }
+    return request(`/api/jobs/${encodeURIComponent(jobId)}/clarify`, { method: "POST", body });
   },
 
   async cancel(jobId: string): Promise<void> {

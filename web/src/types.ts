@@ -30,6 +30,30 @@ export interface ImplementationAssessment {
   gaps: string[];
 }
 
+export interface ClarificationQuestion {
+  id: string;
+  type: "single_choice" | "text";
+  question: string;
+  reason?: string;
+  options?: string[];
+  recommendedOption?: string;
+  allowOther?: boolean;
+  required: boolean;
+}
+
+export interface ClarificationAnswer {
+  questionId: string;
+  question: string;
+  value: string;
+}
+
+export interface ClarificationExchange {
+  questions: ClarificationQuestion[];
+  answers: ClarificationAnswer[];
+  note?: string;
+  answeredAt: string;
+}
+
 export interface TestCaseDocument {
   moduleName: string;
   functionDescription: string;
@@ -81,6 +105,8 @@ export interface JobStatus {
   mergeRetryable?: boolean;
   error?: string;
   planSummary?: string;
+  clarificationQuestions?: ClarificationQuestion[];
+  clarificationHistory?: ClarificationExchange[];
   attachments?: JobAttachmentPreview[];
   createdAt: string;
   updatedAt: string;
