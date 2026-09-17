@@ -3,6 +3,7 @@ import { BellOutlined, SafetyCertificateOutlined } from "@ant-design/icons";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { ConversationPanel } from "./components/ConversationPanel";
+import { CodeDiffModal } from "./components/CodeDiffModal";
 import { TaskComposer } from "./components/TaskComposer";
 import { TaskDetailPanel } from "./components/TaskDetailPanel";
 import { TaskSidebar } from "./components/TaskSidebar";
@@ -61,6 +62,7 @@ export default function App() {
   const [releaseJobIds, setReleaseJobIds] = useState<string[]>([]);
   const [bugOpen, setBugOpen] = useState(false);
   const [miniProgramUploadOpen, setMiniProgramUploadOpen] = useState(false);
+  const [diffOpen, setDiffOpen] = useState(false);
   const [miniProgramUploadVersion, setMiniProgramUploadVersion] = useState(defaultMiniProgramVersion);
   const [miniProgramUploadDescription, setMiniProgramUploadDescription] = useState("");
   const [workspaces, setWorkspaces] = useState<TapdWorkspace[]>([]);
@@ -638,10 +640,13 @@ export default function App() {
         onTapdBug={() => void openBug()}
         onMiniProgramPreview={() => void generateMiniProgramPreview()}
         onMiniProgramUpload={openMiniProgramUpload}
+        onViewDiff={() => setDiffOpen(true)}
         onSelectJob={selectJob}
         onBatchRelease={(jobIds) => void openRelease(jobIds)}
         onBatchRevert={batchRevert}
       />
+
+      <CodeDiffModal job={selectedJob} open={diffOpen} onClose={() => setDiffOpen(false)} />
 
       <div className="client-corner">
         <SafetyCertificateOutlined /> 当前终端 {store.remoteIp || "识别中"}

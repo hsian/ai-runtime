@@ -2,6 +2,7 @@ import type {
   AgentProvider,
   ClarificationAnswer,
   JobEvent,
+  JobDiff,
   JobStatus,
   OperationLogEntry,
   ProjectProfile,
@@ -101,6 +102,11 @@ export const api = {
       method: "POST",
       body: submitBody(input),
     });
+  },
+
+  async getJobDiff(jobId: string, file?: string): Promise<JobDiff> {
+    const query = file ? `?file=${encodeURIComponent(file)}` : "";
+    return request(`/api/jobs/${encodeURIComponent(jobId)}/diff${query}`);
   },
 
   testCaseDownloadUrl(jobId: string): string {

@@ -1160,6 +1160,27 @@ jobsRouter.get("/:jobId/events", (req, res) => {
   res.json({ events: getJobEvents(job.jobId) });
 });
 
+jobsRouter.get("/:jobId/diff", async (req, res) => {
+  const job = getAuthorizedJob(req, res);
+  if (!job) return;
+
+  const commitSha = job.sourceCommitSha || job.commitSha;
+  if (!commitSha) {
+    res.status(404).json({ error: "当前任务没有可查看的代码改动" });
+    return;
+  }
+
+  const filePath = typeof req.query.file === "string" ? req.query.file.trim() : undefined;
+  try {
+    const gitService = getProjectGitService(job.projectId);
+    const diff = await gitService.getCommitDiff(commitSha, filePath || undefined);
+    res.setHeader("Cache-Control", "private, no-store");
+    res.json(diff);
+  } catch (err) {
+    res.status(400).json({ error: err instanceof Error ? err.message : String(err) });
+  }
+});
+
 jobsRouter.get("/:jobId/attachments/:index", (req, res) => {
   const job = getAuthorizedJob(req, res);
   if (!job) return;

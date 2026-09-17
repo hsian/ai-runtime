@@ -2,6 +2,7 @@ import {
   BranchesOutlined,
   CloseCircleOutlined,
   CloudUploadOutlined,
+  DiffOutlined,
   LinkOutlined,
   QrcodeOutlined,
   RollbackOutlined,
@@ -30,6 +31,7 @@ export function TaskDetailPanel(props: {
   onTapdBug: () => void;
   onMiniProgramPreview: () => void;
   onMiniProgramUpload: () => void;
+  onViewDiff: () => void;
   onSelectJob: (jobId: string) => void;
   onBatchRelease: (jobIds: string[]) => void;
   onBatchRevert: (jobIds: string[]) => void;
@@ -45,6 +47,7 @@ export function TaskDetailPanel(props: {
     (item) => item.status === "completed" && !item.revertedFromDefaultAt && Boolean(item.mergedToDefaultBranch && item.commitSha)
   );
   const hasCodeCommit = Boolean(job.sourceCommitSha || job.commitSha);
+  const canViewDiff = hasCodeCommit && (job.status === "awaiting_merge" || job.status === "completed");
 
   return (
     <aside className="detail-panel">
@@ -98,6 +101,7 @@ export function TaskDetailPanel(props: {
         </Descriptions>
         {job.previewUrl && <Button icon={<LinkOutlined />} block href={job.previewUrl} target="_blank">打开预览页面</Button>}
         {job.miniProgramPreviewUrl && <div className="mini-program-preview"><Image src={`${job.miniProgramPreviewUrl}?v=${encodeURIComponent(job.miniProgramPreviewCreatedAt || "latest")}`} alt="小程序体验版二维码" width={180} /><Typography.Text type="secondary">微信扫码打开体验版</Typography.Text></div>}
+        {canViewDiff && <Button icon={<DiffOutlined />} block onClick={props.onViewDiff}>查看本次代码改动</Button>}
       </Card>
 
       <Divider titlePlacement="start">执行进度</Divider>

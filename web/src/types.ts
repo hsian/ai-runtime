@@ -186,6 +186,25 @@ export interface SubmitResponse {
   jobsAhead?: number;
 }
 
+export type GitDiffFileStatus = "added" | "modified" | "deleted" | "type_changed";
+
+export interface GitDiffFile {
+  path: string;
+  status: GitDiffFileStatus;
+  additions: number;
+  deletions: number;
+  binary: boolean;
+}
+
+export interface JobDiff {
+  commitSha: string;
+  files: GitDiffFile[];
+  additions: number;
+  deletions: number;
+  selectedFile?: string;
+  patch?: string;
+}
+
 export interface TapdWorkspace {
   id: string;
   name?: string;
