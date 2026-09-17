@@ -1,6 +1,8 @@
 import type {
   AgentProvider,
+  AnalyticsData,
   ClarificationAnswer,
+  CodeChangeAnalytics,
   JobEvent,
   JobDiff,
   JobStatus,
@@ -107,6 +109,18 @@ export const api = {
   async getJobDiff(jobId: string, file?: string): Promise<JobDiff> {
     const query = file ? `?file=${encodeURIComponent(file)}` : "";
     return request(`/api/jobs/${encodeURIComponent(jobId)}/diff${query}`);
+  },
+
+  async analytics(days: number, projectId?: string): Promise<AnalyticsData> {
+    const query = new URLSearchParams({ days: String(days) });
+    if (projectId) query.set("projectId", projectId);
+    return request(`/api/analytics?${query.toString()}`);
+  },
+
+  async codeChangeAnalytics(days: number, projectId?: string): Promise<CodeChangeAnalytics> {
+    const query = new URLSearchParams({ days: String(days) });
+    if (projectId) query.set("projectId", projectId);
+    return request(`/api/analytics/code-changes?${query.toString()}`);
   },
 
   testCaseDownloadUrl(jobId: string): string {

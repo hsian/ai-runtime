@@ -17,6 +17,7 @@ import { initHousekeeping } from "./services/housekeeping.js";
 import { clientIdentityMiddleware, getClientIdentity } from "./services/clientIdentity.js";
 import { operationLogsRouter } from "./routes/operationLogs.js";
 import { projectsRouter } from "./routes/projects.js";
+import { analyticsRouter } from "./routes/analytics.js";
 import { resetAllProjectWorkspaces } from "./services/projectRuntime.js";
 
 
@@ -79,6 +80,7 @@ app.use("/api/projects", projectsRouter);
 
 app.use("/api/tapd", tapdRouter);
 app.use("/api/operation-logs", operationLogsRouter);
+app.use("/api/analytics", analyticsRouter);
 
 if (existsSync(config.WEB_DIST_DIR)) {
   app.use(express.static(config.WEB_DIST_DIR));

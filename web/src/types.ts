@@ -205,6 +205,55 @@ export interface JobDiff {
   patch?: string;
 }
 
+export interface AnalyticsBreakdownItem {
+  key: string;
+  label: string;
+  total: number;
+  completed: number;
+  failed: number;
+  successRate: number;
+}
+
+export interface AnalyticsData {
+  generatedAt: string;
+  days: number;
+  projectId?: string;
+  availableProjects: Array<{ id: string; name: string }>;
+  overview: {
+    total: number;
+    completed: number;
+    failed: number;
+    cancelled: number;
+    active: number;
+    pending: number;
+    successRate: number;
+    averageDurationMs: number;
+  };
+  daily: Array<{ date: string; total: number; completed: number; failed: number; cancelled: number }>;
+  taskModes: AnalyticsBreakdownItem[];
+  projects: AnalyticsBreakdownItem[];
+  failures: Array<{ category: string; count: number }>;
+  recentAnomalies: Array<{
+    jobId: string;
+    projectId: string;
+    projectName: string;
+    status: "failed" | "cancelled";
+    category: string;
+    message: string;
+    time: string;
+  }>;
+}
+
+export interface CodeChangeAnalytics {
+  taskCount: number;
+  measuredTaskCount: number;
+  fileCount: number;
+  additions: number;
+  deletions: number;
+  attentionTaskCount: number;
+  averageFiles: number;
+}
+
 export interface TapdWorkspace {
   id: string;
   name?: string;

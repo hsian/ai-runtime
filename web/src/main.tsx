@@ -6,6 +6,9 @@ import ReactDOM from "react-dom/client";
 import App from "./App";
 import "./styles/global.css";
 
+const normalizedPath = window.location.pathname.replace(/\/+$/, "") || "/";
+const AnalyticsPage = React.lazy(() => import("./components/AnalyticsPage"));
+
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
     <ConfigProvider
@@ -24,7 +27,9 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
       }}
     >
       <AntApp>
-        <App />
+        {normalizedPath === "/stats" ? (
+          <React.Suspense fallback={null}><AnalyticsPage /></React.Suspense>
+        ) : <App />}
       </AntApp>
     </ConfigProvider>
   </React.StrictMode>
