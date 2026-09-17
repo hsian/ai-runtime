@@ -18,8 +18,8 @@ export function TaskComposer(props: {
   onTaskModeChange: (value: TaskMode) => void;
   onAgentProviderChange: (value: AgentProvider) => void;
   onFilesChange: (files: File[]) => void;
-  onTapdImagesChange: (images: TapdImageOption[]) => void;
   onOpenTapd: () => void;
+  onEditTapd: () => void;
   onRemoveTapd: () => void;
   onSubmit: () => void;
 }) {
@@ -58,27 +58,15 @@ export function TaskComposer(props: {
       {(props.files.length > 0 || props.tapdContext) && (
         <div className="composer-context">
           {props.tapdContext && (
-            <Tag closable onClose={props.onRemoveTapd} color="blue">
-              TAPD · {props.tapdContext.title}{tapdImageCount ? ` · ${tapdImageCount} 张配图` : ""}
-            </Tag>
+            <div className="composer-tapd-tag">
+              <Tag closable onClose={props.onRemoveTapd} color="blue">
+                TAPD · {props.tapdContext.title}{tapdImageCount ? ` · ${tapdImageCount} 张配图` : ""}
+              </Tag>
+              <Button type="link" size="small" onClick={props.onEditTapd}>编辑内容</Button>
+            </div>
           )}
-          {(props.tapdImages.length > 0 || filePreviews.length > 0) && (
+          {filePreviews.length > 0 && (
             <div className="composer-image-list">
-              {props.tapdImages.map((image) => (
-                <div className="composer-image" key={`tapd-${image.sourceIndex}`}>
-                  <Image src={image.previewUrl} alt={`TAPD 配图${image.sourceIndex}`} />
-                  <span>TAPD 配图{image.sourceIndex}</span>
-                  <Button
-                    className="composer-image-remove"
-                    type="text"
-                    danger
-                    size="small"
-                    icon={<CloseOutlined />}
-                    aria-label={`移除 TAPD 配图${image.sourceIndex}`}
-                    onClick={() => props.onTapdImagesChange(props.tapdImages.filter((item) => item.sourceIndex !== image.sourceIndex))}
-                  />
-                </div>
-              ))}
               {filePreviews.map((preview, index) => (
                 <div className="composer-image" key={`${preview.file.name}-${index}`}>
                   <Image src={preview.url} alt={preview.file.name || `图片${index + 1}`} />

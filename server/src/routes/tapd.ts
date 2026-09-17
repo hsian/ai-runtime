@@ -9,6 +9,7 @@ import {
   listIterationBugs,
   listIterationTasks,
   listIterations,
+  listTapdComments,
   parseTapdUrl,
 } from "../services/tapd/tapdClient.js";
 import {
@@ -16,6 +17,7 @@ import {
   downloadImagesFromHtml,
 } from "../services/tapd/tapdDescriptionImages.js";
 import { tapdHtmlToPlainText } from "../services/tapd/tapdContext.js";
+import { buildTapdEditableHtml, normalizeTapdEditableContent } from "../services/tapd/tapdEditableContext.js";
 import { logOperation } from "../services/operationLog.js";
 import { getClientIdentity } from "../services/clientIdentity.js";
 
@@ -220,17 +222,23 @@ tapdRouter.post("/context/resolve", async (req, res) => {
   }
 
   try {
-    const item =
+    const itemPromise =
       parsed.itemType === "story"
-        ? await getStory(parsed.itemId, parsed.workspaceId)
+        ? getStory(parsed.itemId, parsed.workspaceId)
         : parsed.itemType === "task"
-          ? await getTask(parsed.itemId, parsed.workspaceId)
-          : await getBug(parsed.itemId, parsed.workspaceId);
+          ? getTask(parsed.itemId, parsed.workspaceId)
+          : getBug(parsed.itemId, parsed.workspaceId);
+    const [item, commentsResult] = await Promise.all([
+      itemPromise,
+      listTapdComments(parsed.itemType, parsed.itemId, parsed.workspaceId)
+        .then((comments) => ({ comments, warning: undefined as string | undefined }))
+        .catch(() => ({ comments: [], warning: "TAPD 评论读取失败，已继续加载需求正文" })),
+    ]);
     if (!item) {
       res.status(404).json({ error: "TAPD 条目不存在或当前应用无权访问" });
       return;
     }
-    const sourceHtml = item.description ?? "";
+    const sourceHtml = buildTapdEditableHtml(item.description ?? "", commentsResult.comments);
     const title = "title" in item ? item.title ?? item.name : item.name;
     const owner = "current_owner" in item ? item.current_owner ?? item.owner : item.owner;
     res.json({
@@ -242,8 +250,10 @@ tapdRouter.post("/context/resolve", async (req, res) => {
         url,
         title: title || `${parsed.itemType} ${item.id}`,
         description: tapdHtmlToPlainText(sourceHtml),
-        sourceHtml: sourceHtml.slice(0, 500_000),
+        sourceHtml,
         imageCount: countImagesInHtml(sourceHtml),
+        commentCount: commentsResult.comments.length,
+        commentWarning: commentsResult.warning,
         status: item.status,
         owner,
         fetchedAt: new Date().toISOString(),
@@ -251,6 +261,19 @@ tapdRouter.post("/context/resolve", async (req, res) => {
     });
   } catch (err) {
     res.status(502).json({ error: err instanceof Error ? err.message : "获取 TAPD 需求失败" });
+  }
+});
+
+tapdRouter.post("/context/normalize", (req, res) => {
+  const html = typeof req.body?.html === "string" ? req.body.html : "";
+  if (!html.trim()) {
+    res.status(400).json({ error: "编辑内容不能为空" });
+    return;
+  }
+  try {
+    res.json(normalizeTapdEditableContent(html));
+  } catch (err) {
+    res.status(400).json({ error: err instanceof Error ? err.message : "编辑内容处理失败" });
   }
 });
 

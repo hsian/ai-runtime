@@ -110,6 +110,21 @@ async function tapdRequest<T>(
   return body;
 }
 
+export interface TapdComment {
+  id: string;
+  title?: string;
+  description?: string;
+  author?: string;
+  created?: string;
+  modified?: string;
+}
+
+interface TapdCommentRecord extends TapdComment {
+  entry_type?: string;
+  root_id?: string;
+  reply_id?: string;
+}
+
 async function tapdPost<T>(
   cfg: TapdConfig,
   path: string,
@@ -345,6 +360,32 @@ export async function getBug(
   });
   const bugs = unwrapRecords<TapdBug>(body.data, "Bug");
   return bugs[0] ?? null;
+}
+
+export async function listTapdComments(
+  itemType: "story" | "task" | "bug",
+  itemId: string,
+  workspaceId?: string,
+  cfg: TapdConfig = getTapdConfig()
+): Promise<TapdComment[]> {
+  const wsId = workspaceId ?? cfg.workspaceId;
+  const entryType = itemType === "story" ? "stories" : itemType === "task" ? "tasks" : "bug|bug_remark";
+  const comments = await fetchAllPages<TapdCommentRecord>(
+    cfg,
+    "/comments",
+    { workspace_id: wsId, entry_type: entryType, entry_id: itemId, order: "created ASC" },
+    "Comment"
+  );
+  return comments
+    .map((comment) => ({
+      id: comment.id,
+      title: comment.title,
+      description: (comment.description || "").slice(0, 300_000),
+      author: comment.author,
+      created: comment.created,
+      modified: comment.modified,
+    }))
+    .sort((left, right) => (left.created || "").localeCompare(right.created || ""));
 }
 
 interface TapdAttachmentDownload {

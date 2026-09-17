@@ -133,6 +133,8 @@ code { font-family: "SFMono-Regular", Consolas, monospace; font-size: 12px; }
 .message-body, .rich-text { color: #25304a; line-height: 1.75; overflow-wrap: anywhere; white-space: pre-wrap; }
 .user-bubble { position: relative; width: 100%; min-width: 0; padding: 14px 17px; border: 0; border-radius: 14px; background: var(--conversation-surface); }
 .user-bubble::before { position: absolute; top: -8px; left: 10px; width: 0; height: 0; border-width: 0 8px 9px; border-style: solid; border-color: transparent transparent var(--conversation-surface); content: ""; }
+.message-tapd-context { display: block; width: fit-content; max-width: 100%; margin-top: 10px; text-decoration: none; }
+.message-tapd-context .ant-tag { display: block; max-width: min(620px, 100%); margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .message-attachments, .composer-image-list { display: flex; flex-wrap: wrap; gap: 9px; margin-top: 10px; }
 .message-attachment, .composer-image { position: relative; width: 92px; overflow: hidden; border: 1px solid #e1e5ee; border-radius: 10px; background: #f7f8fb; }
 .message-attachment .ant-image, .composer-image .ant-image { display: block; width: 100%; }
@@ -189,6 +191,9 @@ code { font-family: "SFMono-Regular", Consolas, monospace; font-size: 12px; }
 .composer-card { width: min(840px, 100%); margin: 0 auto; padding: 10px 12px 9px; border: 1px solid #dce1eb; border-radius: 16px; background: #fff; box-shadow: 0 10px 28px rgb(25 39 72 / 9%); }
 .composer-card textarea { padding: 7px 5px !important; border: 0 !important; box-shadow: none !important; resize: none; }
 .composer-context { display: flex; flex-direction: column; align-items: flex-start; gap: 5px; padding: 2px 4px 7px; }
+.composer-tapd-tag { display: flex; align-items: center; gap: 2px; max-width: 100%; }
+.composer-tapd-tag .ant-tag { max-width: min(620px, calc(100% - 72px)); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.composer-tapd-tag .ant-btn { height: 24px; padding-inline: 5px; font-size: 11px; }
 .composer-image-list { margin-top: 2px; }
 .composer-image-remove { position: absolute !important; top: 3px; right: 3px; z-index: 2; width: 22px !important; height: 22px !important; padding: 0 !important; border-radius: 50% !important; background: rgb(255 255 255 / 90%) !important; }
 .composer-toolbar { display: flex; align-items: center; justify-content: space-between; padding-top: 5px; border-top: 1px solid #f0f2f6; }
@@ -305,6 +310,27 @@ code { font-family: "SFMono-Regular", Consolas, monospace; font-size: 12px; }
 .tapd-image-option span { display: block; padding: 6px 2px 2px; color: #667085; font-size: 12px; }
 .tapd-image-option.is-selected { border-color: #315cf4; background: #eef2ff; }
 .tapd-image-option.is-selected::after { position: absolute; top: 9px; right: 9px; display: grid; place-items: center; width: 20px; height: 20px; border-radius: 50%; background: #315cf4; color: #fff; content: "✓"; font-size: 12px; }
+.tapd-editor-modal { top: 28px; padding-bottom: 28px; }
+.tapd-editor-modal .ant-modal-body { max-height: calc(100vh - 178px); overflow: hidden; }
+.tapd-editor-dialog { display: flex; min-height: 0; flex-direction: column; gap: 12px; }
+.tapd-editor-meta { display: flex; flex-direction: column; gap: 4px; padding-right: 30px; }
+.tapd-editor-meta .ant-typography-secondary { font-size: 12px; }
+.tapd-rich-editor { display: flex; min-height: 0; flex-direction: column; border: 1px solid #dfe4ec; border-radius: 10px; background: #fff; }
+.tapd-editor-toolbar { display: flex; flex: 0 0 auto; align-items: center; justify-content: space-between; gap: 16px; padding: 9px 11px; border-bottom: 1px solid #e5e8ef; border-radius: 10px 10px 0 0; background: #f7f8fb; }
+.tapd-editor-toolbar > .ant-typography { font-size: 11px; white-space: nowrap; }
+.tapd-editor-content { min-height: 430px; max-height: calc(100vh - 360px); padding: 20px 24px; overflow: auto; outline: none; color: #25304a; line-height: 1.75; }
+.tapd-editor-content:focus { box-shadow: inset 0 0 0 2px rgb(49 92 244 / 10%); }
+.tapd-editor-content h2 { margin: 14px 0 10px; color: #172033; font-size: 18px; }
+.tapd-editor-content h3 { margin: 12px 0 8px; color: #344054; font-size: 14px; }
+.tapd-editor-content p { margin: 0 0 10px; }
+.tapd-editor-content img { display: block; max-width: 100%; height: auto; margin: 12px 0; border: 3px solid transparent; border-radius: 7px; cursor: pointer; }
+.tapd-editor-content img.is-selected { border-color: #dc4c4c; box-shadow: 0 0 0 2px rgb(220 76 76 / 12%); }
+.tapd-editor-content table { max-width: 100%; border-collapse: collapse; }
+.tapd-editor-content td, .tapd-editor-content th { padding: 6px 8px; border: 1px solid #d9dee8; }
+.tapd-editor-content blockquote { margin: 12px 0; padding: 8px 12px; border-left: 3px solid #aebdf2; background: #f7f8fb; }
+.tapd-editor-content a { color: #315cf4; text-decoration: underline; }
+.tapd-editor-image-missing { color: #b54708; background: #fff6e7; }
+.tapd-editor-hint { display: block; flex: 0 0 auto; padding: 8px 12px; border-top: 1px solid #edf0f4; font-size: 11px; }
 
 @media (max-width: 1380px) {
   .app-shell { grid-template-columns: 250px minmax(560px, 1fr) 310px; }

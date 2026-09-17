@@ -107,6 +107,7 @@ export interface JobStatus {
   planSummary?: string;
   clarificationQuestions?: ClarificationQuestion[];
   clarificationHistory?: ClarificationExchange[];
+  tapdContext?: TapdContext;
   attachments?: JobAttachmentPreview[];
   createdAt: string;
   updatedAt: string;
@@ -149,6 +150,8 @@ export interface TapdContext {
   description: string;
   sourceHtml?: string;
   imageCount?: number;
+  commentCount?: number;
+  commentWarning?: string;
   attachedImageCount?: number;
   attachedImageIndexes?: number[];
   status?: string;
@@ -271,6 +274,12 @@ export interface TapdImageOption {
   blob: Blob;
   previewUrl: string;
   selected: boolean;
+}
+
+export interface NormalizedTapdContent {
+  html: string;
+  description: string;
+  retainedImageIndexes: number[];
 }
 
 export interface OperationLogEntry {

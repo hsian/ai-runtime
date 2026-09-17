@@ -1,4 +1,4 @@
-import { App as AntApp, Button, Image, Input, Modal, Select, Space, Tooltip, Typography } from "antd";
+import { Alert, App as AntApp, Button, Input, Modal, Select, Space, Tooltip, Typography } from "antd";
 import { BellOutlined, SafetyCertificateOutlined } from "@ant-design/icons";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
@@ -7,6 +7,7 @@ import { CodeDiffModal } from "./components/CodeDiffModal";
 import { TaskComposer } from "./components/TaskComposer";
 import { TaskDetailPanel } from "./components/TaskDetailPanel";
 import { TaskSidebar } from "./components/TaskSidebar";
+import { TapdRichTextEditor } from "./components/TapdRichTextEditor";
 import { api, openJobStream } from "./services/api";
 import { useTaskStore } from "./stores/taskStore";
 import type { AgentProvider, ClarificationAnswer, JobStatus, ProjectProfile, TapdContext, TapdImageOption, TapdIteration, TapdWorkspace, TaskMode } from "./types";
@@ -37,6 +38,16 @@ function revokeTapdPreviews(images: TapdImageOption[]): void {
   images.forEach((image) => URL.revokeObjectURL(image.previewUrl));
 }
 
+function plainTextToEditorHtml(value: string): string {
+  return `<p>${value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;")
+    .replace(/\n/g, "<br>")}</p>`;
+}
+
 export default function App() {
   const { message, modal } = AntApp.useApp();
   const store = useTaskStore();
@@ -56,6 +67,8 @@ export default function App() {
   const [tapdLoading, setTapdLoading] = useState(false);
   const [resolvedTapd, setResolvedTapd] = useState<TapdContext>();
   const [tapdCandidates, setTapdCandidates] = useState<TapdImageOption[]>([]);
+  const [tapdEditorInitialHtml, setTapdEditorInitialHtml] = useState("");
+  const [tapdEditorHtml, setTapdEditorHtml] = useState("");
   const [releaseOpen, setReleaseOpen] = useState(false);
   const [releaseBranches, setReleaseBranches] = useState<string[]>([]);
   const [releaseBranch, setReleaseBranch] = useState<string>();
@@ -280,7 +293,6 @@ export default function App() {
         ? {
             ...tapdContext,
             attachedImageCount: tapdImages.length,
-            attachedImageIndexes: tapdImages.map((item) => item.sourceIndex),
           }
         : undefined;
       const result = await api.submit({
@@ -291,7 +303,7 @@ export default function App() {
         tapdContext: submittedTapdContext,
         images: compressed,
         imageNames: [
-          ...tapdImages.map((item) => `tapd-description-${item.sourceIndex}.webp`),
+          ...tapdImages.map((_item, index) => `tapd-description-${index + 1}.webp`),
           ...files.map((file, index) => `${file.name.replace(/\.[^.]+$/, "") || `screenshot-${index + 1}`}.webp`),
         ],
         taskMode,
@@ -402,17 +414,11 @@ export default function App() {
       const context = await api.resolveTapd(tapdUrl.trim());
       const candidates = await api.tapdDescriptionImages(context);
       const withSelection = candidates.map((item) => ({ ...item, selected: true }));
-      if (withSelection.length === 0) {
-        setTapdContext(context);
-        revokeTapdPreviews(tapdImages);
-        setTapdImages([]);
-        setTapdOpen(false);
-        setTapdUrl("");
-        message.success("已关联 TAPD 条目");
-      } else {
-        setResolvedTapd(context);
-        setTapdCandidates(withSelection);
-      }
+      const editableHtml = context.sourceHtml || plainTextToEditorHtml(context.description);
+      setResolvedTapd(context);
+      setTapdCandidates(withSelection);
+      setTapdEditorInitialHtml(editableHtml);
+      setTapdEditorHtml(editableHtml);
     } catch (error) {
       message.error(error instanceof Error ? error.message : "TAPD 条目读取失败");
     } finally {
@@ -420,27 +426,65 @@ export default function App() {
     }
   };
 
-  const confirmTapdImages = () => {
+  const confirmTapdEditor = async () => {
     if (!resolvedTapd) return;
-    const selected = tapdCandidates.filter((item) => item.selected);
-    revokeTapdPreviews(tapdImages);
-    revokeTapdPreviews(tapdCandidates.filter((item) => !item.selected));
-    setTapdContext(resolvedTapd);
-    setTapdImages(selected);
+    setTapdLoading(true);
+    try {
+      const normalized = await api.normalizeTapdContent(tapdEditorHtml);
+      const candidatesByIndex = new Map(tapdCandidates.map((item) => [item.sourceIndex, item]));
+      const retained = normalized.retainedImageIndexes
+        .map((sourceIndex) => candidatesByIndex.get(sourceIndex))
+        .filter((item): item is TapdImageOption => Boolean(item));
+      const retainedIndexes = new Set(retained.map((item) => item.sourceIndex));
+      revokeTapdPreviews(tapdImages);
+      revokeTapdPreviews(tapdCandidates.filter((item) => !retainedIndexes.has(item.sourceIndex)));
+      setTapdContext({
+        ...resolvedTapd,
+        description: normalized.description,
+        sourceHtml: normalized.html,
+        imageCount: retained.length,
+      });
+      setTapdImages(retained);
+      setTapdOpen(false);
+      setTapdUrl("");
+      setResolvedTapd(undefined);
+      setTapdCandidates([]);
+      setTapdEditorInitialHtml("");
+      setTapdEditorHtml("");
+      message.success(`已应用编辑后的 TAPD 内容${retained.length ? `及 ${retained.length} 张配图` : ""}`);
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : "TAPD 编辑内容处理失败");
+    } finally {
+      setTapdLoading(false);
+    }
+  };
+
+  const closeTapdEditor = () => {
+    revokeTapdPreviews(tapdCandidates);
     setTapdOpen(false);
     setTapdUrl("");
     setResolvedTapd(undefined);
     setTapdCandidates([]);
-    message.success(`已关联 TAPD 条目${selected.length ? `及 ${selected.length} 张配图` : ""}`);
+    setTapdEditorInitialHtml("");
+    setTapdEditorHtml("");
   };
 
-  const toggleTapdImage = (sourceIndex: number) => {
-    setTapdCandidates((current) => {
-      return current.map((item) => {
-        if (item.sourceIndex !== sourceIndex) return item;
-        return { ...item, selected: !item.selected };
-      });
-    });
+  const editTapdContext = () => {
+    if (!tapdContext) {
+      setTapdOpen(true);
+      return;
+    }
+    const clonedImages = tapdImages.map((item) => ({
+      ...item,
+      previewUrl: URL.createObjectURL(item.blob),
+      selected: true,
+    }));
+    const editableHtml = tapdContext.sourceHtml || plainTextToEditorHtml(tapdContext.description);
+    setResolvedTapd(tapdContext);
+    setTapdCandidates(clonedImages);
+    setTapdEditorInitialHtml(editableHtml);
+    setTapdEditorHtml(editableHtml);
+    setTapdOpen(true);
   };
 
   const openRelease = async (jobIds?: string[]) => {
@@ -610,12 +654,8 @@ export default function App() {
             onTaskModeChange={setTaskMode}
             onAgentProviderChange={setAgentProvider}
             onFilesChange={setFiles}
-            onTapdImagesChange={(images) => {
-              const retainedUrls = new Set(images.map((image) => image.previewUrl));
-              revokeTapdPreviews(tapdImages.filter((image) => !retainedUrls.has(image.previewUrl)));
-              setTapdImages(images);
-            }}
             onOpenTapd={() => setTapdOpen(true)}
+            onEditTapd={editTapdContext}
             onRemoveTapd={() => {
               setTapdContext(undefined);
               revokeTapdPreviews(tapdImages);
@@ -653,16 +693,13 @@ export default function App() {
       </div>
 
       <Modal
-        title="关联 TAPD 条目"
+        className={resolvedTapd ? "tapd-editor-modal" : undefined}
+        title={resolvedTapd ? "编辑 TAPD 内容" : "关联 TAPD 条目"}
         open={tapdOpen}
-        onCancel={() => {
-          setTapdOpen(false);
-          setResolvedTapd(undefined);
-          revokeTapdPreviews(tapdCandidates);
-          setTapdCandidates([]);
-        }}
-        onOk={() => resolvedTapd ? confirmTapdImages() : void resolveTapd()}
-        okText={resolvedTapd ? "确认关联" : "读取条目"}
+        width={resolvedTapd ? 1040 : 520}
+        onCancel={closeTapdEditor}
+        onOk={() => resolvedTapd ? void confirmTapdEditor() : void resolveTapd()}
+        okText={resolvedTapd ? "应用到本次任务" : "读取条目"}
         cancelText="取消"
         confirmLoading={tapdLoading}
       >
@@ -672,27 +709,20 @@ export default function App() {
             <Input value={tapdUrl} onChange={(event) => setTapdUrl(event.target.value)} placeholder="https://www.tapd.cn/..." onPressEnter={() => void resolveTapd()} />
           </>
         ) : (
-          <>
-            <Typography.Paragraph strong>{resolvedTapd.title}</Typography.Paragraph>
-            <Typography.Paragraph type="secondary">选择随任务发送的描述配图。</Typography.Paragraph>
-            <div className="tapd-image-grid">
-              {tapdCandidates.map((item) => (
-                <button
-                  type="button"
-                  key={item.sourceIndex}
-                  className={`tapd-image-option${item.selected ? " is-selected" : ""}`}
-                  onClick={() => toggleTapdImage(item.sourceIndex)}
-                >
-                  <Image
-                    src={item.previewUrl}
-                    alt={`TAPD 配图${item.sourceIndex}`}
-                    onClick={(event) => event.stopPropagation()}
-                  />
-                  <span>配图{item.sourceIndex}</span>
-                </button>
-              ))}
+          <div className="tapd-editor-dialog">
+            <div className="tapd-editor-meta">
+              <Typography.Text strong>{resolvedTapd.title}</Typography.Text>
+              <Typography.Text type="secondary">
+                {[resolvedTapd.itemType, resolvedTapd.itemId, resolvedTapd.status, resolvedTapd.owner, `${resolvedTapd.commentCount ?? 0} 条评论`].filter(Boolean).join(" · ")}
+              </Typography.Text>
             </div>
-          </>
+            {resolvedTapd.commentWarning && <Alert type="warning" showIcon message={resolvedTapd.commentWarning} />}
+            <TapdRichTextEditor
+              initialHtml={tapdEditorInitialHtml}
+              images={tapdCandidates}
+              onChange={setTapdEditorHtml}
+            />
+          </div>
         )}
       </Modal>
 

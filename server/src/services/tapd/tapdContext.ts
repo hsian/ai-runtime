@@ -60,20 +60,13 @@ export function buildPromptWithTapdContext(prompt: string, context?: TapdContext
     .join("\n");
   const imageCount = context.imageCount ?? 0;
   const attachedImageCount = context.attachedImageCount ?? 0;
-  const attachedImageIndexes = context.attachedImageIndexes ?? [];
-  const attachedMapping = attachedImageIndexes.length
-    ? attachedImageIndexes
-        .map((sourceIndex, attachmentIndex) => `附件图${attachmentIndex + 1} = 原描述配图${sourceIndex}`)
-        .join("；")
-    : "本次没有附带可用的 TAPD 配图";
   const imageReference =
     imageCount > 0
       ? `
 
 【TAPD 配图】
-需求描述中共有 ${imageCount} 张配图，按 HTML 出现顺序编号为「配图1」至「配图${imageCount}」。
-本次请求实际附带 ${attachedImageCount} 张 TAPD 配图，它们位于附件列表最前面。准确映射：${attachedMapping}。
-描述提到「如图N」「图N」或「配图N」时，只能按上述映射读取对应附件；未附带或已排除的配图不可臆测。`
+编辑后的 TAPD 内容中共有 ${imageCount} 张配图，实际成功附带 ${attachedImageCount} 张。图片已按编辑稿中的出现顺序连续编号，并位于附件列表最前面。
+正文中的「配图N」对应第 N 张 TAPD 图片；未附带的图片不可臆测。`
       : "";
 
   return `${prompt}

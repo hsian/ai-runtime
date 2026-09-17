@@ -7,6 +7,7 @@ import type {
   JobDiff,
   JobStatus,
   OperationLogEntry,
+  NormalizedTapdContent,
   ProjectProfile,
   SubmitInput,
   SubmitResponse,
@@ -216,6 +217,13 @@ export const api = {
       body: JSON.stringify({ url }),
     });
     return data.context;
+  },
+
+  async normalizeTapdContent(html: string): Promise<NormalizedTapdContent> {
+    return request("/api/tapd/context/normalize", {
+      method: "POST",
+      body: JSON.stringify({ html }),
+    });
   },
 
   async tapdDescriptionImages(context: TapdContext): Promise<TapdImageOption[]> {

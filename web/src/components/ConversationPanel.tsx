@@ -25,6 +25,10 @@ function JobTurn(props: {
     return visibleEvents.filter((event) => event.type === "agent_text").map((event) => event.delta ?? "").join("");
   }, [props.events, props.job.planSummary]);
   const tools = useMemo(() => props.events.filter((event) => event.type === "agent_tool"), [props.events]);
+  const visibleAttachments = useMemo(
+    () => props.job.attachments?.filter((attachment) => !/^tapd-description-\d+\./i.test(attachment.name)) ?? [],
+    [props.job.attachments]
+  );
   const planValue = props.planDraft ?? props.job.planSummary ?? "";
 
   return (
@@ -36,9 +40,23 @@ function JobTurn(props: {
         </div>
         <div className="user-bubble">
           <div className="message-body">{props.job.prompt}</div>
-          {props.job.attachments && props.job.attachments.length > 0 && (
+          {props.job.tapdContext && (
+            <a
+              className="message-tapd-context"
+              href={props.job.tapdContext.url}
+              target="_blank"
+              rel="noreferrer"
+              title={props.job.tapdContext.title}
+            >
+              <Tag color="blue">
+                TAPD · {props.job.tapdContext.title}
+                {props.job.tapdContext.imageCount ? ` · ${props.job.tapdContext.imageCount} 张配图` : ""}
+              </Tag>
+            </a>
+          )}
+          {visibleAttachments.length > 0 && (
             <div className="message-attachments">
-              {props.job.attachments.map((attachment) => (
+              {visibleAttachments.map((attachment) => (
                 <div className="message-attachment" key={attachment.index}>
                   <Image src={attachment.url} alt={attachment.name} />
                   <span>{attachment.name}</span>
