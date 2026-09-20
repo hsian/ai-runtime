@@ -1,5 +1,5 @@
-import { DeleteOutlined, DownOutlined, PlusOutlined, RobotOutlined } from "@ant-design/icons";
-import { Button, Dropdown, Empty, Skeleton, Tooltip } from "antd";
+import { DeleteOutlined, PlusOutlined, RobotOutlined } from "@ant-design/icons";
+import { Button, Empty, Skeleton, Tooltip } from "antd";
 
 import type { JobStatus, ProjectProfile } from "../types";
 import { StatusBadge } from "./StatusBadge";
@@ -19,15 +19,11 @@ export function TaskSidebar(props: {
   selectedJobId?: string;
   loading: boolean;
   projects: ProjectProfile[];
-  projectId: string;
-  projectLocked: boolean;
   onSelect: (jobId: string) => void;
   onNew: () => void;
-  onProjectChange: (projectId: string) => void;
   onDelete: (conversationId: string, projectId: string, title: string) => void;
 }) {
   const projectNames = new Map(props.projects.map((project) => [project.id, project.name]));
-  const selectedProject = props.projects.find((project) => project.id === props.projectId);
   const conversations = Array.from(
     props.jobs.reduce((groups, job) => {
       const key = `${job.projectId}:${job.conversationId || job.jobId}`;
@@ -55,27 +51,6 @@ export function TaskSidebar(props: {
         <Button type="primary" icon={<PlusOutlined />} block size="large" onClick={props.onNew}>
           新建任务
         </Button>
-        <Dropdown
-          disabled={props.projectLocked}
-          trigger={["click"]}
-          menu={{
-            selectedKeys: [props.projectId],
-            items: props.projects.map((project) => ({
-              key: project.id,
-              label: project.type === "wechat-mini-program" ? `${project.name} · 小程序` : project.name,
-            })),
-            onClick: ({ key }) => props.onProjectChange(key),
-          }}
-        >
-          <Button
-            className="sidebar-project-trigger"
-            disabled={props.projectLocked}
-            title={props.projectLocked ? "当前会话已绑定项目；新建任务后可切换" : "选择任务项目"}
-          >
-            <span>{selectedProject?.name ?? "选择项目"}</span>
-            <DownOutlined />
-          </Button>
-        </Dropdown>
       </div>
 
       <div className="sidebar-section-title">

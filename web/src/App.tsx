@@ -589,13 +589,10 @@ export default function App() {
       <TaskSidebar
         jobs={store.jobs}
         projects={projects}
-        projectId={projectId}
-        projectLocked={Boolean(selectedJob)}
         selectedJobId={store.selectedJobId}
         loading={store.loading}
         onSelect={selectJob}
         onNew={startNew}
-        onProjectChange={setProjectId}
         onDelete={deleteConversation}
       />
 
@@ -603,7 +600,11 @@ export default function App() {
         <header className="workspace-header">
           <div>
             <Typography.Title level={4}>{selectedJob?.prompt || "新建任务"}</Typography.Title>
-            <Typography.Text type="secondary">{selectedJob ? `Job ${selectedJob.jobId.slice(0, 8)}` : "在下方选择模式并输入需求"}</Typography.Text>
+            <Typography.Text type="secondary">
+              {selectedJob
+                ? `${selectedProject?.name ?? selectedJob.projectId} · Job ${selectedJob.jobId.slice(0, 8)}`
+                : "在下方选择模式并输入需求"}
+            </Typography.Text>
           </div>
           <Space>
             {active && <span className="live-indicator"><i /> 实时连接</span>}
@@ -627,11 +628,14 @@ export default function App() {
           <ConversationPanel
             jobs={conversationJobs}
             currentJob={selectedJob}
+            projects={projects}
+            projectId={projectId}
             taskMode={taskMode}
             agentProvider={agentProvider}
             eventsByJob={store.events}
             planDrafts={planDrafts}
             busy={busy}
+            onProjectChange={setProjectId}
             onTaskModeChange={setTaskMode}
             onPlanChange={(jobId, value) => setPlanDrafts((current) => ({ ...current, [jobId]: value }))}
             onExecute={confirmExecute}

@@ -2,6 +2,7 @@
   {
     "id": "b2b-composite",
     "name": "B2B 管理后台",
+    "description": "村财、监管、村居委、产权、支付中台",
     "type": "web",
     "gitRepoUrl": "http://47.107.55.79:18081/frontend/b2b-wings-composite.git",
     "defaultBranch": "test",
@@ -14,6 +15,7 @@
   {
     "id": "yuenongjiao-mini",
     "name": "粤农交小程序",
+    "description": "粤农交测试版小程序",
     "type": "wechat-mini-program",
     "gitRepoUrl": "http://47.107.55.79:18081/frontend/b2b-wings-property-mini.git",
     "defaultBranch": "demo-version",

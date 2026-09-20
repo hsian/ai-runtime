@@ -5,6 +5,7 @@ import { z } from "zod";
 const projectSchema = z.object({
   id: z.string().regex(/^[a-z0-9-]+$/),
   name: z.string().min(1),
+  description: z.string().min(1).optional(),
   type: z.enum(["web", "wechat-mini-program", "generic"]),
   gitRepoUrl: z.string().url(),
   defaultBranch: z.string().min(1),
@@ -26,6 +27,7 @@ export type ProjectType = z.infer<typeof projectSchema>["type"];
 export interface ProjectProfile {
   id: string;
   name: string;
+  description?: string;
   type: ProjectType;
   gitRepoUrl: string;
   defaultBranch: string;
@@ -45,6 +47,7 @@ export interface ProjectProfile {
 export interface PublicProjectProfile {
   id: string;
   name: string;
+  description?: string;
   type: ProjectType;
   defaultBranch: string;
   autoMerge: boolean;
@@ -93,6 +96,7 @@ export function listPublicProjects(): PublicProjectProfile[] {
   return projects.map((project) => ({
     id: project.id,
     name: project.name,
+    description: project.description,
     type: project.type,
     defaultBranch: project.defaultBranch,
     autoMerge: project.autoMerge,

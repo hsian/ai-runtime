@@ -175,6 +175,7 @@ export type AgentProvider = "claude" | "codex";
 export interface ProjectProfile {
   id: string;
   name: string;
+  description?: string;
   type: "web" | "wechat-mini-program" | "generic";
   defaultBranch: string;
   autoMerge: boolean;

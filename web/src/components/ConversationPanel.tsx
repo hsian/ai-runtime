@@ -1,8 +1,8 @@
-import { CodeOutlined, ExperimentOutlined, FileTextOutlined, ToolOutlined, UserOutlined } from "@ant-design/icons";
-import { Alert, Button, Card, Divider, Image, Input, Space, Tag, Typography } from "antd";
+import { CodeOutlined, DownOutlined, ExperimentOutlined, FileTextOutlined, FolderOpenOutlined, ToolOutlined, UserOutlined } from "@ant-design/icons";
+import { Alert, Button, Card, Divider, Dropdown, Image, Input, Space, Tag, Typography } from "antd";
 import { useMemo } from "react";
 
-import type { AgentProvider, ClarificationAnswer, JobEvent, JobStatus, TaskMode } from "../types";
+import type { AgentProvider, ClarificationAnswer, JobEvent, JobStatus, ProjectProfile, TaskMode } from "../types";
 import { ClarificationCard } from "./ClarificationCard";
 import { TestCaseResult } from "./TestCaseResult";
 
@@ -146,24 +146,59 @@ function JobTurn(props: {
 export function ConversationPanel(props: {
   jobs: JobStatus[];
   currentJob?: JobStatus;
+  projects: ProjectProfile[];
+  projectId: string;
   taskMode: TaskMode;
   agentProvider: AgentProvider;
   eventsByJob: Record<string, JobEvent[]>;
   planDrafts: Record<string, string>;
   busy: boolean;
+  onProjectChange: (projectId: string) => void;
   onTaskModeChange: (value: TaskMode) => void;
   onPlanChange: (jobId: string, value: string) => void;
   onExecute: (planSummary: string) => void;
   onClarify: (jobId: string, answers: ClarificationAnswer[], note: string, files: File[]) => void;
 }) {
   if (props.jobs.length === 0) {
+    const selectedProject = props.projects.find((project) => project.id === props.projectId);
+    const projectTypeLabel = selectedProject?.type === "wechat-mini-program" ? "微信小程序" : selectedProject?.type === "web" ? "Web 项目" : "通用项目";
+
     return (
       <div className="welcome-state">
         <div className="welcome-icon"><CodeOutlined /></div>
-        <Typography.Title level={2}>从问题、修改需求或测试需求开始</Typography.Title>
-        <Typography.Paragraph>
+        <Typography.Title level={2}>智能任务工作台</Typography.Title>
+        {/* <Typography.Paragraph>
           支持的项目：B2B 管理后台（村财、监管、村居委、产权、支付中台）和粤农交测试版小程序；其他项目暂不支持。
-        </Typography.Paragraph>
+        </Typography.Paragraph> */}
+        <div className="project-context">
+          <div className="project-context-label">当前项目</div>
+          <Dropdown
+            trigger={["click"]}
+            menu={{
+              selectedKeys: [props.projectId],
+              items: props.projects.map((project) => ({
+                key: project.id,
+                label: project.type === "wechat-mini-program" ? `${project.name} · 小程序` : project.name,
+              })),
+              onClick: ({ key }) => props.onProjectChange(key),
+            }}
+          >
+            <Button className="project-context-trigger" disabled={props.projects.length === 0}>
+              <span className="project-context-icon"><FolderOpenOutlined /></span>
+              <span className="project-context-copy">
+                <strong>{selectedProject?.name ?? "正在加载项目"}</strong>
+                {selectedProject && (
+                  <span>
+                    {projectTypeLabel} · 默认分支 {selectedProject.defaultBranch}
+                    {selectedProject.description ? ` · ${selectedProject.description}` : ""}
+                  </span>
+                )}
+              </span>
+              <DownOutlined className="project-context-arrow" />
+            </Button>
+          </Dropdown>
+        </div>
+        <div className="starter-label">任务类型</div>
         <div className="starter-grid">
           <button
             type="button"
