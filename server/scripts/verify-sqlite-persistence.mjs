@@ -5,11 +5,8 @@ import { join } from "node:path";
 
 const testRoot = await mkdtemp(join(tmpdir(), "ai-runtime-sqlite-"));
 
-process.env.GIT_REPO_URL = "https://example.com/test/repo.git";
 process.env.GIT_ACCESS_TOKEN = "test-token";
 process.env.DATABASE_PATH = join(testRoot, "ai-runtime.sqlite");
-process.env.WORKSPACE_DIR = join(testRoot, "workspace");
-process.env.WORKTREE_DIR = join(testRoot, "worktrees");
 process.env.UPLOAD_DIR = join(testRoot, "uploads");
 process.env.OPERATION_LOG_DIR = join(testRoot, "logs");
 process.env.OPERATION_LOG_ENABLED = "false";

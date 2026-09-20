@@ -50,12 +50,6 @@ export function buildCommitMessage(summary: string, jobId: string): string {
   return body ? `${subject}\n\n${body}\n\n${footer}` : `${subject}\n\n${footer}`;
 }
 
-export function buildMergeMessage(summary: string, jobId: string): string {
-  const actualSummary = normalizeImplementationSummary(summary);
-  const subject = truncateLine(`merge(plugin): ${actualSummary}`, 72);
-  return `${subject}\n\nJob: ${jobId}`;
-}
-
 export function formatGitError(err: unknown): string {
   const raw = err instanceof Error ? err.message : String(err);
   return stripAnsi(raw).replace(/\r\n/g, "\n").trim();

@@ -81,7 +81,7 @@ function getRepoPathFromUrl(repoUrl: string): { url: URL; path: string } {
   const url = new URL(repoUrl);
   const path = decodeURIComponent(url.pathname.replace(/^\/+/, "").replace(/\.git$/, ""));
   if (!path) {
-    throw new Error("无法从 GIT_REPO_URL 解析仓库路径");
+    throw new Error("无法从项目仓库地址解析仓库路径");
   }
   return { url, path };
 }
@@ -587,23 +587,24 @@ export class GitService {
   async mergeIntoBranch(
     sourceBranch: string,
     targetBranch: string,
-    mergeMessage: string,
+    commitMessage: string,
     conflictResolver?: GitConflictResolver
   ): Promise<string> {
     const worktreePath = await this.createIntegrationWorktree(targetBranch);
     const git = await this.getGitAt(worktreePath);
 
-    const mergeArgs = [
-      "--no-ff",
-      "-m",
-      mergeMessage,
-      ...(config.GIT_SKIP_HOOKS ? ["--no-verify"] : []),
-      sourceBranch,
-    ];
+    const commitSquashedChanges = async (): Promise<void> => {
+      await git.commit(commitMessage, undefined, {
+        "--author": `${config.GIT_AUTHOR_NAME} <${config.GIT_AUTHOR_EMAIL}>`,
+        ...(config.GIT_SKIP_HOOKS ? { "--no-verify": null } : {}),
+      });
+    };
 
     try {
       try {
-        await git.merge(mergeArgs);
+        // 只把源分支的最终文件变化写入目标分支，避免同时产生功能提交和 merge 提交。
+        await git.merge(["--squash", sourceBranch]);
+        await commitSquashedChanges();
       } catch (err) {
         const files = await this.listConflictFiles(git);
         if (files.length === 0 || !conflictResolver) {
@@ -618,11 +619,7 @@ export class GitService {
             sourceRef: sourceBranch,
             targetBranch,
           }, conflictResolver);
-          await git.raw([
-            "commit",
-            "--no-edit",
-            ...(config.GIT_SKIP_HOOKS ? ["--no-verify"] : []),
-          ]);
+          await commitSquashedChanges();
         } catch (resolutionError) {
           const detail = resolutionError instanceof Error
             ? resolutionError.message

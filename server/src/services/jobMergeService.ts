@@ -3,7 +3,7 @@ import { GitMergeConflictError, GitRemoteUnavailableError } from "./gitService.j
 import { appendJobEvent } from "./jobEvents.js";
 import { createJobConflictResolver } from "./gitConflictResolutionService.js";
 import type { ReleaseMergeRecord } from "../types.js";
-import { buildMergeMessage } from "./commitMessage.js";
+import { buildCommitMessage } from "./commitMessage.js";
 import { logOperation } from "./operationLog.js";
 import { getProject } from "./projectRegistry.js";
 import { getProjectGitService } from "./projectRuntime.js";
@@ -29,7 +29,7 @@ export async function confirmJobMerge(jobId: string): Promise<void> {
   });
 
   try {
-    const mergeMessage = buildMergeMessage(
+    const mergeMessage = buildCommitMessage(
       job.implementationSummary ?? job.message ?? "完成代码修改",
       jobId
     );
@@ -44,7 +44,8 @@ export async function confirmJobMerge(jobId: string): Promise<void> {
       status: "completed",
       message: doneMessage,
       sourceBranch: job.sourceBranch ?? job.branch,
-      sourceCommitSha: job.sourceCommitSha ?? job.commitSha,
+      // 合并采用 squash，原任务分支提交不会进入默认分支历史。
+      sourceCommitSha: mergeSha,
       branch: defaultBranch,
       commitSha: mergeSha,
       mergedToDefaultBranch: defaultBranch,

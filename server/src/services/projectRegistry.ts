@@ -2,8 +2,6 @@ import { existsSync, readFileSync } from "fs";
 import { dirname, resolve } from "path";
 import { z } from "zod";
 
-import { config } from "../config.js";
-
 const projectSchema = z.object({
   id: z.string().regex(/^[a-z0-9-]+$/),
   name: z.string().min(1),
@@ -70,31 +68,21 @@ function loadConfiguredProjects(): ProjectProfile[] {
     resolve(process.cwd(), "server", "projects.json"),
   ];
   const filePath = candidates.find(existsSync);
-  if (!filePath) return [];
-  const parsed = z.array(projectSchema).parse(JSON.parse(readFileSync(filePath, "utf8")));
+  if (!filePath) {
+    throw new Error("未找到 projects.json，项目仓库必须通过该文件配置");
+  }
+  const parsed = z.array(projectSchema).min(1).parse(JSON.parse(readFileSync(filePath, "utf8")));
   return parsed.map((project) => normalizeProject(project, dirname(filePath)));
 }
 
-const legacyProject: ProjectProfile = {
-  id: DEFAULT_PROJECT_ID,
-  name: "B2B 管理后台",
-  type: "web",
-  gitRepoUrl: config.GIT_REPO_URL,
-  defaultBranch: config.GIT_DEFAULT_BRANCH,
-  workspaceDir: config.WORKSPACE_DIR,
-  worktreeDir: config.WORKTREE_DIR,
-  autoMerge: true,
-};
-
-const configuredProjects = loadConfiguredProjects();
-// 旧版部署尚未迁移 projects.json 时，继续使用 .env 中的单项目配置。
-const projects = configuredProjects.some((project) => project.id === DEFAULT_PROJECT_ID)
-  ? configuredProjects
-  : [legacyProject, ...configuredProjects];
+const projects = loadConfiguredProjects();
 const projectsById = new Map(projects.map((project) => [project.id, project]));
 
 if (projectsById.size !== projects.length) {
   throw new Error("项目配置包含重复的 id");
+}
+if (!projectsById.has(DEFAULT_PROJECT_ID)) {
+  throw new Error(`projects.json 必须包含默认项目 ${DEFAULT_PROJECT_ID}`);
 }
 
 export function listProjects(): ProjectProfile[] {

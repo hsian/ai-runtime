@@ -1,7 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const root = resolve(scriptDir, "../data/git-integration-verification");
@@ -54,25 +54,41 @@ git(seed, "checkout", "main");
 await writeFile(join(seed, "merge.txt"), "main\n");
 git(seed, "commit", "-am", "main change");
 git(seed, "push", "origin", "main");
+git(seed, "branch", "squash-target");
+git(seed, "push", "origin", "squash-target");
 
 git(root, "clone", remote, workspace);
 git(workspace, "config", "user.name", "Integration Test");
 git(workspace, "config", "user.email", "integration@example.com");
 git(workspace, "branch", "feature", "origin/feature");
 
-process.env.GIT_REPO_URL = "https://example.com/org/repo.git";
 process.env.GIT_ACCESS_TOKEN = "test-token";
-process.env.GIT_DEFAULT_BRANCH = "main";
-process.env.WORKSPACE_DIR = workspace;
-process.env.WORKTREE_DIR = worktrees;
 process.env.AUTO_PUSH = "true";
 process.env.GIT_SKIP_HOOKS = "true";
 
-const { GitRemoteUnavailableError, gitService } = await import("../dist/services/gitService.js");
+const repoUrl = pathToFileURL(remote).href;
+git(workspace, "remote", "set-url", "origin", repoUrl);
+const { GitRemoteUnavailableError, GitService } = await import("../dist/services/gitService.js");
+const gitService = new GitService({
+  id: "integration-test",
+  name: "Integration Test",
+  type: "generic",
+  gitRepoUrl: repoUrl,
+  defaultBranch: "main",
+  workspaceDir: workspace,
+  worktreeDir: worktrees,
+  autoMerge: true,
+});
 
-await gitService.mergeIntoBranch("feature", "main", "merge feature", async ({ worktreePath }) => {
+const mainBeforeMerge = git(workspace, "rev-parse", "origin/main");
+const mergedCommitSha = await gitService.mergeIntoBranch("feature", "main", "feat(plugin): merge feature", async ({ worktreePath }) => {
   await writeFile(join(worktreePath, "merge.txt"), "main + feature\n");
 });
+
+const squashTargetCommitSha = await gitService.cherryPickCommitIntoBranch(mergedCommitSha, "squash-target");
+git(workspace, "fetch", "origin");
+const squashTargetApplied = git(workspace, "show", "origin/squash-target:merge.txt");
+await gitService.revertCommitOnBranch(squashTargetCommitSha, "squash-target");
 
 await gitService.cherryPickCommitIntoBranch(pickSha, "release", async ({ worktreePath }) => {
   await writeFile(join(worktreePath, "pick.txt"), "release + source\n");
@@ -108,7 +124,10 @@ const merged = git(workspace, "show", "origin/main:merge.txt");
 const picked = git(workspace, "show", "origin/release:pick.txt");
 const failedTarget = git(workspace, "show", "origin/failure:pick.txt");
 const retriedTarget = git(workspace, "show", "origin/push-failure:pick.txt");
+const squashTargetReverted = git(workspace, "show", "origin/squash-target:merge.txt");
 const localMainFile = git(workspace, "show", "main:merge.txt");
+const mergedCommitCount = Number(git(workspace, "rev-list", "--count", `${mainBeforeMerge}..origin/main`));
+const mergedCommitParents = git(workspace, "rev-list", "--parents", "-n", "1", "origin/main").split(/\s+/).length - 1;
 const worktreeList = git(workspace, "worktree", "list", "--porcelain");
 
 if (merged !== "main + feature") throw new Error(`merge 结果错误: ${merged}`);
@@ -118,7 +137,11 @@ if (failedTarget !== "release") throw new Error(`失败目标分支被意外修�
 if (!remoteFailureWasRetryable) throw new Error("push 失败未识别为可重试远程错误");
 if (localBranchAfterPushFailure) throw new Error("push 失败前不应更新本地目标分支");
 if (retriedTarget !== "release + source") throw new Error(`恢复后的重试结果错误: ${retriedTarget}`);
+if (squashTargetApplied !== "main + feature") throw new Error(`最终提交无法同步到其他分支: ${squashTargetApplied}`);
+if (squashTargetReverted !== "main") throw new Error(`最终提交无法正常撤回: ${squashTargetReverted}`);
 if (localMainFile !== "main + feature") throw new Error(`本地 main 未同步: ${localMainFile}`);
+if (mergedCommitCount !== 1) throw new Error(`squash 合并应只产生 1 条提交，实际为 ${mergedCommitCount}`);
+if (mergedCommitParents !== 1) throw new Error(`squash 结果不应是 merge commit，实际父提交数为 ${mergedCommitParents}`);
 if ((worktreeList.match(/^worktree /gm) ?? []).length !== 1) {
   throw new Error("临时 integration worktree 未清理");
 }

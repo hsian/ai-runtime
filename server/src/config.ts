@@ -5,13 +5,9 @@ import { z } from "zod";
 
 const envSchema = z.object({
   PORT: z.coerce.number().default(3000),
-  GIT_REPO_URL: z.string().url(),
   GIT_ACCESS_TOKEN: z.string().min(1),
-  GIT_DEFAULT_BRANCH: z.string().default("main"),
   GIT_AUTHOR_NAME: z.string().default("AI Runtime Bot"),
   GIT_AUTHOR_EMAIL: z.string().default("ai-runtime@company.com"),
-  WORKSPACE_DIR: z.string().default("./workspace"),
-  WORKTREE_DIR: z.string().default("./data/wt"),
   AGENT_PROVIDER: z.enum(["claude", "codex"]).default("claude"),
   CLAUDE_CLI_PATH: z.string().default("claude"),
   CLAUDE_MODEL: z.string().optional(),
@@ -148,15 +144,12 @@ function loadConfig() {
     ...parsed.data,
     UPLOAD_DIR: resolve(process.cwd(), parsed.data.UPLOAD_DIR),
     TEST_CASE_TEMPLATE_PATH: resolve(process.cwd(), parsed.data.TEST_CASE_TEMPLATE_PATH),
-    WORKSPACE_DIR: resolve(process.cwd(), parsed.data.WORKSPACE_DIR),
-    WORKTREE_DIR: resolve(process.cwd(), parsed.data.WORKTREE_DIR),
     OPERATION_LOG_DIR: resolve(process.cwd(), parsed.data.OPERATION_LOG_DIR),
     DATABASE_PATH: resolve(process.cwd(), parsed.data.DATABASE_PATH),
     CLIENT_COOKIE_SECRET_FILE: resolve(process.cwd(), parsed.data.CLIENT_COOKIE_SECRET_FILE),
     WEB_DIST_DIR: resolve(process.cwd(), parsed.data.WEB_DIST_DIR),
   };
 }
-
 export const config = loadConfig();
 
 function parseTapdWorkspaces(value: string | undefined, defaultWorkspaceId: string): TapdConfiguredWorkspace[] {
@@ -193,11 +186,4 @@ export function getTapdConfig(): TapdConfig {
     workspaceId: config.TAPD_WORKSPACE_ID!,
     workspaces: parseTapdWorkspaces(config.TAPD_WORKSPACES, config.TAPD_WORKSPACE_ID!),
   };
-}
-
-export function getAuthenticatedRepoUrl(): string {
-  const url = new URL(config.GIT_REPO_URL);
-  url.username = "oauth2";
-  url.password = config.GIT_ACCESS_TOKEN;
-  return url.toString();
 }

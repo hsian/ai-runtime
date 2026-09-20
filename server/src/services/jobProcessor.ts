@@ -3,7 +3,7 @@ import { getJob, updateJob } from "./jobStore.js";
 import { GitMergeConflictError, GitRemoteUnavailableError, type GitService } from "./gitService.js";
 import { runAgent } from "./agent/index.js";
 import { looksLikeClarification } from "./agent/types.js";
-import { buildCommitMessage, buildMergeMessage, formatGitError } from "./commitMessage.js";
+import { buildCommitMessage, formatGitError } from "./commitMessage.js";
 import { appendJobEvent } from "./jobEvents.js";
 import { stageAttachmentsForAgent } from "./uploadService.js";
 import { resolveJobPreviewLink } from "./devPreviewService.js";
@@ -337,10 +337,9 @@ export async function processJob(jobId: string): Promise<void> {
 
     emitStage(jobId, "merge", `正在合并到 ${defaultBranch} 并推送...`);
     if (await abortIfCancelled(jobId, "merge", gitService, repoPath)) return;
-    const mergeMessage = buildMergeMessage(result.summary, jobId);
     mergeSha = await gitService.mergeIntoDefaultBranch(
       branchName,
-      mergeMessage,
+      commitMessage,
       createJobConflictResolver(jobId)
     );
     logOperation({
@@ -361,7 +360,8 @@ export async function processJob(jobId: string): Promise<void> {
       status: "completed",
       message: doneMessage,
       sourceBranch: branchName,
-      sourceCommitSha: commitSha,
+      // 合并采用 squash，后续 Diff、发版分支同步等都应引用默认分支上的最终提交。
+      sourceCommitSha: mergeSha,
       branch: finalBranch,
       commitSha: mergeSha,
       mergedToDefaultBranch: defaultBranch,
