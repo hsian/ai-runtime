@@ -35,7 +35,7 @@ Web 页面支持 Plan 待确认、等待合并、任务完成和执行失败提�
 
 ## 多项目与小程序
 
-所有项目统一在 `server/projects.json` 注册，包括原有 composite 和独立小程序仓库。前端新建任务时选择项目，提交后会锁定项目，任务历史和上下文按项目隔离。Agent 使用 AI Runtime 自己管理的仓库副本和 worktree，不直接 reset 开发人员日常使用的 checkout。Git Token 等敏感信息仍只保存在 `server/.env`。
+所有项目统一在 `server/projects.json` 注册，包括原有 composite 和独立小程序仓库。前端新建任务时选择项目，提交后会锁定项目，任务历史和上下文按项目隔离。Agent 使用 AI Runtime 自己管理的仓库副本和 worktree，不直接 reset 开发人员日常使用的 checkout。Git Token 等敏感信息仍只保存在 `server/.env`。如果 HTTPS 仓库使用 IP 地址但证书没有匹配该 IP，可在对应项目配置 `"gitSslVerify": false`，AI Runtime 自动 clone、fetch、pull、push 时会跳过 Git SSL 证书校验。
 
 “粤农交小程序”基于 `demo-version` 自动合并。代码任务完成后，可先生成体验版二维码，确认无误后再上传到微信公众平台的开发版本。需要在微信公众平台下载“小程序代码上传密钥”，并在 `server/.env` 配置密钥文件路径。没有固定公网 IP 时，可以关闭“小程序代码上传”的 IP 白名单。上传后不会自动提交审核或发布。
 

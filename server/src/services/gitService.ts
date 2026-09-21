@@ -91,6 +91,25 @@ function repoIdentity(repoUrl: string): string {
   return `${url.hostname.toLowerCase()}/${url.pathname.replace(/^\/+/, "").replace(/\.git$/, "").toLowerCase()}`;
 }
 
+function formatGitFailure(err: unknown): string {
+  const raw = err instanceof Error ? err.message : String(err);
+  const withoutToken = config.GIT_ACCESS_TOKEN
+    ? raw.replaceAll(config.GIT_ACCESS_TOKEN, "***")
+    : raw;
+  return withoutToken
+    .replace(/(https?:\/\/)[^@\s/]+@/gi, "$1***@")
+    .trim();
+}
+
+function isRetryableGitRemoteFailure(err: unknown): boolean {
+  return /(?:could not resolve host|failed to connect|connection (?:reset|refused)|timed? out|operation timed out|network is unreachable|remote end hung up|tls.*(?:closed|terminated)|ssl_error_syscall|http (?:502|503|504)|the requested url returned error: (?:502|503|504))/i
+    .test(formatGitFailure(err));
+}
+
+function wait(delayMs: number): Promise<void> {
+  return new Promise((resolveWait) => setTimeout(resolveWait, delayMs));
+}
+
 async function readErrorResponse(res: Response): Promise<string> {
   const text = await res.text().catch(() => "");
   if (!text) return `${res.status} ${res.statusText}`;
@@ -180,6 +199,13 @@ export class GitService {
     return url.toString();
   }
 
+  private withProjectGitEnv(git: SimpleGit): SimpleGit {
+    if (!this.project.gitSslVerify) {
+      git.env("GIT_SSL_NO_VERIFY", "true");
+    }
+    return git;
+  }
+
   private async cloneManagedRepo(): Promise<void> {
     const stageNames: Record<string, string> = {
       counting: "统计对象",
@@ -190,7 +216,7 @@ export class GitService {
     };
     let lastProgressKey = "";
     let wroteProgress = false;
-    const cloneGit = simpleGit({
+    const cloneGit = this.withProjectGitEnv(simpleGit({
       progress: ({ stage, progress, processed, total }) => {
         const progressKey = `${stage}:${progress}`;
         if (progressKey === lastProgressKey) return;
@@ -201,7 +227,7 @@ export class GitService {
           `\r[AI Runtime] 克隆 ${this.project.name}：${stageName} ${progress}% (${processed}/${total})`
         );
       },
-    });
+    }));
 
     console.log(`[AI Runtime] 本地未找到 ${this.project.name}，开始从远端克隆...`);
     try {
@@ -256,7 +282,7 @@ export class GitService {
     await mkdir(this.repoPath, { recursive: true });
 
     if (!this.git) {
-      this.git = simpleGit(this.repoPath);
+      this.git = this.withProjectGitEnv(simpleGit(this.repoPath));
     }
 
     const detectedRoot = await this.git.revparse(["--show-toplevel"]).catch(() => "");
@@ -268,13 +294,15 @@ export class GitService {
       const hasNestedGit = await stat(resolve(this.repoPath, ".git")).then(() => true).catch(() => false);
       if (hasNestedGit) await this.backupIncompleteRepo();
       await this.cloneManagedRepo();
-      this.git = simpleGit(this.repoPath);
+      this.git = this.withProjectGitEnv(simpleGit(this.repoPath));
     } else {
       const remotes = await this.git.getRemotes(true);
       const origin = remotes.find((remote) => remote.name === "origin")?.refs.fetch;
       if (!origin || repoIdentity(origin) !== repoIdentity(this.project.gitRepoUrl)) {
         throw new Error(`项目 ${this.project.name} 的托管目录仓库不匹配：${this.repoPath}`);
       }
+      // Refresh credentials even when only GIT_ACCESS_TOKEN changed.
+      await this.git.remote(["set-url", "origin", this.getAuthenticatedRepoUrl()]);
 
       // A cancelled or failed clone can leave a .git directory and origin behind
       // without downloading any commit. Treat it as incomplete instead of reusing
@@ -284,7 +312,7 @@ export class GitService {
       if (!hasHead) {
         await this.backupIncompleteRepo();
         await this.cloneManagedRepo();
-        this.git = simpleGit(this.repoPath);
+        this.git = this.withProjectGitEnv(simpleGit(this.repoPath));
       }
     }
 
@@ -292,11 +320,11 @@ export class GitService {
   }
 
   private async getGitAt(repoPath: string): Promise<SimpleGit> {
-    return simpleGit({
+    return this.withProjectGitEnv(simpleGit({
       baseDir: repoPath,
       // 仅用于无人值守执行 cherry-pick --continue，值固定为 "true"，不接收外部输入。
       unsafe: { allowUnsafeEditor: true },
-    });
+    }));
   }
 
   private getWorktreePath(jobId: string): string {
@@ -388,14 +416,24 @@ export class GitService {
   ): Promise<string> {
     const commitSha = (await integrationGit.revparse(["HEAD"])).trim();
     if (config.AUTO_PUSH) {
-      try {
-        await integrationGit.push("origin", `HEAD:${targetBranch}`);
-      } catch (err) {
+      let lastError: unknown;
+      for (let attempt = 1; attempt <= 3; attempt += 1) {
+        try {
+          await integrationGit.push("origin", `HEAD:${targetBranch}`);
+          lastError = undefined;
+          break;
+        } catch (err) {
+          lastError = err;
+          if (!isRetryableGitRemoteFailure(err) || attempt === 3) break;
+          await wait(attempt * 1000);
+        }
+      }
+      if (lastError) {
         throw new GitRemoteUnavailableError(
-          `Git 远程仓库暂时无法访问，推送 ${targetBranch} 失败`,
+          `推送 ${targetBranch} 失败：${formatGitFailure(lastError)}`,
           "push",
           targetBranch,
-          { cause: err }
+          { cause: lastError }
         );
       }
     }

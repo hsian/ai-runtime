@@ -8,6 +8,7 @@ const projectSchema = z.object({
   description: z.string().min(1).optional(),
   type: z.enum(["web", "wechat-mini-program", "generic"]),
   gitRepoUrl: z.string().url(),
+  gitSslVerify: z.boolean().default(true),
   defaultBranch: z.string().min(1),
   packageManager: z.enum(["npm", "pnpm", "yarn"]).optional(),
   buildCommand: z.string().min(1).nullable().optional(),
@@ -30,6 +31,7 @@ export interface ProjectProfile {
   description?: string;
   type: ProjectType;
   gitRepoUrl: string;
+  gitSslVerify: boolean;
   defaultBranch: string;
   packageManager?: "npm" | "pnpm" | "yarn";
   buildCommand?: string | null;
