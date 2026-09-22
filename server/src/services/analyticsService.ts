@@ -24,6 +24,7 @@ export interface AnalyticsData {
     cancelled: number;
     active: number;
     pending: number;
+    waitingAction: number;
     successRate: number;
     averageDurationMs: number;
   };
@@ -175,8 +176,9 @@ export function getAnalytics(days: number, projectId?: string): AnalyticsData {
       completed,
       failed,
       cancelled,
-      active: all.filter((job) => ["planning", "running", "awaiting_confirm", "awaiting_input", "awaiting_merge"].includes(job.status)).length,
+      active: all.filter((job) => job.status === "planning" || job.status === "running").length,
       pending: all.filter((job) => job.status === "pending").length,
+      waitingAction: all.filter((job) => ["awaiting_confirm", "awaiting_input", "awaiting_merge"].includes(job.status)).length,
       successRate: successRate(completed, failed),
       averageDurationMs: durations.length > 0 ? Math.round(durations.reduce((sum, value) => sum + value, 0) / durations.length) : 0,
     },

@@ -191,7 +191,7 @@ export function listExpiredJobs(cutoffIso: string): Job[] {
     .prepare(`
       SELECT data
       FROM jobs
-      WHERE status IN ('completed', 'failed', 'cancelled', 'awaiting_confirm', 'awaiting_input')
+      WHERE status IN ('completed', 'failed', 'cancelled', 'awaiting_confirm', 'awaiting_input', 'awaiting_merge')
         AND updated_at < ?
       ORDER BY updated_at
     `)
@@ -204,7 +204,7 @@ export function deleteJobIfExpired(jobId: string, cutoffIso: string): boolean {
     .prepare(`
       DELETE FROM jobs
       WHERE job_id = ?
-        AND status IN ('completed', 'failed', 'cancelled', 'awaiting_confirm', 'awaiting_input')
+        AND status IN ('completed', 'failed', 'cancelled', 'awaiting_confirm', 'awaiting_input', 'awaiting_merge')
         AND updated_at < ?
     `)
     .run(jobId, cutoffIso).changes > 0;

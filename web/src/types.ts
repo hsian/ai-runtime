@@ -230,6 +230,7 @@ export interface AnalyticsData {
     cancelled: number;
     active: number;
     pending: number;
+    waitingAction: number;
     successRate: number;
     averageDurationMs: number;
   };

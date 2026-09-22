@@ -144,6 +144,7 @@ export default function AnalyticsPage() {
                   <div><span>已完成</span><strong>{data.overview.completed}</strong></div>
                   <div><span>失败</span><strong>{data.overview.failed}</strong></div>
                   <div><span>用户取消</span><strong>{data.overview.cancelled}</strong></div>
+                  <div><span>等待用户处理</span><strong>{data.overview.waitingAction}</strong></div>
                 </div>
               </Card>
             </section>

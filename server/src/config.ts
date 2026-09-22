@@ -84,7 +84,7 @@ const envSchema = z.object({
   OPERATION_LOG_RETENTION_DAYS: z.coerce.number().int().positive().default(7),
   OPERATION_LOG_MAX_FILE_MB: z.coerce.number().positive().default(20),
   DATABASE_PATH: z.string().default("./data/ai-runtime.sqlite"),
-  JOB_RETENTION_DAYS: z.coerce.number().int().positive().default(30),
+  JOB_RETENTION_DAYS: z.coerce.number().int().positive().default(3),
   CLIENT_COOKIE_SECRET: z.string().optional(),
   CLIENT_COOKIE_SECRET_FILE: z.string().default("./data/client-cookie-secret"),
   CLIENT_COOKIE_NAME: z.string().default("ai_runtime_client"),
