@@ -21,6 +21,7 @@ import {
 import { startTitleAlert, stopTitleAlert } from "./utils/titleAlert";
 import { createUniqueId } from "./utils/uniqueId";
 import { resolveTaskMode } from "./utils/taskMode";
+import { workHoursApi, type AuthUser } from "./services/workHoursApi";
 
 const terminalStatuses = new Set(["completed", "failed", "cancelled", "awaiting_confirm", "awaiting_input", "awaiting_merge"]);
 
@@ -90,6 +91,13 @@ export default function App() {
     getDesktopNotificationPermission
   );
   const knownJobStatuses = useRef(new Map<string, JobStatus["status"]>());
+  const [authUser, setAuthUser] = useState<AuthUser | null>(null);
+  useEffect(() => {
+    const refresh = () => { void workHoursApi.me().then(({ user }) => setAuthUser(user)).catch(() => setAuthUser(null)); };
+    refresh();
+    window.addEventListener("focus", refresh);
+    return () => window.removeEventListener("focus", refresh);
+  }, []);
 
   const notifyJobStatus = useCallback((job: JobStatus) => {
     let body: string | undefined;
@@ -594,6 +602,9 @@ export default function App() {
         onSelect={selectJob}
         onNew={startNew}
         onDelete={deleteConversation}
+        isAuthenticated={Boolean(authUser)}
+        canManageUsers={Boolean(authUser?.permissions.includes("users.manage") && !authUser.mustChangePassword)}
+        onLogout={() => { void workHoursApi.logout().then(() => { setAuthUser(null); message.success("已退出登录"); }).catch((error) => message.error(error instanceof Error ? error.message : "退出登录失败")); }}
       />
 
       <section className="workspace-main">

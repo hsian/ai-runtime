@@ -1,5 +1,5 @@
-import { DeleteOutlined, PlusOutlined, RobotOutlined } from "@ant-design/icons";
-import { Button, Empty, Skeleton, Tooltip } from "antd";
+import { AppstoreOutlined, DeleteOutlined, LockOutlined, LogoutOutlined, PlusOutlined, RobotOutlined } from "@ant-design/icons";
+import { Button, Dropdown, Empty, Skeleton, Tooltip } from "antd";
 
 import type { JobStatus, ProjectProfile } from "../types";
 import { StatusBadge } from "./StatusBadge";
@@ -22,6 +22,9 @@ export function TaskSidebar(props: {
   onSelect: (jobId: string) => void;
   onNew: () => void;
   onDelete: (conversationId: string, projectId: string, title: string) => void;
+  isAuthenticated: boolean;
+  canManageUsers: boolean;
+  onLogout: () => void;
 }) {
   const projectNames = new Map(props.projects.map((project) => [project.id, project.name]));
   const conversations = Array.from(
@@ -107,6 +110,18 @@ export function TaskSidebar(props: {
           ))
         )}
       </div>
+      <Dropdown menu={{ items: [
+        { key: "hours", label: <a href="/work-hours">填写工时</a> },
+        { key: "stats", label: <a href="/stats">内部统计</a> },
+        ...(props.canManageUsers ? [{ key: "users", label: <a href="/account-management">账号管理</a> }] : []),
+        ...(props.isAuthenticated ? [
+          { type: "divider" as const },
+          { key: "password", icon: <LockOutlined />, label: <a href="/change-password">修改密码</a> },
+          { key: "logout", icon: <LogoutOutlined />, label: "退出登录" },
+        ] : []),
+      ], onClick: ({ key }) => { if (key === "logout") props.onLogout(); } }} placement="topLeft" trigger={["click"]}>
+        <Button className="sidebar-more" icon={<AppstoreOutlined />} block>更多功能</Button>
+      </Dropdown>
     </aside>
   );
 }

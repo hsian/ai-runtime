@@ -8,6 +8,7 @@ import "./styles/global.css";
 
 const normalizedPath = window.location.pathname.replace(/\/+$/, "") || "/";
 const AnalyticsPage = React.lazy(() => import("./components/AnalyticsPage"));
+const WorkHoursPage = React.lazy(() => import("./components/WorkHoursPage"));
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
@@ -29,6 +30,8 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
       <AntApp>
         {normalizedPath === "/stats" ? (
           <React.Suspense fallback={null}><AnalyticsPage /></React.Suspense>
+        ) : normalizedPath === "/work-hours" || normalizedPath === "/account-management" || normalizedPath === "/change-password" ? (
+          <React.Suspense fallback={null}><WorkHoursPage admin={normalizedPath === "/account-management"} passwordPage={normalizedPath === "/change-password"} /></React.Suspense>
         ) : <App />}
       </AntApp>
     </ConfigProvider>

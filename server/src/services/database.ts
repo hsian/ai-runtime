@@ -46,6 +46,37 @@ export function initDatabase(): Database.Database {
 
     CREATE INDEX IF NOT EXISTS job_events_job_sequence_idx
       ON job_events(job_id, sequence);
+
+    CREATE TABLE IF NOT EXISTS users (
+      id TEXT PRIMARY KEY,
+      username TEXT NOT NULL UNIQUE,
+      display_name TEXT NOT NULL,
+      tapd_owner_name TEXT NOT NULL,
+      password_hash TEXT NOT NULL,
+      role TEXT NOT NULL CHECK(role IN ('admin', 'member')),
+      enabled INTEGER NOT NULL DEFAULT 1,
+      must_change_password INTEGER NOT NULL DEFAULT 1,
+      created_at TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS auth_sessions (
+      token_hash TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      expires_at TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS auth_sessions_user_idx ON auth_sessions(user_id);
+    CREATE TABLE IF NOT EXISTS work_hour_changes (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id TEXT NOT NULL,
+      workspace_id TEXT NOT NULL,
+      task_id TEXT NOT NULL,
+      old_hours TEXT NOT NULL,
+      new_hours TEXT NOT NULL,
+      old_pages TEXT NOT NULL,
+      new_pages TEXT NOT NULL,
+      changed_at TEXT NOT NULL
+    );
   `);
 
   return database;

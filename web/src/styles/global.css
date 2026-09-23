@@ -72,6 +72,33 @@ code { font-family: "SFMono-Regular", Consolas, monospace; font-size: 12px; }
 .task-item-title { margin-top: 9px; overflow: hidden; color: #f5f7ff; font-size: 13px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
 .task-item-meta { margin-top: 5px; color: #8e9ab4; font-size: 11px; }
 .task-sidebar .ant-empty-description, .task-sidebar .ant-skeleton { color: #8190ae; }
+.task-sidebar .sidebar-more { flex: 0 0 auto; border-color: #34405a; background: #18233a; color: #f5f7ff; }
+
+.work-hours-page { display: flex; height: 100%; flex-direction: column; overflow: hidden; background: #f7f8fb; }
+.work-hours-header { flex: 0 0 auto; }
+.work-hours-auth { width: min(400px, calc(100% - 32px)); margin: 80px auto; }
+.work-hours-auth .ant-alert { margin-bottom: 16px; }
+.work-hours-auth .ant-btn { margin-top: 8px; }
+.work-hours-scroll { flex: 1; min-height: 0; overflow: auto; }
+.work-hours-content { width: min(1480px, calc(100% - 48px)); margin: 0 auto; padding-bottom: 24px; }
+.work-hours-toolbar { position: sticky; z-index: 5; top: 0; display: flex; align-items: end; gap: 14px; margin-bottom: 0; padding: 24px 0 18px; background: #f7f8fb; }
+.work-hours-toolbar label { display: flex; flex-direction: column; gap: 5px; font-size: 12px; color: #667085; }
+.work-hours-toolbar label:nth-child(2) { flex: 1; }
+.work-hours-toolbar .ant-select { width: 100%; min-width: 220px; }
+.work-hours-toolbar .ant-picker { width: 150px; }
+.work-hours-summary { display: flex; align-items: baseline; gap: 24px; padding: 14px 0; border-top: 1px solid #e5e8ef; color: #667085; font-size: 13px; }
+.work-hours-summary strong { color: #172033; font-size: 18px; }
+.work-hours-content .ant-table-wrapper { margin-top: 8px; }
+.work-hours-content .ant-table-cell a { color: #315cf4; }
+.work-hours-content .ant-input-number { width: 80px; }
+.work-hours-actions { display: flex; justify-content: flex-end; padding: 16px 0; }
+@media (max-width: 800px) {
+  body:has(.work-hours-page) { min-width: 0; overflow: auto; }
+  .work-hours-content { width: calc(100% - 32px); }
+  .work-hours-toolbar { flex-wrap: wrap; align-items: end; padding-top: 18px; }
+  .work-hours-toolbar label:nth-child(2) { flex-basis: 100%; order: 2; }
+  .work-hours-summary { flex-wrap: wrap; gap: 8px 16px; }
+}
 
 .workspace-main {
   --content-side-padding: clamp(28px, 4vw, 72px);

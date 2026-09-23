@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "node --import tsx --watch src/index.ts",
     "build": "tsc",
+    "auth:create-admin": "npm run build && node scripts/create-admin.mjs",
     "verify:sqlite": "npm run build && node scripts/verify-sqlite-persistence.mjs",
     "verify:git-integration": "npm run build && node scripts/verify-integration-worktree.mjs",
     "verify:test-cases": "npm run build && node scripts/verify-test-case-workbook.mjs",

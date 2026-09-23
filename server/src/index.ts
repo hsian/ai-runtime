@@ -15,6 +15,9 @@ import { initJobStore } from "./services/jobStore.js";
 import { closeDatabase } from "./services/database.js";
 import { initHousekeeping } from "./services/housekeeping.js";
 import { clientIdentityMiddleware, getClientIdentity } from "./services/clientIdentity.js";
+import { authMiddleware, requireSameOrigin } from "./services/auth.js";
+import { authRouter, adminRouter } from "./routes/auth.js";
+import { workHoursRouter } from "./routes/workHours.js";
 import { operationLogsRouter } from "./routes/operationLogs.js";
 import { projectsRouter } from "./routes/projects.js";
 import { analyticsRouter } from "./routes/analytics.js";
@@ -58,6 +61,10 @@ app.use(
 
 app.use(express.json({ limit: "2mb" }));
 app.use(clientIdentityMiddleware);
+app.use(authMiddleware);
+app.use("/api/auth", requireSameOrigin, authRouter);
+app.use("/api/admin", requireSameOrigin, adminRouter);
+app.use("/api/tapd/work-hours", requireSameOrigin, workHoursRouter);
 
 
 
