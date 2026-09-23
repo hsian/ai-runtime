@@ -110,9 +110,9 @@ export function TaskSidebar(props: {
           ))
         )}
       </div>
-      <Dropdown menu={{ items: [
+      <Dropdown classNames={{ root: "sidebar-more-dropdown" }} menu={{ items: [
         { key: "hours", label: <a href="/work-hours">填写工时</a> },
-        { key: "stats", label: <a href="/stats">内部统计</a> },
+        { key: "stats", label: <a href="/stats">数据统计</a> },
         ...(props.canManageUsers ? [{ key: "users", label: <a href="/account-management">账号管理</a> }] : []),
         ...(props.isAuthenticated ? [
           { type: "divider" as const },

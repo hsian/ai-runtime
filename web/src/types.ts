@@ -170,6 +170,15 @@ export interface SubmitInput {
   taskMode?: TaskMode;
 }
 
+export interface TapdBugDraft {
+  title: string;
+  preconditions: string;
+  steps: string;
+  actualResult: string;
+  expectedResult: string;
+  evidence: string;
+}
+
 export type AgentProvider = "claude" | "codex";
 
 export interface ProjectProfile {

@@ -73,8 +73,8 @@ export default function AnalyticsPage() {
   const [refreshKey, setRefreshKey] = useState(0);
 
   useEffect(() => {
-    document.title = "内部统计 · AI Runtime";
-    return () => { document.title = "AI Runtime"; };
+    document.title = "数据统计 · CodeAgent";
+    return () => { document.title = "CodeAgent"; };
   }, []);
 
   useEffect(() => {
@@ -106,7 +106,7 @@ export default function AnalyticsPage() {
     <div className="analytics-page">
       <header className="analytics-header">
         <div>
-          <Typography.Title level={3}>内部统计</Typography.Title>
+          <Typography.Title level={3}>数据统计</Typography.Title>
           <Typography.Text type="secondary">CodeAgent 使用情况与异常概览</Typography.Text>
         </div>
         <div className="analytics-filters">

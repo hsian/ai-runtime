@@ -1,7 +1,9 @@
 import { Router } from "express";
+import multer from "multer";
 import { getTapdConfig, isTapdConfigured } from "../config.js";
 import {
   createBug,
+  uploadBugAttachment,
   getBug,
   getIterationWorkItems,
   getStory,
@@ -17,11 +19,63 @@ import {
   downloadImagesFromHtml,
 } from "../services/tapd/tapdDescriptionImages.js";
 import { tapdHtmlToPlainText } from "../services/tapd/tapdContext.js";
-import { buildTapdEditableHtml, normalizeTapdEditableContent } from "../services/tapd/tapdEditableContext.js";
+import { buildTapdEditableHtml, cleanTapdEditableHtml, normalizeTapdEditableContent } from "../services/tapd/tapdEditableContext.js";
 import { logOperation } from "../services/operationLog.js";
 import { getClientIdentity } from "../services/clientIdentity.js";
+import { getJob } from "../services/jobStore.js";
+import { getProjectGitService } from "../services/projectRuntime.js";
+import { runAgent } from "../services/agent/index.js";
+import { BUG_DRAFT_JSON_SCHEMA, BUG_DRAFT_SYSTEM_PROMPT, buildBugDraftPrompt, parseBugDraft } from "../services/tapd/bugDraft.js";
 
 export const tapdRouter = Router();
+
+const bugImagesUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 5 * 1024 * 1024, files: 5 },
+  fileFilter: (_req, file, done) => {
+    if (!/^image\/(png|jpeg|webp|gif)$/i.test(file.mimetype)) {
+      done(new Error("仅支持 PNG、JPEG、WebP 或 GIF 图片"));
+      return;
+    }
+    done(null, true);
+  },
+});
+
+tapdRouter.post("/bugs/draft", async (req, res) => {
+  const jobId = typeof req.body?.jobId === "string" ? req.body.jobId : "";
+  const job = getJob(jobId);
+  if (!job || (job.ownerId && job.ownerId !== getClientIdentity(req).ownerId)) {
+    res.status(404).json({ error: "任务不存在" });
+    return;
+  }
+  if (job.status !== "completed") {
+    res.status(409).json({ error: "任务尚未完成" });
+    return;
+  }
+  try {
+    const result = await runAgent(
+      getProjectGitService(job.projectId).getRepoPath(),
+      buildBugDraftPrompt({
+        prompt: job.prompt,
+        tapdTitle: job.tapdContext?.title,
+        tapdDescription: job.tapdContext?.description,
+        implementationSummary: job.implementationSummary,
+      }),
+      undefined,
+      undefined,
+      {
+        mode: "test-case",
+        agentProvider: job.agentProvider,
+        systemPrompt: BUG_DRAFT_SYSTEM_PROMPT,
+        jsonSchema: BUG_DRAFT_JSON_SCHEMA,
+        disableTools: true,
+      }
+    );
+    res.json({ draft: parseBugDraft(result.summary) });
+  } catch (err) {
+    res.status(502).json({ error: err instanceof Error ? err.message : "生成缺陷草稿失败" });
+  }
+});
 
 function tapdNotConfigured(_req: import("express").Request, res: import("express").Response): boolean {
   if (isTapdConfigured()) return false;
@@ -112,10 +166,18 @@ tapdRouter.get("/iterations/:iterationId/bugs", async (req, res) => {
   }
 });
 
-tapdRouter.post("/bugs", async (req, res) => {
+tapdRouter.post("/bugs", (req, res, next) => {
+  bugImagesUpload.array("images", 5)(req, res, (error) => {
+    if (error) {
+      res.status(400).json({ error: error instanceof Error ? error.message : "图片上传失败" });
+      return;
+    }
+    next();
+  });
+}, async (req, res) => {
   if (tapdNotConfigured(req, res)) return;
   const title = typeof req.body?.title === "string" ? req.body.title.trim() : "";
-  const description = typeof req.body?.description === "string" ? req.body.description.trim() : "";
+  const description = typeof req.body?.description === "string" ? cleanTapdEditableHtml(req.body.description.trim()) : "";
   const iterationId = typeof req.body?.iterationId === "string" ? req.body.iterationId.trim() : "";
   const workspaceId =
     typeof req.body?.workspaceId === "string" ? req.body.workspaceId.trim() : getTapdConfig().workspaceId;
@@ -124,7 +186,7 @@ tapdRouter.post("/bugs", async (req, res) => {
     res.status(400).json({ error: "缺少缺陷标题" });
     return;
   }
-  if (!description) {
+  if (!tapdHtmlToPlainText(description).trim() && countImagesInHtml(description) === 0) {
     res.status(400).json({ error: "缺少缺陷描述" });
     return;
   }
@@ -135,6 +197,23 @@ tapdRouter.post("/bugs", async (req, res) => {
 
   try {
     const bug = await createBug({ title, description, iterationId, workspaceId });
+    const images = (req.files as Express.Multer.File[] | undefined) ?? [];
+    const failedImages: string[] = [];
+    let uploadedImageCount = 0;
+    for (const image of images) {
+      try {
+        await uploadBugAttachment({
+          workspaceId,
+          bugId: bug.id,
+          filename: image.originalname,
+          mimeType: image.mimetype,
+          data: image.buffer,
+        });
+        uploadedImageCount += 1;
+      } catch (error) {
+        failedImages.push(`${image.originalname}（${error instanceof Error ? error.message : "上传失败"}）`);
+      }
+    }
     logOperation({
       action: "tapd_bug_create",
       status: "success",
@@ -142,8 +221,9 @@ tapdRouter.post("/bugs", async (req, res) => {
       workspaceId,
       iterationId,
       tapdItemId: bug.id,
+      message: failedImages.length ? `截图上传失败：${failedImages.join(", ")}` : undefined,
     });
-    res.json({ workspaceId, iterationId, bug });
+    res.json({ workspaceId, iterationId, bug, uploadedImageCount, failedImages });
   } catch (err) {
     const error = err instanceof Error ? err.message : "创建 TAPD 缺陷失败";
     logOperation({

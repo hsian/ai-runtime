@@ -12,6 +12,7 @@ import type {
   SubmitInput,
   SubmitResponse,
   TapdContext,
+  TapdBugDraft,
   TapdIteration,
   TapdImageOption,
   TapdWorkspace,
@@ -254,8 +255,19 @@ export const api = {
     return request(`/api/tapd/iterations?workspaceId=${encodeURIComponent(workspaceId)}`);
   },
 
-  async createTapdBug(input: { title: string; description: string; workspaceId: string; iterationId: string }): Promise<void> {
-    await request("/api/tapd/bugs", { method: "POST", body: JSON.stringify(input) });
+  async createTapdBug(input: { title: string; description: string; workspaceId: string; iterationId: string; images: File[] }): Promise<{ bug: { id: string }; uploadedImageCount: number; failedImages: string[] }> {
+    const { images, ...fields } = input;
+    if (images.length === 0) {
+      return request("/api/tapd/bugs", { method: "POST", body: JSON.stringify(fields) });
+    }
+    const form = new FormData();
+    Object.entries(fields).forEach(([key, value]) => form.append(key, value));
+    images.forEach((image) => form.append("images", image, image.name));
+    return request("/api/tapd/bugs", { method: "POST", body: form });
+  },
+
+  async generateTapdBugDraft(jobId: string): Promise<{ draft: TapdBugDraft }> {
+    return request("/api/tapd/bugs/draft", { method: "POST", body: JSON.stringify({ jobId }) });
   },
 
   async operationLogDates(): Promise<string[]> {

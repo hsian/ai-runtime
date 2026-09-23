@@ -123,7 +123,7 @@ export function TaskDetailPanel(props: {
             {job.mergedToDefaultBranch && (
               <Button danger icon={<RollbackOutlined />} loading={props.busy} onClick={props.onRevert}>撤回默认分支</Button>
             )}
-            {job.planSummary && <Button onClick={props.onTapdBug}>提交 TAPD Bug</Button>}
+            {job.planSummary && <Button onClick={props.onTapdBug}>生成 TAPD Bug 草稿</Button>}
           </>
         )}
       </div>

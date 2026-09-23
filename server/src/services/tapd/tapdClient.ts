@@ -266,6 +266,28 @@ export async function createBug(
   return bug;
 }
 
+export async function uploadBugAttachment(
+  input: { workspaceId: string; bugId: string; filename: string; mimeType: string; data: Buffer },
+  cfg: TapdConfig = getTapdConfig()
+): Promise<string> {
+  const token = await getAccessToken(cfg);
+  const form = new FormData();
+  form.set("workspace_id", input.workspaceId);
+  form.set("type", "bug");
+  form.set("entry_id", input.bugId);
+  form.set("file", new Blob([new Uint8Array(input.data)], { type: input.mimeType }), input.filename);
+  const response = await fetch(new URL("/files/upload_attachment", cfg.apiBase), {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+    body: form,
+  });
+  const body = (await response.json()) as TapdApiEnvelope<{ Attachment?: { id?: string } }>;
+  if (!response.ok || body.status !== 1 || !body.data?.Attachment?.id) {
+    throw new Error(body.info || `TAPD 附件上传失败: ${response.status}`);
+  }
+  return body.data.Attachment.id;
+}
+
 export async function getIterationWorkItems(
   iterationId: string,
   workspaceId?: string,
