@@ -49,7 +49,12 @@ async function getJson(url: string): Promise<Record<string, unknown>> {
   const parsed: unknown = JSON.parse(body);
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("文档格式无效");
   const payload = parsed as Record<string, unknown>;
-  if (!payload.paths && typeof payload.message === "string") throw new Error(`文档服务返回：${payload.message}`);
+  if (!payload.paths && typeof payload.message === "string") {
+    if (/需要登录|请登录|未登录|unauthorized/i.test(payload.message) && (!config.API_DOC_USERNAME || !config.API_DOC_PASSWORD)) {
+      throw new Error("文档认证未配置：请在运行中的服务端设置 API_DOC_USERNAME 和 API_DOC_PASSWORD，并重启服务");
+    }
+    throw new Error(`文档服务返回：${payload.message}`);
+  }
   return payload;
 }
 

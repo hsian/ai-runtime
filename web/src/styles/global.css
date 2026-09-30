@@ -372,6 +372,17 @@ code { font-family: "SFMono-Regular", Consolas, monospace; font-size: 12px; }
 .api-doc-table .ant-table-cell { overflow-wrap: anywhere; vertical-align: top; }
 .api-doc-table code { color: #344054; }
 .api-doc-example { max-height: 360px; margin: 0; padding: 12px; overflow: auto; border: 1px solid #e5e8ef; border-radius: 6px; background: #f7f8fb; font: 12px/1.6 "SFMono-Regular", Consolas, monospace; }
+.api-debugger { display: flex; flex-direction: column; gap: 16px; }
+.api-debugger-import { display: flex; align-items: flex-start; flex-direction: column; gap: 8px; }
+.api-debugger-import .ant-input { font-family: "SFMono-Regular", Consolas, monospace; font-size: 12px; }
+.api-debugger-layout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 20px; }
+.api-debugger-request, .api-debugger-response { display: flex; min-width: 0; flex-direction: column; align-items: stretch; gap: 9px; }
+.api-debugger-request .ant-typography, .api-debugger-response .ant-typography { margin: 0; }
+.api-debugger-url { display: flex; align-items: center; gap: 8px; }
+.api-debugger-url .ant-tag { flex: 0 0 auto; margin: 0; }
+.api-debugger-request textarea { font-family: "SFMono-Regular", Consolas, monospace; font-size: 12px; }
+.api-debugger-response > .ant-typography:last-child { margin-top: 12px; }
+.api-debugger-body { min-height: 300px; max-height: 600px; margin: 0; padding: 12px; overflow: auto; border: 1px solid #e5e8ef; border-radius: 6px; background: #f7f8fb; font: 12px/1.6 "SFMono-Regular", Consolas, monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
 
 .client-corner { position: fixed; right: 18px; bottom: 15px; z-index: 5; display: flex; align-items: center; gap: 7px; color: #8a94a6; font-size: 11px; }
 .client-corner > .anticon:first-child { color: #12a271; }

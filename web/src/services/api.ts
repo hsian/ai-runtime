@@ -85,12 +85,17 @@ export const api = {
     return request(`/api/api-docs/search?q=${encodeURIComponent(query)}`);
   },
   async getApiDocDetail(service: string, method: string, path: string): Promise<{
-    endpoint: { service: string; method: string; path: string; summary: string; tag: string };
+    endpoint: { service: string; method: string; path: string; summary: string; tag: string; docUrl: string };
     operation: Record<string, unknown>;
     schemas: Record<string, unknown>;
   }> {
     const params = new URLSearchParams({ service, method, path });
     return request(`/api/api-docs/detail?${params}`);
+  },
+  async executeApiDoc(input: {
+    service: string; method: string; path: string; url: string; headers: Record<string, string>; body?: string;
+  }): Promise<{ status: number; statusText: string; durationMs: number; contentType: string; body: string; truncated: boolean }> {
+    return request("/api/api-docs/execute", { method: "POST", body: JSON.stringify(input) });
   },
   async listProjects(): Promise<ProjectProfile[]> {
     const data = await request<{ projects: ProjectProfile[] }>("/api/projects");

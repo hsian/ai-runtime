@@ -1,7 +1,14 @@
-import "dotenv/config";
+import { config as loadEnv } from "dotenv";
 import { existsSync } from "fs";
 import { resolve } from "path";
+import { fileURLToPath } from "url";
 import { z } from "zod";
+
+// The service can be started from the workspace root or another working directory.
+// Keep its local secrets tied to the server directory, while preserving explicitly
+// supplied environment variables.
+const serverEnvPath = fileURLToPath(new URL("../.env", import.meta.url));
+loadEnv({ path: serverEnvPath });
 
 const envSchema = z.object({
   PORT: z.coerce.number().default(3000),
@@ -118,7 +125,7 @@ export interface TapdConfig {
 }
 
 function loadConfig() {
-  const envPath = resolve(process.cwd(), ".env");
+  const envPath = serverEnvPath;
   const parsed = envSchema.safeParse(process.env);
 
   if (!parsed.success) {

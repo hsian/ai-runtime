@@ -1,8 +1,9 @@
 import { ArrowLeftOutlined } from "@ant-design/icons";
-import { Alert, Button, Input, List, Modal, Space, Spin, Tag, Typography } from "antd";
+import { Alert, Button, Input, List, Modal, Space, Spin, Tabs, Tag, Typography } from "antd";
 import { useEffect, useRef, useState } from "react";
 import { api } from "../services/api";
 import { ApiDocDetail } from "./ApiDocDetail";
+import { ApiDocDebugger } from "./ApiDocDebugger";
 
 type SearchData = Awaited<ReturnType<typeof api.searchApiDocs>>;
 type Endpoint = SearchData["results"][number];
@@ -17,11 +18,13 @@ export function ApiDocSearch(props: { open: boolean; onClose: () => void; onInse
   const [detail, setDetail] = useState<Detail>();
   const [detailError, setDetailError] = useState("");
   const [detailLoading, setDetailLoading] = useState(false);
+  const [activeTab, setActiveTab] = useState("doc");
   const detailRequest = useRef(0);
 
   const openDetail = async (item: Endpoint) => {
     const requestId = ++detailRequest.current;
     setSelected(item);
+    setActiveTab("doc");
     setDetail(undefined);
     setDetailError("");
     setDetailLoading(true);
@@ -62,7 +65,10 @@ export function ApiDocSearch(props: { open: boolean; onClose: () => void; onInse
       <div className="api-doc-detail-scroll">
         {detailLoading && <div className="api-doc-loading"><Spin tip="正在加载接口定义" /></div>}
         {detailError && <Alert type="error" showIcon message={detailError} />}
-        {detail && <ApiDocDetail operation={detail.operation} schemas={detail.schemas} />}
+        {detail && <Tabs activeKey={activeTab} onChange={setActiveTab} items={[
+          { key: "doc", label: "接口文档", children: <ApiDocDetail operation={detail.operation} schemas={detail.schemas} /> },
+          { key: "debug", label: "调试接口", children: <ApiDocDebugger key={`${detail.endpoint.service}:${detail.endpoint.path}`} detail={detail} /> },
+        ]} />}
       </div>
     </div> : <>
     <Input.Search value={query} onChange={(event) => setQuery(event.target.value)} placeholder="输入路径，如 /historyContract/getPageList" allowClear autoFocus />
