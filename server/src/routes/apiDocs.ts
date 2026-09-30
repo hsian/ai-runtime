@@ -4,6 +4,7 @@ import { requireSameOrigin } from "../services/auth.js";
 import { getClientIdentity } from "../services/clientIdentity.js";
 import { getApiDocDetail, searchApiDocs } from "../services/apiDocs.js";
 import { executeApiDocRequest } from "../services/apiDocDebug.js";
+import { formatApiDocMarkdown } from "../services/apiDocExport.js";
 
 export const apiDocsRouter = Router();
 const debugAttempts = new Map<string, { count: number; expiresAt: number }>();
@@ -35,6 +36,21 @@ apiDocsRouter.get("/detail", async (req, res) => {
     if (!detail) { res.status(404).json({ error: "未找到该接口定义，请刷新索引后重试" }); return; }
     res.json(detail);
   } catch (error) { res.status(500).json({ error: error instanceof Error ? error.message : "读取接口定义失败" }); }
+});
+
+apiDocsRouter.get("/export", async (req, res) => {
+  const service = typeof req.query.service === "string" ? req.query.service : "";
+  const method = typeof req.query.method === "string" ? req.query.method : "";
+  const path = typeof req.query.path === "string" ? req.query.path : "";
+  if (!service || service.length > 100 || !/^(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)$/i.test(method) || !path.startsWith("/") || path.length > 500) {
+    res.status(400).json({ error: "接口参数无效" }); return;
+  }
+  try {
+    const detail = await getApiDocDetail(service, method, path);
+    if (!detail) { res.status(404).json({ error: "未找到该接口定义，请刷新索引后重试" }); return; }
+    res.setHeader("Content-Type", "text/markdown; charset=utf-8");
+    res.send(formatApiDocMarkdown(detail));
+  } catch (error) { res.status(500).json({ error: error instanceof Error ? error.message : "导出接口文档失败" }); }
 });
 
 apiDocsRouter.post("/execute", requireSameOrigin, async (req, res) => {

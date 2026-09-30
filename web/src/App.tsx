@@ -826,7 +826,7 @@ export default function App() {
       />
 
       <CodeDiffModal job={selectedJob} open={diffOpen} onClose={() => setDiffOpen(false)} />
-      <ApiDocSearch open={apiDocsOpen} onClose={() => setApiDocsOpen(false)} onInsert={(path) => setDraft((current) => current ? `${current}\n${path}` : path)} />
+      <ApiDocSearch open={apiDocsOpen} onClose={() => setApiDocsOpen(false)} />
 
       <div className="client-corner">
         <SafetyCertificateOutlined /> 当前终端 {store.remoteIp || "识别中"}

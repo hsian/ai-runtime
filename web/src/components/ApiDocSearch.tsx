@@ -1,5 +1,5 @@
 import { ArrowLeftOutlined } from "@ant-design/icons";
-import { Alert, Button, Input, List, Modal, Space, Spin, Tabs, Tag, Typography } from "antd";
+import { Alert, Button, Input, List, message, Modal, Space, Spin, Tabs, Tag, Typography } from "antd";
 import { useEffect, useRef, useState } from "react";
 import { api } from "../services/api";
 import { ApiDocDetail } from "./ApiDocDetail";
@@ -9,7 +9,34 @@ type SearchData = Awaited<ReturnType<typeof api.searchApiDocs>>;
 type Endpoint = SearchData["results"][number];
 type Detail = Awaited<ReturnType<typeof api.getApiDocDetail>>;
 
-export function ApiDocSearch(props: { open: boolean; onClose: () => void; onInsert: (path: string) => void }) {
+function apiDocExportUrl(item: Endpoint): string {
+  const url = new URL("/api/api-docs/export", window.location.origin);
+  url.search = new URLSearchParams({ service: item.service, method: item.method, path: item.path }).toString();
+  return url.href;
+}
+
+async function copyApiDocUrl(item: Endpoint): Promise<void> {
+  const url = apiDocExportUrl(item);
+  try {
+    if (navigator.clipboard?.writeText) await navigator.clipboard.writeText(url);
+    else {
+      const textarea = document.createElement("textarea");
+      textarea.value = url;
+      textarea.style.position = "fixed";
+      textarea.style.opacity = "0";
+      document.body.appendChild(textarea);
+      textarea.select();
+      const copied = document.execCommand("copy");
+      textarea.remove();
+      if (!copied) throw new Error("复制失败");
+    }
+    message.success("接口文档链接已复制");
+  } catch {
+    message.error("复制失败，请检查浏览器剪贴板权限");
+  }
+}
+
+export function ApiDocSearch(props: { open: boolean; onClose: () => void }) {
   const [query, setQuery] = useState("");
   const [data, setData] = useState<SearchData>();
   const [loading, setLoading] = useState(false);
@@ -61,6 +88,7 @@ export function ApiDocSearch(props: { open: boolean; onClose: () => void; onInse
         <Tag color="blue">{selected.method}</Tag>
         <Typography.Text copyable strong>{selected.path}</Typography.Text>
         <Typography.Text type="secondary">{selected.service} · {selected.summary || selected.tag}</Typography.Text>
+        <Button onClick={() => void copyApiDocUrl(selected)}>复制文档链接</Button>
       </div>
       <div className="api-doc-detail-scroll">
         {detailLoading && <div className="api-doc-loading"><Spin tip="正在加载接口定义" /></div>}
@@ -84,7 +112,7 @@ export function ApiDocSearch(props: { open: boolean; onClose: () => void; onInse
       locale={{ emptyText: query ? "没有匹配的接口" : "请输入接口路径或名称" }}
       renderItem={(item) => <List.Item actions={[
         <Button key="doc" type="link" onClick={() => void openDetail(item)}>查看文档</Button>,
-        <Button key="insert" size="small" onClick={() => { props.onInsert(item.path); props.onClose(); }}>填入任务</Button>,
+        <Button key="export" type="link" onClick={() => void copyApiDocUrl(item)}>复制文档链接</Button>,
       ]}>
         <List.Item.Meta title={<Space><Tag color="blue">{item.method}</Tag><Typography.Text copyable>{item.path}</Typography.Text></Space>}
           description={`${item.service} · ${item.summary || item.tag}`} />
