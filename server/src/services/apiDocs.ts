@@ -186,6 +186,12 @@ export async function searchApiDocs(query: string) {
   return { results: ranked, sources: cache!.sources, total: endpoints.length };
 }
 
+export async function refreshApiDocs(query: string) {
+  pending ??= refresh().finally(() => { pending = undefined; });
+  await pending;
+  return searchApiDocs(query);
+}
+
 export async function withApiDocContext(prompt: string): Promise<string> {
   if (config.API_DOC_SOURCES === "[]") return prompt;
   const paths = [...new Set(prompt.match(/\/[a-zA-Z][\w{}-]*(?:\/[a-zA-Z][\w{}-]*)+/g) ?? [])].slice(0, 5);

@@ -76,13 +76,18 @@ function submitBody(input: SubmitInput): BodyInit {
   });
 }
 
+type ApiDocSearchResponse = {
+  results: Array<{ service: string; method: string; path: string; summary: string; tag: string; docUrl: string }>;
+  sources: Array<{ name: string; count: number; error?: string }>;
+  total: number;
+};
+
 export const api = {
-  async searchApiDocs(query: string): Promise<{
-    results: Array<{ service: string; method: string; path: string; summary: string; tag: string; docUrl: string }>;
-    sources: Array<{ name: string; count: number; error?: string }>;
-    total: number;
-  }> {
+  async searchApiDocs(query: string): Promise<ApiDocSearchResponse> {
     return request(`/api/api-docs/search?q=${encodeURIComponent(query)}`);
+  },
+  async refreshApiDocs(query: string): Promise<ApiDocSearchResponse> {
+    return request(`/api/api-docs/refresh?q=${encodeURIComponent(query)}`, { method: "POST" });
   },
   async getApiDocDetail(service: string, method: string, path: string): Promise<{
     endpoint: { service: string; method: string; path: string; summary: string; tag: string; docUrl: string };

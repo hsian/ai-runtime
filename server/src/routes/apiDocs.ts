@@ -2,7 +2,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { requireSameOrigin } from "../services/auth.js";
 import { getClientIdentity } from "../services/clientIdentity.js";
-import { getApiDocDetail, searchApiDocs } from "../services/apiDocs.js";
+import { getApiDocDetail, refreshApiDocs, searchApiDocs } from "../services/apiDocs.js";
 import { executeApiDocRequest } from "../services/apiDocDebug.js";
 import { formatApiDocMarkdown } from "../services/apiDocExport.js";
 
@@ -22,6 +22,13 @@ apiDocsRouter.get("/search", async (req, res) => {
   if (query.length > 200) { res.status(400).json({ error: "查询内容过长" }); return; }
   try { res.json(await searchApiDocs(query)); }
   catch (error) { res.status(500).json({ error: error instanceof Error ? error.message : "接口文档索引失败" }); }
+});
+
+apiDocsRouter.post("/refresh", requireSameOrigin, async (req, res) => {
+  const query = typeof req.query.q === "string" ? req.query.q.trim() : "";
+  if (query.length > 200) { res.status(400).json({ error: "查询内容过长" }); return; }
+  try { res.json(await refreshApiDocs(query)); }
+  catch (error) { res.status(500).json({ error: error instanceof Error ? error.message : "刷新接口文档失败" }); }
 });
 
 apiDocsRouter.get("/detail", async (req, res) => {

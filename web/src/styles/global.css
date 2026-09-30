@@ -354,16 +354,18 @@ code { font-family: "SFMono-Regular", Consolas, monospace; font-size: 12px; }
 .code-diff-patch code.is-added { color: #17663a; background: #eaf8ef; }
 .code-diff-patch code.is-deleted { color: #a52a22; background: #fff0f0; }
 
-.api-doc-modal.is-detail { top: 28px; padding-bottom: 28px; }
-.api-doc-modal.is-detail .ant-modal-content { padding: 0; overflow: hidden; }
+.api-doc-detail-root.ant-modal-root .ant-modal-wrap { display: flex; align-items: center; overflow: hidden; }
+.api-doc-modal.is-detail { top: 0; padding-bottom: 0; }
+.api-doc-modal.is-detail .ant-modal-container { display: flex; height: 90vh; max-height: 90vh; flex-direction: column; padding: 0; overflow: hidden; }
 .api-doc-modal.is-detail .ant-modal-header { margin: 0; padding: 17px 20px; border-bottom: 1px solid #e5e8ef; }
 .api-doc-modal.is-detail .ant-modal-close { top: 12px; right: 14px; }
-.api-doc-detail { min-width: 0; }
+.api-doc-modal.is-detail .ant-modal-body { flex: 1; min-height: 0; overflow: hidden; }
+.api-doc-detail { display: flex; height: 100%; min-width: 0; flex-direction: column; }
 .api-doc-detail-heading { display: flex; align-items: center; gap: 10px; min-height: 58px; padding: 10px 20px; border-bottom: 1px solid #e5e8ef; background: #fafbfc; }
 .api-doc-detail-heading .ant-tag { margin: 0; }
 .api-doc-detail-heading .ant-typography { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .api-doc-detail-heading .ant-typography:last-child { margin-left: auto; }
-.api-doc-detail-scroll { height: calc(100vh - 180px); min-height: 420px; padding: 20px 26px 32px; overflow: auto; }
+.api-doc-detail-scroll { flex: 1; min-height: 0; padding: 20px 26px 32px; overflow: auto; }
 .api-doc-loading { display: grid; min-height: 360px; place-items: center; }
 .api-doc-section { margin: 0 0 26px; }
 .api-doc-section h3 { margin: 0 0 8px; padding: 5px 10px; border-left: 4px solid #0ba76a; border-bottom: 1px solid #e5e8ef; color: #344054; font-size: 14px; font-weight: 700; }

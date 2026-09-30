@@ -1,4 +1,4 @@
-import { ArrowLeftOutlined } from "@ant-design/icons";
+import { ArrowLeftOutlined, ReloadOutlined } from "@ant-design/icons";
 import { Alert, Button, Input, List, message, Modal, Space, Spin, Tabs, Tag, Typography } from "antd";
 import { useEffect, useRef, useState } from "react";
 import { api } from "../services/api";
@@ -40,6 +40,7 @@ export function ApiDocSearch(props: { open: boolean; onClose: () => void }) {
   const [query, setQuery] = useState("");
   const [data, setData] = useState<SearchData>();
   const [loading, setLoading] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState("");
   const [selected, setSelected] = useState<Endpoint>();
   const [detail, setDetail] = useState<Detail>();
@@ -47,6 +48,7 @@ export function ApiDocSearch(props: { open: boolean; onClose: () => void }) {
   const [detailLoading, setDetailLoading] = useState(false);
   const [activeTab, setActiveTab] = useState("doc");
   const detailRequest = useRef(0);
+  const searchRequest = useRef(0);
 
   const openDetail = async (item: Endpoint) => {
     const requestId = ++detailRequest.current;
@@ -68,18 +70,54 @@ export function ApiDocSearch(props: { open: boolean; onClose: () => void }) {
   useEffect(() => {
     if (!props.open) return;
     let cancelled = false;
+    const requestId = ++searchRequest.current;
     setLoading(true);
     api.searchApiDocs(query).then((result) => {
-      if (!cancelled) { setData(result); setError(""); }
+      if (!cancelled && requestId === searchRequest.current) { setData(result); setError(""); }
     }).catch((cause) => {
-      if (!cancelled) setError(cause instanceof Error ? cause.message : "搜索失败");
-    }).finally(() => { if (!cancelled) setLoading(false); });
+      if (!cancelled && requestId === searchRequest.current) setError(cause instanceof Error ? cause.message : "搜索失败");
+    }).finally(() => { if (!cancelled && requestId === searchRequest.current) setLoading(false); });
     return () => { cancelled = true; };
   }, [props.open, query]);
 
   const back = () => { detailRequest.current += 1; setSelected(undefined); setDetail(undefined); };
 
-  return <Modal className={`api-doc-modal${selected ? " is-detail" : ""}`} title={selected ? "接口文档" : "查找后端接口"}
+  const refreshDocs = async () => {
+    if (refreshing) return;
+    const searchId = ++searchRequest.current;
+    const detailId = ++detailRequest.current;
+    setRefreshing(true);
+    setLoading(false);
+    setError("");
+    if (selected) { setDetailLoading(true); setDetailError(""); }
+    try {
+      const result = await api.refreshApiDocs(query);
+      if (searchId === searchRequest.current) setData(result);
+      if (selected && detailId === detailRequest.current) {
+        try {
+          const nextDetail = await api.getApiDocDetail(selected.service, selected.method, selected.path);
+          if (detailId === detailRequest.current) setDetail(nextDetail);
+        } catch (cause) {
+          if (detailId === detailRequest.current) {
+            setDetail(undefined);
+            setDetailError(cause instanceof Error ? cause.message : "刷新接口详情失败");
+          }
+        }
+      }
+      if (result.sources.some((source) => source.error)) message.warning("刷新完成，部分文档源读取失败");
+      else message.success("接口文档已刷新");
+    } catch (cause) {
+      const text = cause instanceof Error ? cause.message : "刷新接口文档失败";
+      if (selected) setDetailError(text);
+      else setError(text);
+    } finally {
+      if (detailId === detailRequest.current) setDetailLoading(false);
+      setRefreshing(false);
+    }
+  };
+
+  return <Modal rootClassName={selected ? "api-doc-detail-root" : undefined}
+    className={`api-doc-modal${selected ? " is-detail" : ""}`} title={selected ? "接口文档" : "查找后端接口"}
     open={props.open} onCancel={() => { back(); props.onClose(); }} footer={null}
     width={selected ? "calc(100vw - 72px)" : 760} destroyOnHidden>
     {selected ? <div className="api-doc-detail">
@@ -88,6 +126,7 @@ export function ApiDocSearch(props: { open: boolean; onClose: () => void }) {
         <Tag color="blue">{selected.method}</Tag>
         <Typography.Text copyable strong>{selected.path}</Typography.Text>
         <Typography.Text type="secondary">{selected.service} · {selected.summary || selected.tag}</Typography.Text>
+        <Button icon={<ReloadOutlined />} loading={refreshing} onClick={() => void refreshDocs()}>刷新文档</Button>
         <Button onClick={() => void copyApiDocUrl(selected)}>复制文档链接</Button>
       </div>
       <div className="api-doc-detail-scroll">
@@ -99,7 +138,10 @@ export function ApiDocSearch(props: { open: boolean; onClose: () => void }) {
         ]} />}
       </div>
     </div> : <>
-    <Input.Search value={query} onChange={(event) => setQuery(event.target.value)} placeholder="输入路径，如 /historyContract/getPageList" allowClear autoFocus />
+    <div style={{ display: "flex", gap: 8 }}>
+      <Input.Search style={{ flex: 1, minWidth: 0 }} value={query} onChange={(event) => setQuery(event.target.value)} placeholder="输入路径，如 /historyContract/getPageList" allowClear autoFocus />
+      <Button icon={<ReloadOutlined />} loading={refreshing} onClick={() => void refreshDocs()}>刷新文档</Button>
+    </div>
     {error && <Alert type="error" message={error} showIcon style={{ marginTop: 12 }} />}
     {data?.sources.length === 0 && <Alert type="info" showIcon style={{ marginTop: 12 }} message="尚未配置接口文档源，请在服务端 .env 设置 API_DOC_SOURCES" />}
     {data?.sources.filter((source) => source.error).map((source) =>
