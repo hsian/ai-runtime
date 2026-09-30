@@ -36,8 +36,8 @@ async function copyApiDocUrl(item: Endpoint): Promise<void> {
   }
 }
 
-export function ApiDocSearch(props: { open: boolean; onClose: () => void }) {
-  const [query, setQuery] = useState("");
+export function ApiDocSearch(props: { open: boolean; onClose: () => void; initialQuery?: string }) {
+  const [query, setQuery] = useState(props.initialQuery ?? "");
   const [data, setData] = useState<SearchData>();
   const [loading, setLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
