@@ -99,6 +99,9 @@ const envSchema = z.object({
   TAPD_CLIENT_SECRET: z.string().optional(),
   TAPD_WORKSPACE_ID: z.string().optional(),
   TAPD_WORKSPACES: z.string().optional(),
+  API_DOC_SOURCES: z.string().default("[]"),
+  API_DOC_USERNAME: z.string().optional(),
+  API_DOC_PASSWORD: z.string().optional(),
 });
 
 export interface TapdConfiguredWorkspace {

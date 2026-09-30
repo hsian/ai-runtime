@@ -21,6 +21,7 @@ import { workHoursRouter } from "./routes/workHours.js";
 import { operationLogsRouter } from "./routes/operationLogs.js";
 import { projectsRouter } from "./routes/projects.js";
 import { analyticsRouter } from "./routes/analytics.js";
+import { apiDocsRouter } from "./routes/apiDocs.js";
 import { resetAllProjectWorkspaces } from "./services/projectRuntime.js";
 
 
@@ -88,6 +89,7 @@ app.use("/api/projects", projectsRouter);
 app.use("/api/tapd", tapdRouter);
 app.use("/api/operation-logs", operationLogsRouter);
 app.use("/api/analytics", analyticsRouter);
+app.use("/api/api-docs", apiDocsRouter);
 
 if (existsSync(config.WEB_DIST_DIR)) {
   app.use(express.static(config.WEB_DIST_DIR));

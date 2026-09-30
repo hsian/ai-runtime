@@ -60,6 +60,20 @@ http://服务器内网IP:6080
 
 未配置 `CLIENT_COOKIE_SECRET` 时，服务端会自动生成 `server/data/client-cookie-secret`。该文件必须保留，删除后所有浏览器会获得新的匿名身份。
 
+## 后端接口文档查询
+
+任务输入框的“接口”入口支持按 `/historyContract/getPageList` 这样的路径后缀搜索，展示所属服务、HTTP 方法和完整路径。点击“查看文档”会在宽屏弹窗中以表格展示该接口的请求参数、响应字段和引用模型，无需在浏览器登录外部文档站；也可以把完整路径填入任务。任务描述中出现接口路径时，系统也会自动把匹配的文档信息提供给 Agent。索引由服务端从 Swagger 2 / OpenAPI 3 JSON 读取，缓存 10 分钟；某个文档源不可用时会显示该源的错误，不影响其他源。
+
+在 `server/.env` 配置文档源，每个源填写 `name` 和文档页或 OpenAPI JSON 的 `url`：
+
+```env
+API_DOC_SOURCES=[{"name":"业务核心服务","url":"https://cc-test.b2bwings.com/api/core/doc.htm"},{"name":"基础服务模块-base","url":"https://cc-test.b2bwings.com/api/base/doc.html"},{"name":"数据处理服务-data","url":"https://cc-test.b2bwings.com/api/data/doc.html"},{"name":"管理后台服务-产权","url":"https://cqjy-test.b2bwings.com/api/admin/doc.html"},{"name":"竞拍服务","url":"https://cqjy-test.b2bwings.com/api/auction/doc.html"},{"name":"screen服务","url":"https://cqjy-test.b2bwings.com/api/screen/doc.html"}]
+API_DOC_USERNAME=文档账号
+API_DOC_PASSWORD=文档密码
+```
+
+可以在数组中加入其他微服务的文档地址。账号密码仅由服务端使用，不返回浏览器，也不要提交 `.env`。当前适配 HTTP Basic Auth；如果文档站使用登录表单或网关令牌，需要按实际鉴权方式扩展服务端抓取逻辑。部署服务器需要能访问文档域名。
+
 ## 填写工时与账号
 
 主工作台继续使用匿名浏览器身份。左侧“更多功能”中的“填写工时”需要账号登录；登录后，账号管理入口只对管理员显示。访问 `/work-hours` 和 `/account-management` 也会在服务端校验会话与权限。

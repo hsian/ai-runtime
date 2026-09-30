@@ -10,6 +10,7 @@ import { resolveJobPreviewLink } from "./devPreviewService.js";
 import type { AgentStreamEvent } from "./agent/types.js";
 import { createJobConflictResolver } from "./gitConflictResolutionService.js";
 import { buildPromptWithTapdContext } from "./tapd/tapdContext.js";
+import { withApiDocContext } from "./apiDocs.js";
 import { logOperation } from "./operationLog.js";
 import { getProject } from "./projectRegistry.js";
 import { getProjectGitService } from "./projectRuntime.js";
@@ -200,7 +201,7 @@ export async function processJob(jobId: string): Promise<void> {
 
     const result = await runAgent(
       repoPath,
-      buildPromptWithTapdContext(job.prompt, job.tapdContext),
+      await withApiDocContext(buildPromptWithTapdContext(job.prompt, job.tapdContext)),
       job.pageContext,
       (event) => emitAgentEvent(jobId, event),
       {
@@ -230,7 +231,7 @@ export async function processJob(jobId: string): Promise<void> {
       emitStage(jobId, "agent_retry", "Codex 未产生代码变更，正在自动重试执行...");
       const retryResult = await runAgent(
         repoPath,
-        buildPromptWithTapdContext(buildCodexRetryPrompt(job.prompt), job.tapdContext),
+        await withApiDocContext(buildPromptWithTapdContext(buildCodexRetryPrompt(job.prompt), job.tapdContext)),
         job.pageContext,
         (event) => emitAgentEvent(jobId, event),
         {

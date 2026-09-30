@@ -28,6 +28,7 @@ import { resolvePlanSummary } from "../services/agent/planSummaryResolver.js";
 import { parsePlanResult, PLAN_RESULT_JSON_SCHEMA } from "../services/agent/planResult.js";
 import { isNonActionablePlanInput } from "../services/agent/planInputGuard.js";
 import { buildPromptWithTapdContext } from "../services/tapd/tapdContext.js";
+import { withApiDocContext } from "../services/apiDocs.js";
 import { logOperation } from "../services/operationLog.js";
 import { getClientIdentity } from "../services/clientIdentity.js";
 import { getProject } from "../services/projectRegistry.js";
@@ -198,7 +199,7 @@ async function runPlan(jobId: string): Promise<void> {
     const planStartedAt = new Date();
     const result = await runAgent(
       repoPath,
-      buildPromptWithTapdContext(buildPlanRequest(job), job.tapdContext),
+      await withApiDocContext(buildPromptWithTapdContext(buildPlanRequest(job), job.tapdContext)),
       job.pageContext,
       (event) => {
         if (event.type === "agent_status" && event.statusText) {
@@ -396,7 +397,7 @@ async function runQuestion(jobId: string): Promise<void> {
     );
     const result = await runAgent(
       repoPath,
-      buildPromptWithTapdContext(job.prompt, job.tapdContext),
+      await withApiDocContext(buildPromptWithTapdContext(job.prompt, job.tapdContext)),
       job.pageContext,
       (event) => {
         if (event.type === "agent_text" && event.delta) {

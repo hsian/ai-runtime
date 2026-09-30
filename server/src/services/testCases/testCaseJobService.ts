@@ -1,5 +1,6 @@
 import { config } from "../../config.js";
 import { buildPromptWithTapdContext } from "../tapd/tapdContext.js";
+import { withApiDocContext } from "../apiDocs.js";
 import { appendJobEvent } from "../jobEvents.js";
 import { getJob, updateJob } from "../jobStore.js";
 import { logOperation } from "../operationLog.js";
@@ -46,7 +47,7 @@ export async function runTestCaseJob(jobId: string): Promise<void> {
     const repoPath = gitService.getRepoPath();
     appendJobEvent(jobId, { type: "stage", phase: "test_case", text: "正在分析需求和项目代码并设计测试用例（不会修改代码）..." });
     const stagedAttachments = await stageAttachmentsForAgent(job.attachments, repoPath, jobId);
-    const requirement = buildPromptWithTapdContext(job.prompt, job.tapdContext);
+    const requirement = await withApiDocContext(buildPromptWithTapdContext(job.prompt, job.tapdContext));
     const generationPrompt = buildTestCasePrompt({
       requirement,
       pageContext: job.pageContext,

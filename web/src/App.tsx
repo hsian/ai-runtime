@@ -6,6 +6,7 @@ import { ConversationPanel } from "./components/ConversationPanel";
 import { CodeDiffModal } from "./components/CodeDiffModal";
 import { BugRichTextEditor, type BugEditorImage } from "./components/BugRichTextEditor";
 import { TaskComposer } from "./components/TaskComposer";
+import { ApiDocSearch } from "./components/ApiDocSearch";
 import { TaskDetailPanel } from "./components/TaskDetailPanel";
 import { TaskSidebar } from "./components/TaskSidebar";
 import { TapdRichTextEditor } from "./components/TapdRichTextEditor";
@@ -83,6 +84,7 @@ export default function App() {
   const [busy, setBusy] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [tapdOpen, setTapdOpen] = useState(false);
+  const [apiDocsOpen, setApiDocsOpen] = useState(false);
   const [tapdUrl, setTapdUrl] = useState("");
   const [tapdLoading, setTapdLoading] = useState(false);
   const [resolvedTapd, setResolvedTapd] = useState<TapdContext>();
@@ -791,6 +793,7 @@ export default function App() {
             onAgentProviderChange={setAgentProvider}
             onFilesChange={setFiles}
             onOpenTapd={() => setTapdOpen(true)}
+            onOpenApiDocs={() => setApiDocsOpen(true)}
             onEditTapd={editTapdContext}
             onRemoveTapd={() => {
               setTapdContext(undefined);
@@ -823,6 +826,7 @@ export default function App() {
       />
 
       <CodeDiffModal job={selectedJob} open={diffOpen} onClose={() => setDiffOpen(false)} />
+      <ApiDocSearch open={apiDocsOpen} onClose={() => setApiDocsOpen(false)} onInsert={(path) => setDraft((current) => current ? `${current}\n${path}` : path)} />
 
       <div className="client-corner">
         <SafetyCertificateOutlined /> 当前终端 {store.remoteIp || "识别中"}

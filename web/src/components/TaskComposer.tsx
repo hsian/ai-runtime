@@ -1,4 +1,4 @@
-import { CloseOutlined, DownOutlined, LinkOutlined, PaperClipOutlined, SendOutlined } from "@ant-design/icons";
+import { ApiOutlined, CloseOutlined, DownOutlined, LinkOutlined, PaperClipOutlined, SendOutlined } from "@ant-design/icons";
 import { App as AntApp, Button, Dropdown, Image, Input, Tag, Tooltip } from "antd";
 import type { ClipboardEvent } from "react";
 import { useEffect, useRef, useState } from "react";
@@ -19,6 +19,7 @@ export function TaskComposer(props: {
   onAgentProviderChange: (value: AgentProvider) => void;
   onFilesChange: (files: File[]) => void;
   onOpenTapd: () => void;
+  onOpenApiDocs: () => void;
   onEditTapd: () => void;
   onRemoveTapd: () => void;
   onSubmit: () => void;
@@ -124,6 +125,9 @@ export function TaskComposer(props: {
           </Tooltip>
           <Tooltip title="关联 TAPD 需求、任务或缺陷">
             <Button className="composer-tool-button" type="text" icon={<LinkOutlined />} onClick={props.onOpenTapd}>TAPD</Button>
+          </Tooltip>
+          <Tooltip title="按接口路径查找所属后端服务">
+            <Button className="composer-tool-button" type="text" icon={<ApiOutlined />} onClick={props.onOpenApiDocs}>接口</Button>
           </Tooltip>
           <Dropdown
             trigger={["click"]}

@@ -77,6 +77,21 @@ function submitBody(input: SubmitInput): BodyInit {
 }
 
 export const api = {
+  async searchApiDocs(query: string): Promise<{
+    results: Array<{ service: string; method: string; path: string; summary: string; tag: string; docUrl: string }>;
+    sources: Array<{ name: string; count: number; error?: string }>;
+    total: number;
+  }> {
+    return request(`/api/api-docs/search?q=${encodeURIComponent(query)}`);
+  },
+  async getApiDocDetail(service: string, method: string, path: string): Promise<{
+    endpoint: { service: string; method: string; path: string; summary: string; tag: string };
+    operation: Record<string, unknown>;
+    schemas: Record<string, unknown>;
+  }> {
+    const params = new URLSearchParams({ service, method, path });
+    return request(`/api/api-docs/detail?${params}`);
+  },
   async listProjects(): Promise<ProjectProfile[]> {
     const data = await request<{ projects: ProjectProfile[] }>("/api/projects");
     return data.projects ?? [];
