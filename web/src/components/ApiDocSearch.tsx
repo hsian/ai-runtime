@@ -15,32 +15,6 @@ function apiDocJsonUrl(item: Endpoint): string {
   return url.href;
 }
 
-async function copyApiDocUrl(item: Endpoint): Promise<{ copied: boolean; url: string }> {
-  const url = apiDocJsonUrl(item);
-  let copied = false;
-  try {
-    if (navigator.clipboard?.writeText) {
-      await navigator.clipboard.writeText(url);
-      copied = true;
-    }
-  } catch { /* 局域网 HTTP 页面可能拒绝 Clipboard API，继续尝试传统复制 */ }
-  if (!copied) {
-    const textarea = document.createElement("textarea");
-    textarea.value = url;
-    textarea.style.position = "fixed";
-    textarea.style.top = "0";
-    textarea.style.left = "0";
-    textarea.style.opacity = "0";
-    document.body.appendChild(textarea);
-    textarea.focus();
-    textarea.select();
-    try { copied = document.execCommand("copy"); }
-    catch { copied = false; }
-    finally { textarea.remove(); }
-  }
-  return { copied, url };
-}
-
 export function ApiDocSearch(props: { open: boolean; onClose: () => void; initialQuery?: string }) {
   const { message, modal } = AntApp.useApp();
   const [query, setQuery] = useState(props.initialQuery ?? "");
@@ -57,11 +31,23 @@ export function ApiDocSearch(props: { open: boolean; onClose: () => void; initia
   const searchRequest = useRef(0);
 
   const handleCopyDocUrl = async (item: Endpoint) => {
-    const { copied, url } = await copyApiDocUrl(item);
-    if (copied) message.success("接口 JSON 文档地址已复制");
-    else modal.info({
+    const url = apiDocJsonUrl(item);
+    if (window.isSecureContext && navigator.clipboard?.writeText) {
+      try {
+        await navigator.clipboard.writeText(url);
+        message.success("接口 JSON 文档地址已复制");
+        return;
+      } catch { /* 浏览器拒绝写入时显示可手动复制的地址 */ }
+    }
+    modal.info({
       title: "请手动复制接口 JSON 文档地址",
-      content: <Input.TextArea value={url} readOnly autoSize={{ minRows: 3, maxRows: 5 }} />,
+      content: <div>
+        <Typography.Paragraph>浏览器未允许自动复制。点击下方地址框，按 Ctrl+A、Ctrl+C 复制。</Typography.Paragraph>
+        <textarea value={url} readOnly rows={4} autoFocus
+          ref={(element) => element?.select()}
+          onFocus={(event) => event.currentTarget.select()}
+          style={{ width: "100%", boxSizing: "border-box" }} />
+      </div>,
     });
   };
 
