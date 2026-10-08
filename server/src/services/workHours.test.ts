@@ -29,3 +29,24 @@ test("allocation preserves filled work and keeps task limits", () => {
 test("impossible target is rejected", () => {
   assert.throws(() => allocateHours([task("1", "a")], 17));
 });
+
+test("reset reallocates all filled tasks using the new target and preserves original values", () => {
+  const tasks = [task("1", "a", "12"), task("2", "b", "8")];
+  assert.equal(allocateHours(tasks, 10).length, 0);
+  const allocation = allocateHours(tasks, 10, true);
+  assert.equal(allocation.length, 2);
+  assert.equal(allocation.reduce((sum, item) => sum + item.hours, 0), 10);
+  assert.deepEqual(tasks.map((item) => [item.currentHours, item.currentPages]), [["12", "1"], ["8", "1"]]);
+  assert.equal(allocation[0].task, tasks[0]);
+  assert.equal(allocation[1].task, tasks[1]);
+});
+
+test("reset includes blank and partially filled tasks and enforces allocation limits", () => {
+  const tasks = [task("1", "a", "4"), task("2", "b"), { ...task("3", "c"), currentPages: "2" }];
+  const allocation = allocateHours(tasks, 24, true);
+  assert.equal(allocation.length, 3);
+  assert.equal(allocation.reduce((sum, item) => sum + item.hours, 0), 24);
+  assert.ok(allocation.every((item) => item.hours >= 1 && item.hours <= 16));
+  assert.throws(() => allocateHours(tasks, 2, true));
+  assert.throws(() => allocateHours(tasks, 49, true));
+});

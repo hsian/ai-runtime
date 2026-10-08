@@ -93,10 +93,10 @@ export function scoreTask(task: WorkTask): number {
   return Math.max(1, Math.min(10, score));
 }
 
-export function allocateHours(tasks: WorkTask[], target: number): Array<{ task: WorkTask; hours: number; pages: number; score: number }> {
-  const editable = tasks.filter((task) => task.currentHours === "" && task.currentPages === "");
+export function allocateHours(tasks: WorkTask[], target: number, overwriteExisting = false): Array<{ task: WorkTask; hours: number; pages: number; score: number }> {
+  const editable = overwriteExisting ? tasks : tasks.filter((task) => task.currentHours === "" && task.currentPages === "");
   if (editable.length === 0) return [];
-  const existing = tasks.reduce((sum, task) => sum + (Number(task.currentHours) || 0), 0);
+  const existing = overwriteExisting ? 0 : tasks.reduce((sum, task) => sum + (Number(task.currentHours) || 0), 0);
   const remaining = target - existing;
   if (remaining < editable.length || remaining > editable.length * 16) throw new Error("目标工时与已有工时、可填写任务数不匹配，请调整目标或已有值");
   const scores = editable.map(scoreTask);

@@ -22,12 +22,12 @@ workHoursRouter.get("/projects", (_req, res) => {
 });
 
 workHoursRouter.post("/preview", async (req, res) => {
-  const input = selectionSchema.extend({ targetHours: z.number().int().min(1).max(744) }).safeParse(req.body);
+  const input = selectionSchema.extend({ targetHours: z.number().int().min(1).max(744), overwriteExisting: z.boolean().default(false) }).safeParse(req.body);
   if (!input.success) { res.status(400).json({ error: "月份、项目或目标工时无效" }); return; }
   try {
     const tasks = await listWorkTasks(input.data.month, getAuthUser(req)!.tapdOwnerName, input.data.workspaceIds);
     let allocation: ReturnType<typeof allocateHours>;
-    try { allocation = allocateHours(tasks, input.data.targetHours); }
+    try { allocation = allocateHours(tasks, input.data.targetHours, input.data.overwriteExisting); }
     catch (error) {
       res.json({ tasks, proposals: [], allocationError: error instanceof Error ? error.message : "工时分配失败" });
       return;

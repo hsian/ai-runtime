@@ -59,8 +59,8 @@ function HoursTool({ user }: { user: AuthUser }) {
   const total = tasks.reduce((sum, task) => sum + (proposalMap.get(`${task.workspaceId}:${task.id}`)?.hours ?? (Number(task.currentHours) || 0)), 0);
   const clearPreview = () => { setTasks([]); setProposals([]); setOverwriteExisting(false); setError(""); };
   const generate = async () => {
-    setBusy(true); clearPreview();
-    try { const result = await workHoursApi.preview(month, target, selected); setTasks(result.tasks); setProposals(result.proposals); setError(result.allocationError || ""); }
+    setBusy(true); setTasks([]); setProposals([]); setError("");
+    try { const result = await workHoursApi.preview(month, target, selected, overwriteExisting); setTasks(result.tasks); setProposals(result.proposals); setError(result.allocationError || ""); }
     catch (reason) { setError(reason instanceof Error ? reason.message : "预览失败"); }
     finally { setBusy(false); }
   };

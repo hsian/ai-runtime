@@ -36,7 +36,7 @@ export const workHoursApi = {
   logout: () => post<{ ok: boolean }>("/api/auth/logout", {}),
   changePassword: (currentPassword: string, newPassword: string) => post<{ user: AuthUser }>("/api/auth/change-password", { currentPassword, newPassword }),
   projects: () => call<{ projects: Array<{ id: string; name: string }> }>("/api/tapd/work-hours/projects"),
-  preview: (month: string, targetHours: number, workspaceIds: string[]) => post<{ tasks: WorkTask[]; proposals: WorkProposal[]; allocationError?: string }>("/api/tapd/work-hours/preview", { month, targetHours, workspaceIds }),
+  preview: (month: string, targetHours: number, workspaceIds: string[], overwriteExisting = false) => post<{ tasks: WorkTask[]; proposals: WorkProposal[]; allocationError?: string }>("/api/tapd/work-hours/preview", { month, targetHours, workspaceIds, overwriteExisting }),
   apply: (month: string, workspaceIds: string[], entries: Array<WorkProposal & { expectedHours: string; expectedPages: string }>, overwriteExisting = false) => post<{ results: Array<{ id: string; workspaceId: string; ok: boolean; error?: string }> }>("/api/tapd/work-hours/apply", { month, workspaceIds, entries, overwriteExisting }),
   users: () => call<{ users: ManagedUser[] }>("/api/admin/users"),
   createUser: (input: { username: string; displayName: string; tapdOwnerName: string; role: "admin" | "member" }) => post<{ initialPassword: string }>("/api/admin/users", input),
