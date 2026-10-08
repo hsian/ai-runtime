@@ -1,5 +1,5 @@
 import { ArrowLeftOutlined, ReloadOutlined } from "@ant-design/icons";
-import { Alert, Button, Input, List, message, Modal, Space, Spin, Tabs, Tag, Typography } from "antd";
+import { Alert, App as AntApp, Button, Input, List, Modal, Space, Spin, Tabs, Tag, Typography } from "antd";
 import { useEffect, useRef, useState } from "react";
 import { api } from "../services/api";
 import { ApiDocDetail } from "./ApiDocDetail";
@@ -9,34 +9,40 @@ type SearchData = Awaited<ReturnType<typeof api.searchApiDocs>>;
 type Endpoint = SearchData["results"][number];
 type Detail = Awaited<ReturnType<typeof api.getApiDocDetail>>;
 
-function apiDocExportUrl(item: Endpoint): string {
-  const url = new URL("/api/api-docs/export", window.location.origin);
+function apiDocJsonUrl(item: Endpoint): string {
+  const url = new URL("/api/api-docs/detail", window.location.origin);
   url.search = new URLSearchParams({ service: item.service, method: item.method, path: item.path }).toString();
   return url.href;
 }
 
-async function copyApiDocUrl(item: Endpoint): Promise<void> {
-  const url = apiDocExportUrl(item);
+async function copyApiDocUrl(item: Endpoint): Promise<{ copied: boolean; url: string }> {
+  const url = apiDocJsonUrl(item);
+  let copied = false;
   try {
-    if (navigator.clipboard?.writeText) await navigator.clipboard.writeText(url);
-    else {
-      const textarea = document.createElement("textarea");
-      textarea.value = url;
-      textarea.style.position = "fixed";
-      textarea.style.opacity = "0";
-      document.body.appendChild(textarea);
-      textarea.select();
-      const copied = document.execCommand("copy");
-      textarea.remove();
-      if (!copied) throw new Error("复制失败");
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(url);
+      copied = true;
     }
-    message.success("接口文档链接已复制");
-  } catch {
-    message.error("复制失败，请检查浏览器剪贴板权限");
+  } catch { /* 局域网 HTTP 页面可能拒绝 Clipboard API，继续尝试传统复制 */ }
+  if (!copied) {
+    const textarea = document.createElement("textarea");
+    textarea.value = url;
+    textarea.style.position = "fixed";
+    textarea.style.top = "0";
+    textarea.style.left = "0";
+    textarea.style.opacity = "0";
+    document.body.appendChild(textarea);
+    textarea.focus();
+    textarea.select();
+    try { copied = document.execCommand("copy"); }
+    catch { copied = false; }
+    finally { textarea.remove(); }
   }
+  return { copied, url };
 }
 
 export function ApiDocSearch(props: { open: boolean; onClose: () => void; initialQuery?: string }) {
+  const { message, modal } = AntApp.useApp();
   const [query, setQuery] = useState(props.initialQuery ?? "");
   const [data, setData] = useState<SearchData>();
   const [loading, setLoading] = useState(false);
@@ -49,6 +55,15 @@ export function ApiDocSearch(props: { open: boolean; onClose: () => void; initia
   const [activeTab, setActiveTab] = useState("doc");
   const detailRequest = useRef(0);
   const searchRequest = useRef(0);
+
+  const handleCopyDocUrl = async (item: Endpoint) => {
+    const { copied, url } = await copyApiDocUrl(item);
+    if (copied) message.success("接口 JSON 文档地址已复制");
+    else modal.info({
+      title: "请手动复制接口 JSON 文档地址",
+      content: <Input.TextArea value={url} readOnly autoSize={{ minRows: 3, maxRows: 5 }} />,
+    });
+  };
 
   const openDetail = async (item: Endpoint) => {
     const requestId = ++detailRequest.current;
@@ -127,7 +142,7 @@ export function ApiDocSearch(props: { open: boolean; onClose: () => void; initia
         <Typography.Text copyable strong>{selected.path}</Typography.Text>
         <Typography.Text type="secondary">{selected.service} · {selected.summary || selected.tag}</Typography.Text>
         <Button icon={<ReloadOutlined />} loading={refreshing} onClick={() => void refreshDocs()}>刷新文档</Button>
-        <Button onClick={() => void copyApiDocUrl(selected)}>复制文档链接</Button>
+        <Button onClick={() => void handleCopyDocUrl(selected)}>复制 JSON 文档地址</Button>
       </div>
       <div className="api-doc-detail-scroll">
         {detailLoading && <div className="api-doc-loading"><Spin tip="正在加载接口定义" /></div>}
@@ -154,7 +169,7 @@ export function ApiDocSearch(props: { open: boolean; onClose: () => void; initia
       locale={{ emptyText: query ? "没有匹配的接口" : "请输入接口路径或名称" }}
       renderItem={(item) => <List.Item actions={[
         <Button key="doc" type="link" onClick={() => void openDetail(item)}>查看文档</Button>,
-        <Button key="export" type="link" onClick={() => void copyApiDocUrl(item)}>复制文档链接</Button>,
+        <Button key="export" type="link" onClick={() => void handleCopyDocUrl(item)}>复制 JSON 文档地址</Button>,
       ]}>
         <List.Item.Meta title={<Space><Tag color="blue">{item.method}</Tag><Typography.Text copyable>{item.path}</Typography.Text></Space>}
           description={`${item.service} · ${item.summary || item.tag}`} />
