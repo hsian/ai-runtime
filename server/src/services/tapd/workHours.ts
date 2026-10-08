@@ -1,6 +1,7 @@
 import { getTapdConfig, type TapdConfig } from "../../config.js";
 import { getAccessToken } from "./tapdClient.js";
 import { load } from "cheerio";
+import { queueWorkHoursRequest } from "./requestQueue.js";
 
 export interface WorkTask {
   id: string;
@@ -22,11 +23,15 @@ async function request(cfg: TapdConfig, path: string, params: Record<string, str
   const token = await getAccessToken(cfg);
   const url = new URL(path, cfg.apiBase);
   if (method === "GET") Object.entries(params).forEach(([key, value]) => url.searchParams.set(key, value));
-  const response = await fetch(url, {
+  const response = await queueWorkHoursRequest(() => fetch(url, {
     method,
     headers: { Authorization: `Bearer ${token}`, ...(method === "POST" ? { "Content-Type": "application/x-www-form-urlencoded" } : {}) },
     ...(method === "POST" ? { body: new URLSearchParams(params).toString() } : {}),
-  });
+  }));
+  if (response.status === 429) {
+    await response.body?.cancel();
+    throw new Error("TAPD 请求过于频繁，自动重试后仍被限流，请稍后重试");
+  }
   const body = await response.json() as { status: number; info?: string; data: unknown };
   if (!response.ok || body.status !== 1) throw new Error(body.info || `TAPD 请求失败: ${response.status}`);
   return body.data;

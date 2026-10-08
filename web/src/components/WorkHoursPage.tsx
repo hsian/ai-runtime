@@ -1,4 +1,4 @@
-import { ReloadOutlined, SaveOutlined } from "@ant-design/icons";
+import { ReloadOutlined, SaveOutlined, UndoOutlined } from "@ant-design/icons";
 import { Alert, App, Button, DatePicker, Form, Input, InputNumber, Modal, Select, Space, Table, Typography } from "antd";
 import dayjs from "dayjs";
 import { useEffect, useMemo, useState } from "react";
@@ -48,6 +48,7 @@ function HoursTool({ user }: { user: AuthUser }) {
   const [selected, setSelected] = useState<string[]>([]);
   const [tasks, setTasks] = useState<WorkTask[]>([]);
   const [proposals, setProposals] = useState<WorkProposal[]>([]);
+  const [overwriteExisting, setOverwriteExisting] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   useEffect(() => {
@@ -55,10 +56,11 @@ function HoursTool({ user }: { user: AuthUser }) {
       .catch((reason) => setError(reason instanceof Error ? reason.message : "项目读取失败"));
   }, []);
   const proposalMap = useMemo(() => new Map(proposals.map((item) => [`${item.workspaceId}:${item.id}`, item])), [proposals]);
-  const total = proposals.reduce((sum, item) => sum + item.hours, 0) + tasks.reduce((sum, task) => sum + (Number(task.currentHours) || 0), 0);
+  const total = tasks.reduce((sum, task) => sum + (proposalMap.get(`${task.workspaceId}:${task.id}`)?.hours ?? (Number(task.currentHours) || 0)), 0);
+  const clearPreview = () => { setTasks([]); setProposals([]); setOverwriteExisting(false); setError(""); };
   const generate = async () => {
-    setBusy(true); setError(""); setTasks([]); setProposals([]);
-    try { const result = await workHoursApi.preview(month, target, selected); setTasks(result.tasks); setProposals(result.proposals); }
+    setBusy(true); clearPreview();
+    try { const result = await workHoursApi.preview(month, target, selected); setTasks(result.tasks); setProposals(result.proposals); setError(result.allocationError || ""); }
     catch (reason) { setError(reason instanceof Error ? reason.message : "预览失败"); }
     finally { setBusy(false); }
   };
@@ -67,13 +69,24 @@ function HoursTool({ user }: { user: AuthUser }) {
     setProposals((items) => items.map((item) => `${item.workspaceId}:${item.id}` === key ? { ...item, [field]: value } : item));
   };
   const apply = () => {
-    modal.confirm({ title: `写入 ${proposals.length} 条 TAPD 任务？`, content: `实际工时合计 ${total} 小时。已有填报值不会覆盖。`, okText: "确认写入", cancelText: "取消", onOk: async () => {
+    modal.confirm({ title: `写入 ${proposals.length} 条 TAPD 任务？`, content: `实际工时合计 ${total} 小时。${overwriteExisting ? "已重置的任务将覆盖原填报值。" : "已有填报值不会覆盖。"}`, okText: "确认写入", cancelText: "取消", onOk: async () => {
       setBusy(true);
+      setError("");
       try {
-        const result = await workHoursApi.apply(month, selected, proposals.map((item) => ({ ...item, expectedHours: "", expectedPages: "" })));
+        const taskMap = new Map(tasks.map((task) => [`${task.workspaceId}:${task.id}`, task]));
+        const result = await workHoursApi.apply(month, selected, proposals.map((item) => {
+          const task = taskMap.get(`${item.workspaceId}:${item.id}`)!;
+          return { ...item, expectedHours: task.currentHours, expectedPages: task.currentPages };
+        }), overwriteExisting);
         const failed = result.results.filter((item) => !item.ok);
         message[failed.length ? "warning" : "success"](`成功 ${result.results.length - failed.length} 条，失败 ${failed.length} 条`);
-        await generate();
+        const succeeded = new Set(result.results.filter((item) => item.ok).map((item) => `${item.workspaceId}:${item.id}`));
+        setTasks((items) => items.map((task) => {
+          const key = `${task.workspaceId}:${task.id}`, proposal = proposalMap.get(key);
+          return succeeded.has(key) && proposal ? { ...task, currentHours: String(proposal.hours), currentPages: String(proposal.pages) } : task;
+        }));
+        setProposals((items) => items.filter((item) => !succeeded.has(`${item.workspaceId}:${item.id}`)));
+        if (!failed.length) setOverwriteExisting(false);
         if (failed.length) setError(failed.map((item) => `${item.id}: ${item.error}`).join("；"));
       } catch (reason) { setError(reason instanceof Error ? reason.message : "写入失败"); }
       finally { setBusy(false); }
@@ -81,10 +94,17 @@ function HoursTool({ user }: { user: AuthUser }) {
   };
   return <div className="work-hours-scroll"><div className="work-hours-content">
     <div className="work-hours-toolbar">
-      <label>月份 <DatePicker picker="month" format="YYYY年MM月" allowClear={false} value={dayjs(`${month}-01`)} onChange={(date) => { if (date) setMonth(date.format("YYYY-MM")); }} /></label>
-      <label>项目 <Select mode="multiple" value={selected} onChange={setSelected} options={projects.map((item) => ({ label: item.name, value: item.id }))} /></label>
-      <label>目标工时 <InputNumber min={1} max={744} value={target} onChange={(value) => setTarget(value ?? 140)} /></label>
+      <label>月份 <DatePicker disabled={busy} picker="month" format="YYYY年MM月" allowClear={false} value={dayjs(`${month}-01`)} onChange={(date) => { if (date) { setMonth(date.format("YYYY-MM")); clearPreview(); } }} /></label>
+      <label>项目 <Select disabled={busy} mode="multiple" value={selected} onChange={(value) => { setSelected(value); clearPreview(); }} options={projects.map((item) => ({ label: item.name, value: item.id }))} /></label>
+      <label>目标工时 <InputNumber disabled={busy} min={1} max={744} value={target} onChange={(value) => setTarget(value ?? 140)} /></label>
       <Button icon={<ReloadOutlined />} type="primary" loading={busy} disabled={!selected.length} onClick={() => void generate()}>生成预览</Button>
+      <Button icon={<UndoOutlined />} disabled={busy || !tasks.length} onClick={() => {
+        setProposals(tasks.map((task) => {
+          const proposal = proposalMap.get(`${task.workspaceId}:${task.id}`);
+          return proposal ?? { id: task.id, workspaceId: task.workspaceId, hours: Number(task.currentHours) || 1, pages: Number(task.currentPages) || 0, score: 0 };
+        }));
+        setOverwriteExisting(true); setError("");
+      }}>全部重置</Button>
     </div>
     {error && <Alert type="error" showIcon message={error} closable onClose={() => setError("")} />}
     <div className="work-hours-summary"><strong>{tasks.length}</strong> 个已完成任务 <span>处理人：{user.tapdOwnerName}</span><span>工时合计：<strong>{total}</strong> / {target}</span><span>待写入：{proposals.length}</span></div>
@@ -92,9 +112,10 @@ function HoursTool({ user }: { user: AuthUser }) {
       { title: "项目", dataIndex: "projectName", width: 110 },
       { title: "完成时间", dataIndex: "completed", width: 155 },
       { title: "任务", dataIndex: "name", render: (value: string, task: WorkTask) => <a href={`https://www.tapd.cn/tapd_fe/${task.workspaceId}/task/detail/${task.id}`} target="_blank" rel="noreferrer">{value}</a> },
-      { title: "复杂度", width: 80, render: (_: unknown, task: WorkTask) => proposalMap.get(`${task.workspaceId}:${task.id}`)?.score ?? "—" },
-      { title: "实际工时", width: 110, render: (_: unknown, task: WorkTask) => { const key = `${task.workspaceId}:${task.id}`, item = proposalMap.get(key); return item ? <InputNumber min={1} max={16} value={item.hours} onChange={(value) => change(key, "hours", value)} /> : task.currentHours || "—"; } },
-      { title: "页面数", width: 110, render: (_: unknown, task: WorkTask) => { const key = `${task.workspaceId}:${task.id}`, item = proposalMap.get(key); return item ? <InputNumber min={0} max={100} value={item.pages} onChange={(value) => change(key, "pages", value)} /> : task.currentPages || "—"; } },
+      { title: "复杂度", width: 80, render: (_: unknown, task: WorkTask) => proposalMap.get(`${task.workspaceId}:${task.id}`)?.score || "—" },
+      { title: "填报状态", width: 90, render: (_: unknown, task: WorkTask) => task.currentHours || task.currentPages ? "已填写" : "未填写" },
+      { title: "实际工时", width: 110, render: (_: unknown, task: WorkTask) => { const key = `${task.workspaceId}:${task.id}`, item = proposalMap.get(key); return item ? <InputNumber disabled={busy} min={1} max={16} value={item.hours} onChange={(value) => change(key, "hours", value)} /> : task.currentHours || "—"; } },
+      { title: "页面数", width: 110, render: (_: unknown, task: WorkTask) => { const key = `${task.workspaceId}:${task.id}`, item = proposalMap.get(key); return item ? <InputNumber disabled={busy} min={0} max={100} value={item.pages} onChange={(value) => change(key, "pages", value)} /> : task.currentPages || "—"; } },
     ]} />
     <div className="work-hours-actions"><Button type="primary" icon={<SaveOutlined />} disabled={!proposals.length || total !== target} loading={busy} onClick={apply}>确认写入 TAPD</Button></div>
   </div></div>;

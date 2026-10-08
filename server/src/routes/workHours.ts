@@ -26,13 +26,18 @@ workHoursRouter.post("/preview", async (req, res) => {
   if (!input.success) { res.status(400).json({ error: "月份、项目或目标工时无效" }); return; }
   try {
     const tasks = await listWorkTasks(input.data.month, getAuthUser(req)!.tapdOwnerName, input.data.workspaceIds);
-    const allocation = allocateHours(tasks, input.data.targetHours);
+    let allocation: ReturnType<typeof allocateHours>;
+    try { allocation = allocateHours(tasks, input.data.targetHours); }
+    catch (error) {
+      res.json({ tasks, proposals: [], allocationError: error instanceof Error ? error.message : "工时分配失败" });
+      return;
+    }
     res.json({ tasks, proposals: allocation.map(({ task, hours, pages, score }) => ({ id: task.id, workspaceId: task.workspaceId, hours, pages, score })) });
   } catch (error) { res.status(502).json({ error: error instanceof Error ? error.message : "TAPD 任务读取失败" }); }
 });
 
 workHoursRouter.post("/apply", requirePermission("work_hours.apply"), async (req, res) => {
-  const input = selectionSchema.extend({ entries: z.array(z.object({
+  const input = selectionSchema.extend({ overwriteExisting: z.boolean().default(false), entries: z.array(z.object({
     id: z.string().regex(/^\d+$/), workspaceId: z.string(),
     hours: z.number().int().min(1).max(16), pages: z.number().int().min(0).max(100),
     expectedHours: z.string(), expectedPages: z.string(),
@@ -53,7 +58,7 @@ workHoursRouter.post("/apply", requirePermission("work_hours.apply"), async (req
         results.push({ id: entry.id, workspaceId: entry.workspaceId, ok: false, error: "任务已变化，请重新生成预览" });
         continue;
       }
-      if (task.currentHours || task.currentPages) {
+      if (!input.data.overwriteExisting && (task.currentHours || task.currentPages)) {
         results.push({ id: entry.id, workspaceId: entry.workspaceId, ok: false, error: "已有填报值，不自动覆盖" });
         continue;
       }
