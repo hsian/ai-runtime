@@ -510,6 +510,18 @@ export function parseTapdUrl(url: string): {
       result.itemId = result.bugId;
     }
 
+    const detailIndex = parts.findIndex((part, index) => ["story", "task", "bug"].includes(part)
+      && parts[index + 1] === "detail" && /^\d+$/.test(parts[index + 2] ?? ""));
+    if (detailIndex >= 0) {
+      const itemType = parts[detailIndex] as "story" | "task" | "bug";
+      const itemId = parts[detailIndex + 2];
+      result.itemType = itemType;
+      result.itemId = itemId;
+      if (itemType === "story") result.storyId = itemId;
+      if (itemType === "task") result.taskId = itemId;
+      if (itemType === "bug") result.bugId = itemId;
+    }
+
     return result;
   } catch {
     return {};

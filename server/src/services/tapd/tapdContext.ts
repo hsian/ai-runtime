@@ -65,7 +65,7 @@ export function buildPromptWithTapdContext(prompt: string, context?: TapdContext
       ? `
 
 【TAPD 配图】
-编辑后的 TAPD 内容中共有 ${imageCount} 张配图，实际成功附带 ${attachedImageCount} 张。图片已按编辑稿中的出现顺序连续编号，并位于附件列表最前面。
+本次 TAPD 内容中共有 ${imageCount} 张配图，实际成功附带 ${attachedImageCount} 张。成功附带的图片已按本次正文中的出现顺序连续编号，并位于附件列表最前面。
 正文中的「配图N」对应第 N 张 TAPD 图片；未附带的图片不可臆测。`
       : "";
 
@@ -76,5 +76,6 @@ export function buildPromptWithTapdContext(prompt: string, context?: TapdContext
 ${metadata}
 
 【需求描述】
-${context.description || "（TAPD 需求未填写描述）"}${imageReference}`;
+${context.description || "（TAPD 需求未填写描述）"}${imageReference}
+${context.readWarnings?.length ? `\n【资料读取限制】\n${context.readWarnings.join("\n")}\n不能把未读取到的部分视为不存在，也不能臆测其内容。` : ""}`;
 }

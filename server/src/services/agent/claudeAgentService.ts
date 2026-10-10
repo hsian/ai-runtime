@@ -197,7 +197,8 @@ function runClaudeCommand(
   jobId?: string,
   onEvent?: AgentEventHandler,
   timeoutMs = config.CLAUDE_TIMEOUT_MS,
-  idleTimeoutMs?: number
+  idleTimeoutMs?: number,
+  terminateOnResult = false
 ): Promise<string> {
   return new Promise((resolve, reject) => {
     let aborted = false;
@@ -278,7 +279,7 @@ function runClaudeCommand(
           const structuredOutput = extractStructuredOutput(parsed);
           if (structuredOutput) {
             finalSummary = structuredOutput;
-            finish(structuredOutput);
+            finish(structuredOutput, terminateOnResult);
             return;
           }
           if (parsed.type === "result") {
@@ -384,14 +385,15 @@ export async function runClaudeAgent(
   const isPlan = options?.mode === "plan";
   const isQuestion = options?.mode === "question";
   const isTestCase = options?.mode === "test-case";
-  const isReadOnly = isPlan || isQuestion || isTestCase;
+  const isConversation = options?.mode === "conversation";
+  const isReadOnly = isPlan || isQuestion || isTestCase || isConversation;
   const permissionMode = isReadOnly
     ? "dontAsk"
     : (options?.permissionMode ?? config.CLAUDE_PERMISSION_MODE);
   const systemPrompt =
     options?.systemPrompt ??
     (isPlan ? PLAN_SYSTEM_PROMPT : isQuestion ? QUESTION_SYSTEM_PROMPT : SYSTEM_PROMPT);
-  const userPrompt = isTestCase
+  const userPrompt = isTestCase || isConversation
     ? prompt
     : isPlan
     ? buildClaudePlanPrompt(
@@ -435,7 +437,9 @@ export async function runClaudeAgent(
     args.splice(1, 0, "--dangerously-skip-permissions");
   }
 
-  if (isTestCase) {
+  if (isConversation) {
+    args.push("--tools", "", "--strict-mcp-config");
+  } else if (isTestCase) {
     args.push(
       "--safe-mode",
       "--tools",
@@ -460,7 +464,9 @@ export async function runClaudeAgent(
 
   console.log(
     `[AI Runtime] Claude Code CLI，模式: ${
-      isPlan
+      isConversation
+        ? "conversation（意图识别与闲聊）"
+        : isPlan
         ? "plan（读仓库出方案）"
         : isTestCase
           ? "test-case（只读生成测试用例）"
@@ -469,7 +475,7 @@ export async function runClaudeAgent(
           : "execute（改代码）"
     }，目录: ${repoPath}`
   );
-  console.log(`[AI Runtime] 任务: ${prompt}`);
+  if (!isConversation) console.log(`[AI Runtime] 任务: ${prompt}`);
 
   const output = await runClaudeCommand(
     args,
@@ -477,11 +483,12 @@ export async function runClaudeAgent(
     userPrompt,
     options?.jobId,
     onEvent,
-    isTestCase ? 0 : config.CLAUDE_TIMEOUT_MS,
-    isTestCase ? config.CLAUDE_TEST_CASE_IDLE_TIMEOUT_MS : undefined
+    options?.timeoutMs ?? (isTestCase ? 0 : config.CLAUDE_TIMEOUT_MS),
+    isTestCase ? config.CLAUDE_TEST_CASE_IDLE_TIMEOUT_MS : undefined,
+    isConversation
   );
 
   return {
-    summary: output || (isPlan ? "Plan 分析完成" : isTestCase ? "未获得有效测试用例" : isQuestion ? "未获得有效回答" : "已完成代码修改"),
+    summary: output || (isConversation ? "" : isPlan ? "Plan 分析完成" : isTestCase ? "未获得有效测试用例" : isQuestion ? "未获得有效回答" : "已完成代码修改"),
   };
 }

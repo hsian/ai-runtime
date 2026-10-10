@@ -274,11 +274,12 @@ export async function runCodexAgent(
   const isPlan = options?.mode === "plan";
   const isQuestion = options?.mode === "question";
   const isTestCase = options?.mode === "test-case";
-  const isReadOnly = isPlan || isQuestion || isTestCase;
+  const isConversation = options?.mode === "conversation";
+  const isReadOnly = isPlan || isQuestion || isTestCase || isConversation;
   const systemPrompt =
     options?.systemPrompt ??
     (isPlan ? PLAN_SYSTEM_PROMPT : isQuestion ? QUESTION_SYSTEM_PROMPT : SYSTEM_PROMPT);
-  const userPrompt = isTestCase
+  const userPrompt = isTestCase || isConversation
     ? prompt
     : isPlan
     ? buildClaudePlanPrompt(
@@ -312,6 +313,11 @@ export async function runCodexAgent(
     "--ephemeral",
   ];
 
+  if (isConversation) {
+    args.push("--skip-git-repo-check", "--disable", "shell_tool", "--disable", "unified_exec", "--disable", "code_mode",
+      "--disable", "apps", "--disable", "browser_use", "--disable", "computer_use");
+  }
+
   let structuredOutputDir: string | undefined;
   let structuredOutputPath: string | undefined;
   if (options?.jsonSchema) {
@@ -329,7 +335,7 @@ export async function runCodexAgent(
   } else {
     args.push(
       "--sandbox",
-      isReadOnly ? config.CODEX_READ_ONLY_SANDBOX_MODE : config.CODEX_SANDBOX_MODE
+      isConversation ? "read-only" : isReadOnly ? config.CODEX_READ_ONLY_SANDBOX_MODE : config.CODEX_SANDBOX_MODE
     );
   }
 
@@ -364,7 +370,9 @@ export async function runCodexAgent(
 
   console.log(
     `[AI Runtime] Codex CLI，模式: ${
-      isPlan
+      isConversation
+        ? "conversation（意图识别与闲聊）"
+        : isPlan
         ? "plan（读仓库出方案）"
         : isTestCase
           ? "test-case（只读生成测试用例）"
@@ -373,7 +381,7 @@ export async function runCodexAgent(
           : "execute（改代码）"
     }，目录: ${repoPath}`
   );
-  console.log(`[AI Runtime] 任务: ${prompt}`);
+  if (!isConversation) console.log(`[AI Runtime] 任务: ${prompt}`);
 
   let output = "";
   try {
@@ -383,7 +391,7 @@ export async function runCodexAgent(
       `${systemPrompt}\n\n${isReadOnly ? "" : `${CODEX_EXECUTION_PROMPT}\n\n`}${userPrompt}`,
       options?.jobId,
       onEvent,
-      config.CODEX_TIMEOUT_MS
+      options?.timeoutMs ?? config.CODEX_TIMEOUT_MS
     );
 
     if (structuredOutputPath) {
@@ -401,6 +409,6 @@ export async function runCodexAgent(
   }
 
   return {
-    summary: pickPlanOutput(output, output) || (isPlan ? "Plan 分析完成" : isTestCase ? "未获得有效测试用例" : isQuestion ? "未获得有效回答" : "已完成代码修改"),
+    summary: pickPlanOutput(output, output) || (isConversation ? "" : isPlan ? "Plan 分析完成" : isTestCase ? "未获得有效测试用例" : isQuestion ? "未获得有效回答" : "已完成代码修改"),
   };
 }

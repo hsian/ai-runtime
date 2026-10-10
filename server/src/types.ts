@@ -79,6 +79,7 @@ export interface TapdContext {
   imageCount?: number;
   attachedImageCount?: number;
   attachedImageIndexes?: number[];
+  readWarnings?: string[];
   status?: string;
   owner?: string;
   fetchedAt: string;

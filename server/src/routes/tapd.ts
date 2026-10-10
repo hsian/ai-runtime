@@ -11,7 +11,6 @@ import {
   listIterationBugs,
   listIterationTasks,
   listIterations,
-  listTapdComments,
   parseTapdUrl,
 } from "../services/tapd/tapdClient.js";
 import {
@@ -19,7 +18,8 @@ import {
   downloadImagesFromHtml,
 } from "../services/tapd/tapdDescriptionImages.js";
 import { tapdHtmlToPlainText } from "../services/tapd/tapdContext.js";
-import { buildTapdEditableHtml, cleanTapdEditableHtml, normalizeTapdEditableContent } from "../services/tapd/tapdEditableContext.js";
+import { cleanTapdEditableHtml, normalizeTapdEditableContent } from "../services/tapd/tapdEditableContext.js";
+import { resolveTapdContext, TapdContextError } from "../services/tapd/resolveContext.js";
 import { logOperation } from "../services/operationLog.js";
 import { getClientIdentity } from "../services/clientIdentity.js";
 import { getJob } from "../services/jobStore.js";
@@ -302,45 +302,9 @@ tapdRouter.post("/context/resolve", async (req, res) => {
   }
 
   try {
-    const itemPromise =
-      parsed.itemType === "story"
-        ? getStory(parsed.itemId, parsed.workspaceId)
-        : parsed.itemType === "task"
-          ? getTask(parsed.itemId, parsed.workspaceId)
-          : getBug(parsed.itemId, parsed.workspaceId);
-    const [item, commentsResult] = await Promise.all([
-      itemPromise,
-      listTapdComments(parsed.itemType, parsed.itemId, parsed.workspaceId)
-        .then((comments) => ({ comments, warning: undefined as string | undefined }))
-        .catch(() => ({ comments: [], warning: "TAPD 评论读取失败，已继续加载需求正文" })),
-    ]);
-    if (!item) {
-      res.status(404).json({ error: "TAPD 条目不存在或当前应用无权访问" });
-      return;
-    }
-    const sourceHtml = buildTapdEditableHtml(item.description ?? "", commentsResult.comments);
-    const title = "title" in item ? item.title ?? item.name : item.name;
-    const owner = "current_owner" in item ? item.current_owner ?? item.owner : item.owner;
-    res.json({
-      context: {
-        workspaceId: parsed.workspaceId,
-        itemType: parsed.itemType,
-        itemId: item.id,
-        storyId: parsed.itemType === "story" ? item.id : undefined,
-        url,
-        title: title || `${parsed.itemType} ${item.id}`,
-        description: tapdHtmlToPlainText(sourceHtml),
-        sourceHtml,
-        imageCount: countImagesInHtml(sourceHtml),
-        commentCount: commentsResult.comments.length,
-        commentWarning: commentsResult.warning,
-        status: item.status,
-        owner,
-        fetchedAt: new Date().toISOString(),
-      },
-    });
+    res.json({ context: await resolveTapdContext(url) });
   } catch (err) {
-    res.status(502).json({ error: err instanceof Error ? err.message : "获取 TAPD 需求失败" });
+    res.status(err instanceof TapdContextError ? err.status : 502).json({ error: err instanceof Error ? err.message : "获取 TAPD 需求失败" });
   }
 });
 

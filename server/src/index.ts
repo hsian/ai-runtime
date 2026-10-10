@@ -23,6 +23,7 @@ import { projectsRouter } from "./routes/projects.js";
 import { analyticsRouter } from "./routes/analytics.js";
 import { apiDocsRouter } from "./routes/apiDocs.js";
 import { resetAllProjectWorkspaces } from "./services/projectRuntime.js";
+import { startWecomBot } from "./modules/wecom/index.js";
 
 
 
@@ -126,9 +127,17 @@ const server = app.listen(config.PORT, "0.0.0.0", () => {
 
 });
 
+let stopWecomBot = () => {};
+try {
+  stopWecomBot = startWecomBot();
+} catch (error) {
+  console.error("[WeCom] 模块启动失败：", error instanceof Error ? error.message : "配置无效");
+}
+
 
 
 function shutdown(signal: string): void {
+  stopWecomBot();
 
   console.log(`\n[AI Runtime] 收到 ${signal}，正在关闭服务...`);
 

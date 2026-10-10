@@ -1,4 +1,4 @@
-import { mkdirSync, renameSync } from "fs";
+import { mkdirSync, renameSync, writeFileSync, copyFileSync } from "fs";
 import { copyFile, mkdir, rm } from "fs/promises";
 import { extname, join, resolve } from "path";
 import multer from "multer";
@@ -80,6 +80,33 @@ export async function stageAttachmentsForAgent(
   return staged;
 }
 
+export function saveImageBuffers(id: string, images: { name: string; mime: string; buffer: Buffer }[]): JobAttachment[] {
+  if (!/^[a-f0-9-]{36}$/.test(id)) throw new Error("Invalid attachment directory");
+  const directory = resolve(config.UPLOAD_DIR, id);
+  if (images.length) mkdirSync(directory, { recursive: true });
+  return images.map((image, index) => {
+    if (!IMAGE_MIME.test(image.mime) || !image.buffer.length || image.buffer.length > config.UPLOAD_MAX_BYTES) {
+      throw new Error("Invalid image attachment");
+    }
+    const ext = image.mime === "image/png" ? ".png" : image.mime === "image/webp" ? ".webp"
+      : image.mime === "image/gif" ? ".gif" : ".jpg";
+    const path = resolve(directory, `${index}${ext}`);
+    writeFileSync(path, image.buffer);
+    return { name: image.name, path, mime: image.mime, sizeBytes: image.buffer.length };
+  });
+}
+
+export function copyJobAttachments(jobId: string, attachments: JobAttachment[]): JobAttachment[] {
+  if (!/^[a-f0-9-]{36}$/.test(jobId)) throw new Error("Invalid attachment directory");
+  const directory = resolve(config.UPLOAD_DIR, jobId);
+  if (attachments.length) mkdirSync(directory, { recursive: true });
+  return attachments.map((attachment, index) => {
+    const path = resolve(directory, `${index}${extname(attachment.path) || ".webp"}`);
+    copyFileSync(attachment.path, path);
+    return { ...attachment, path };
+  });
+}
+
 /** 仅清理本任务复制到 Git 工作区内的附件，不触碰其他工作区文件。 */
 export async function cleanupStagedAttachmentsForAgent(
   repoPath: string,
@@ -91,6 +118,7 @@ export async function cleanupStagedAttachmentsForAgent(
 
 /** 删除服务端为任务长期保存的原始附件。 */
 export async function deleteJobAttachments(jobId: string): Promise<void> {
+  if (!/^[a-f0-9-]{36}$/.test(jobId)) throw new Error("Invalid attachment directory");
   await rm(resolve(config.UPLOAD_DIR, jobId), { recursive: true, force: true });
 }
 

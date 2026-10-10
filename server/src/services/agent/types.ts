@@ -25,7 +25,8 @@ export interface AgentRunOptions {
   agentProvider?: AgentProvider;
   permissionMode?: string;
   systemPrompt?: string;
-  mode?: "plan" | "question" | "execute" | "test-case";
+  mode?: "plan" | "question" | "execute" | "test-case" | "conversation";
+  timeoutMs?: number;
   jobId?: string;
   attachments?: JobAttachment[];
   confirmedPlan?: string;

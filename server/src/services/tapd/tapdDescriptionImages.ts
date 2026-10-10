@@ -104,17 +104,45 @@ function isTapdImagePath(pathOrUrl: string): boolean {
   return /\/(tfl|tdl)\//i.test(pathOrUrl) || /\/pictures\//i.test(pathOrUrl) || /\/captures\//i.test(pathOrUrl);
 }
 
-async function fetchBinary(url: string): Promise<{ buffer: Buffer; mime: string } | null> {
+export function isTrustedTapdImageUrl(value: string): boolean {
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:" && !url.username && !url.password && (!url.port || url.port === "443")
+      && ["tapd.cn", "tapd.com", "qpic.cn", "myqcloud.com", "qcloudcdn.com"].some(domain =>
+        url.hostname === domain || url.hostname.endsWith(`.${domain}`));
+  } catch { return false; }
+}
+
+async function fetchBinary(url: string, trustedHostsOnly = false): Promise<{ buffer: Buffer; mime: string } | null> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), TAPD_REMOTE_IMAGE_TIMEOUT_MS);
   try {
-    const res = await fetch(url, {
-      redirect: "follow",
-      signal: controller.signal,
-      headers: { "User-Agent": "AI-Runtime/1.0", Referer: "https://www.tapd.cn/" },
-    });
+    let res: Response | undefined;
+    for (let hop = 0; hop < 6; hop++) {
+      if (trustedHostsOnly && !isTrustedTapdImageUrl(url)) return null;
+      res = await fetch(url, {
+        redirect: trustedHostsOnly ? "manual" : "follow", signal: controller.signal,
+        headers: { "User-Agent": "AI-Runtime/1.0", Referer: "https://www.tapd.cn/" },
+      });
+      const location = res.headers.get("location");
+      if (!trustedHostsOnly || ![301, 302, 303, 307, 308].includes(res.status) || !location) break;
+      await res.body?.cancel();
+      url = new URL(location, url).href;
+    }
+    if (!res) return null;
     if (!res.ok) return null;
-    const buffer = Buffer.from(await res.arrayBuffer());
+    const chunks: Buffer[] = [];
+    let bytes = 0;
+    if (!res.body) return null;
+    const reader = res.body.getReader();
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      bytes += value.length;
+      if (bytes > config.TAPD_IMAGE_MAX_BYTES) { await reader.cancel(); return null; }
+      chunks.push(Buffer.from(value));
+    }
+    const buffer = Buffer.concat(chunks);
     if (buffer.length === 0) return null;
     const mime = detectMime(buffer, res.headers.get("content-type"));
     if (!mime) return null;
@@ -165,15 +193,16 @@ async function resolveTapdImageUrl(
 async function downloadSingleImage(
   imageUrl: string,
   workspaceId: string,
-  cfg: TapdConfig
+  cfg: TapdConfig,
+  trustedHostsOnly = false
 ): Promise<{ buffer: Buffer; mime: string } | null> {
   const tapdDownloadUrl = await resolveTapdImageUrl(imageUrl, workspaceId, cfg);
   if (tapdDownloadUrl) {
-    const fromTapd = await fetchBinary(tapdDownloadUrl);
+    const fromTapd = await fetchBinary(tapdDownloadUrl, trustedHostsOnly);
     if (fromTapd) return fromTapd;
   }
 
-  return fetchBinary(imageUrl);
+  return fetchBinary(imageUrl, trustedHostsOnly);
 }
 
 export interface TapdDownloadedImage {
@@ -192,7 +221,8 @@ export interface TapdImageDownloadReport {
 export async function downloadImagesFromHtml(
   html: string,
   workspaceId?: string,
-  cfg: TapdConfig = getTapdConfig()
+  cfg: TapdConfig = getTapdConfig(),
+  trustedHostsOnly = false
 ): Promise<TapdImageDownloadReport> {
   const urls = extractImageUrlsFromHtml(html);
   const wsId = workspaceId?.trim() || cfg.workspaceId;
@@ -206,7 +236,7 @@ export async function downloadImagesFromHtml(
   for (const [index, url] of urls.entries()) {
     let downloaded: Awaited<ReturnType<typeof downloadSingleImage>>;
     try {
-      downloaded = await downloadSingleImage(url, wsId, cfg);
+      downloaded = await downloadSingleImage(url, wsId, cfg, trustedHostsOnly);
     } catch {
       // A broken or inaccessible inline image must not prevent the TAPD item
       // itself (or the remaining valid images) from being associated.
