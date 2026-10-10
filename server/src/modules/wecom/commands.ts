@@ -1,11 +1,16 @@
 export type Command = ({ action: "execute" | "status" | "cancel" | "merge" | "discard"; jobId?: string }
-  | { action: "new" | "help" | "topics" }
+  | { action: "new" | "help" | "topics" | "identity" }
   | { action: "question" | "plan" | "clarify" | "auto"; text: string; jobId?: string }
   | { action: "revert"; jobId?: string }
   | { action: "chat"; reply: string }) & { topicId?: string; topicTitle?: string };
 
+export function requiresTextConfirmation(command: Command): boolean {
+  return ["execute", "cancel", "merge", "discard", "revert"].includes(command.action);
+}
+
 export function parseCommand(raw: string): Command {
   const text = raw.trim();
+  if (/^我的\s*id$/i.test(text)) return { action: "identity" };
   const control = /^(执行|确认执行|状态|取消|合并|重试合并|放弃合并)(?:\s+([a-f0-9-]{36}))?$/.exec(text);
   if (control) {
     const actions = { 执行: "execute", 确认执行: "execute", 状态: "status", 取消: "cancel",

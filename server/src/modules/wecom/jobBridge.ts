@@ -19,6 +19,7 @@ import { copyJobAttachments, deleteJobAttachments } from "../../services/uploadS
 import { getDialogue, setDialogue } from "./dialogueStore.js";
 import { milestoneSignature, splitMessage } from "./replies.js";
 import { queueNotice, pendingNotices, acknowledgeChunk } from "./sessionStore.js";
+import { canModifyCode, requireCommandPermission } from "./permissions.js";
 
 function acknowledgeMilestone(job: Job, session: WecomSession): void {
   const signature = milestoneSignature(job);
@@ -67,6 +68,7 @@ export function parseAnswers(job: Job, text: string): { questionId: string; valu
 
 export async function dispatchCommand(session: WecomSession, command: Command, messageKey: string, options: WecomConfig,
   onJob?: (jobId: string) => void): Promise<string> {
+  requireCommandPermission(session, command, options);
   if (command.action === "plan" || command.action === "question") {
     const previous = session.active_job_id ? getJob(session.active_job_id) : undefined;
     if (previous) await cleanupObsoletePlan(session, previous);
@@ -82,6 +84,12 @@ export async function dispatchCommand(session: WecomSession, command: Command, m
   }
   if (command.action === "chat") { rememberMessage(messageKey); return command.reply; }
   if (command.action === "auto") throw new Error("消息尚未完成意图识别。");
+  if (command.action === "identity") {
+    rememberMessage(messageKey);
+    return session.target_id === session.user_id
+      ? `你的企微用户 ID：\`${session.user_id}\`\n当前权限：${canModifyCode(options, session.user_id) ? "问答和修改代码" : "仅问答"}`
+      : "请私聊机器人发送「我的ID」，避免在群内公开你的用户标识。";
+  }
   if (["execute", "cancel"].includes(command.action) && !command.topicId && !("jobId" in command && command.jobId)) {
     const topics = listTopics(session);
     const waitingReverts = topics.filter(topic => getDialogue({ ...session, conversation_id: topic.id })?.step === "revert_confirm");

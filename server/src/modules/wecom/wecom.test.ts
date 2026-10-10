@@ -32,6 +32,35 @@ test("control commands must occupy the entire message", () => {
   assert.deepEqual(parseCommand(`执行 ${id}`), { action: "execute", jobId: id });
 });
 
+test("identity is an exact command, bypasses the Agent and exposes only the sender ID in private chat", async () => {
+  const { resolveIntent } = await import("./intentRouter.js");
+  const options = { botId: "bot-identity", secret: "test", projectId: "b2b-composite" };
+  for (const text of ["我的ID", "我的id", " 我的 ID "]) assert.deepEqual(parseCommand(text), { action: "identity" });
+  assert.equal(parseCommand("我的ID字段需要改一下").action, "auto");
+  const calls: { text: string; finish: boolean }[] = [];
+  const fake = { async replyStream(_frame: unknown, _id: string, text: string, finish: boolean) { calls.push({ text, finish }); },
+    async sendMessage() { throw new Error("unexpected proactive reply"); } } as unknown as WSClient;
+  const handler = createMessageHandler(fake, options, (command, session) => resolveIntent(command, session, async () => {
+    throw new Error("identity must not invoke Agent");
+  }));
+  try {
+    for (const [msgid, target] of [["identity-private", "alice-actual-id"], ["identity-group", "group-id"]]) {
+      handler.handle({ headers: { req_id: msgid }, body: { aibotid: options.botId, msgid,
+        chattype: target === "group-id" ? "group" : "single", chatid: target,
+        from: { userid: "alice-actual-id" }, msgtype: "text", text: { content: "我的ID" } } } as MessageFrame);
+    }
+    await new Promise(resolve => setTimeout(resolve, 50));
+    assert.equal(calls.length, 2);
+    const privateReply = calls.find(call => call.text.includes("alice-actual-id"));
+    assert.equal(privateReply?.text, "你的企微用户 ID：`alice-actual-id`\n当前权限：仅问答");
+    assert.ok(calls.every(call => call.finish && !call.text.includes("Thinking")));
+    const groupReply = calls.find(call => call !== privateReply)!;
+    assert.match(groupReply.text, /请私聊/);
+    assert.doesNotMatch(groupReply.text, /alice-actual-id|group-id/);
+    assert.equal(store.listBindings().filter(binding => binding.session_key.includes(options.botId)).length, 0);
+  } finally { handler.stop(); }
+});
+
 test("sessions persist and isolate member, group and project context", () => {
   const first = store.getSession("bot", "group-1", "alice", "b2b-composite");
   assert.deepEqual(store.getSession("bot", "group-1", "alice", "b2b-composite"), first);
@@ -88,7 +117,7 @@ test("obsolete greeting plans are cleaned silently, including pending and restar
 });
 
 test("valid plans are not silently cancelled and explicit cancellation remains visible", async () => {
-  const options = { botId: "bot", secret: "test", projectId: "b2b-composite" };
+  const options = { botId: "bot", secret: "test", projectId: "b2b-composite", codeAllowedUserIds: ["alice"] };
   const session = store.getSession("bot", "explicit-cancel", "alice", options.projectId);
   const job = createJob({ prompt: "把按钮改成蓝色", ownerId: session.owner_id });
   updateJob(job.jobId, { status: "awaiting_input" });
@@ -174,7 +203,7 @@ test("repeated callbacks are processed once, including after database reopen", a
 });
 
 test("same-session commands observe changes made by the previous command", async () => {
-  const options = { botId: "bot-order", secret: "test", projectId: "b2b-composite" };
+  const options = { botId: "bot-order", secret: "test", projectId: "b2b-composite", codeAllowedUserIds: ["alice"] };
   const session = store.getSession(options.botId, "alice", "alice", options.projectId);
   const job = createJob({ prompt: "test", ownerId: session.owner_id });
   updateJob(job.jobId, { status: "awaiting_confirm", planSummary: "修改按钮颜色" });
@@ -195,7 +224,7 @@ test("same-session commands observe changes made by the previous command", async
 });
 
 test("duplicate requirements create one shared plan task and never execute without confirmation", async () => {
-  const options = { botId: "bot-submit", secret: "test", projectId: "b2b-composite" };
+  const options = { botId: "bot-submit", secret: "test", projectId: "b2b-composite", codeAllowedUserIds: ["alice"] };
   const replies: string[] = [];
   const fake = { async replyStream(_frame: unknown, _id: string, text: string) { replies.push(text); }, async sendMessage() {} } as unknown as WSClient;
   const handler = createMessageHandler(fake, options);

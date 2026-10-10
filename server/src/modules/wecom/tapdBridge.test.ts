@@ -28,7 +28,7 @@ const { createMessageHandler } = await import("./messageHandler.js");
 const { closeDatabase } = await import("../../services/database.js");
 store.initWecomStore();
 after(() => { closeDatabase(); rmSync(directory, { recursive: true, force: true }); });
-const options = { botId: "bot", secret: "test", projectId: "b2b-composite" };
+const options = { botId: "bot", secret: "test", projectId: "b2b-composite", codeAllowedUserIds: ["alice"] };
 const url = "https://www.tapd.cn/123/stories/view/456";
 
 function snapshot(link = url, description = "需求正文", imageText?: string): TapdSnapshot {

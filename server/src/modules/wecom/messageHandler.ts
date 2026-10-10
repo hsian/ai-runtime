@@ -3,13 +3,15 @@ import type { MessageFrame } from "./client.js";
 import { reply } from "./client.js";
 import type { WecomConfig } from "./config.js";
 import { getSession, hasMessage, rememberMessage, recordChatExchange } from "./sessionStore.js";
-import { parseCommand } from "./commands.js";
+import { parseCommand, requiresTextConfirmation } from "./commands.js";
 import { dispatchCommand } from "./jobBridge.js";
 import { resolveIntent, quickReply } from "./intentRouter.js";
 import { randomUUID } from "node:crypto";
 import { THINKING } from "./replies.js";
 import { prepareTapdMessage, extractTapdLink } from "./tapdBridge.js";
 import type { ResponseCoordinator } from "./responseCoordinator.js";
+
+const VOICE_CONFIRMATION_REQUIRED = "为避免语音识别误操作，执行、取消、撤回和合并等操作请用文字发送。语音可以用于问答和描述修改需求。";
 
 export function createMessageHandler(client: WSClient, options: WecomConfig, routeIntent = resolveIntent, prepareMessage = prepareTapdMessage,
   responses?: ResponseCoordinator) {
@@ -32,15 +34,22 @@ export function createMessageHandler(client: WSClient, options: WecomConfig, rou
         let trackedJob: string | undefined;
         let text: string;
         try {
-          if (body.msgtype !== "text") {
+          const voice = body.msgtype === "voice";
+          if (body.msgtype !== "text" && !voice) {
             rememberMessage(messageKey);
-            text = "目前支持文字消息，请用文字描述修改需求。";
+            text = "目前支持文字和语音消息，请用文字或语音描述你的问题。";
           } else {
-            const content = (body.text as { content?: unknown } | undefined)?.content;
-            if (typeof content !== "string" || !content.trim()) throw new Error("请发送文字需求。");
+            const content = ((voice ? body.voice : body.text) as { content?: unknown } | undefined)?.content;
+            if (typeof content !== "string" || !content.trim()) throw new Error(voice
+              ? "这条语音没有可用的转写文本，请重发或改用文字。" : "请发送文字需求。");
             if (content.length > 50_000) throw new Error("消息不能超过 50000 字符。");
             const session = getSession(options.botId, target, body.from.userid, options.projectId);
             const parsed = parseCommand(content);
+            // Transcription may append punctuation; never let it turn a spoken confirmation into an action.
+            const voiceCommand = voice ? parseCommand(content.trim().replace(/[。.!！?？]+$/, "").trim()) : parsed;
+            if (voice && requiresTextConfirmation(voiceCommand)) {
+              throw new Error(VOICE_CONFIRMATION_REQUIRED);
+            }
             if ((parsed.action === "auto" && !quickReply(parsed.text)) || extractTapdLink(content)) {
               try { await client.replyStream(frame, streamId, THINKING, false); }
               catch { console.warn("[WeCom] 初始回复发送失败"); }
@@ -50,6 +59,9 @@ export function createMessageHandler(client: WSClient, options: WecomConfig, rou
             const resolved = await routeIntent(prepared.command, session);
             const command = prepared.topicId ? { ...resolved, topicId: prepared.topicId } : resolved;
             if (stopped) return;
+            if (voice && requiresTextConfirmation(command)) {
+              throw new Error(VOICE_CONFIRMATION_REQUIRED);
+            }
             text = await dispatchCommand(session, command, messageKey, options, responses ? jobId => {
               trackedJob = jobId;
               responses.track(jobId, frame, streamId, target);

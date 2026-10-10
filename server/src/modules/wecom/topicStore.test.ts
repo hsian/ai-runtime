@@ -18,7 +18,8 @@ const { parseCommand } = await import("./commands.js");
 const { dispatchCommand } = await import("./jobBridge.js");
 store.initWecomStore();
 after(() => { closeDatabase(); rmSync(directory, { recursive: true, force: true }); });
-const options = { botId: "bot", secret: "test", projectId: "b2b-composite" };
+const options = { botId: "bot", secret: "test", projectId: "b2b-composite",
+  codeAllowedUserIds: ["controls", "unique-control", "topic-list"] };
 
 function makeTopics(user: string, pending = false) {
   const session = store.getSession("bot", user, user, options.projectId);

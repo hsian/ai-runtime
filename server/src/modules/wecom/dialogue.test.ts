@@ -26,7 +26,7 @@ const { startWecomBot } = await import("./index.js");
 const { jobQueue } = await import("../../services/jobQueue.js");
 store.initWecomStore();
 after(() => { closeDatabase(); rmSync(directory, { recursive: true, force: true }); });
-const options = { botId: "dialogue", secret: "test", projectId: "b2b-composite" };
+const options = { botId: "dialogue", secret: "test", projectId: "b2b-composite", codeAllowedUserIds: ["alice", "bob", "fast-user", "integration-user"] };
 
 test("final answers preserve registered choices, survive restart and scope to their topic", async () => {
   const session = store.getSession("dialogue", "choices", "alice", options.projectId);
