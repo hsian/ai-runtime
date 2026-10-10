@@ -1,4 +1,5 @@
 import type { Job } from "../../types.js";
+import type { JobEvent } from "../../services/jobEvents.js";
 
 export const THINKING = "Thinking...";
 
@@ -19,12 +20,46 @@ export function progressStage(job: Job | undefined, phase?: string): string {
   return "正在处理";
 }
 
-export function formatProgress(job: Job | undefined, phase?: string, elapsedMs?: number): string {
-  const stage = progressStage(job, phase);
-  if (elapsedMs === undefined) return stage;
-  const seconds = Math.max(0, Math.floor(elapsedMs / 1000));
-  const minutes = Math.floor(seconds / 60);
-  return `${stage} · 已用时 ${minutes ? `${minutes}分` : ""}${seconds % 60}秒`;
+export function formatProgress(job: Job | undefined, phase?: string): string {
+  return progressStage(job, phase);
+}
+
+export function latestAgentActivity(events: JobEvent[]): string {
+  const stageIndex = events.map(event => event.type === "stage" ? event.phase : undefined)
+    .reduce((last, phase, index) => phase ? index : last, -1);
+  const phase = events[stageIndex]?.phase;
+  if (!["plan", "plan_resume", "agent", "agent_retry", "question"].includes(phase ?? "")) return "";
+  const current = events.slice(stageIndex + 1).reverse();
+  const latest = current.find(event => event.type === "agent_status" || event.type === "agent_tool");
+  const tool = current.find(event => event.type === "agent_tool" && event.toolName);
+  const labels: Record<string, string> = {
+    Read: "读取文件", read_file: "读取文件", Glob: "查找文件", Grep: "搜索代码",
+    Edit: "修改文件", Write: "写入文件", MultiEdit: "修改文件",
+    Bash: "执行项目命令", command_execution: "执行项目命令", exec_command: "执行项目命令",
+  };
+  let detail = "";
+  if (tool) {
+    const name = tool.toolName!.split(".").at(-1)!;
+    detail = labels[name] ?? `调用 ${name.replace(/[^a-zA-Z0-9_:-]/g, "").slice(0, 40) || "工具"}`;
+    // Display only a file name, never raw shell commands, file contents or arbitrary tool input.
+    if (["Read", "read_file", "Edit", "Write", "MultiEdit"].includes(name) && tool.toolDetail) {
+      try {
+        const input = JSON.parse(tool.toolDetail) as { file_path?: unknown; path?: unknown };
+        const path = input?.file_path ?? input?.path;
+        if (typeof path === "string") {
+          const file = path.replace(/\\/g, "/").split("/").filter(Boolean).slice(-2).join("/");
+          detail += `：${file.replace(/[\r\n`<>]/g, "").slice(0, 100)}`;
+        }
+      } catch { /* Truncated tool input still has a useful tool label. */ }
+    }
+  }
+  if (latest?.type === "agent_status") {
+    const status = latest.statusText ?? latest.text ?? "";
+    const known = ["正在思考...", "正在请求模型响应...", "正在执行命令..."];
+    const statusLabel = known.includes(status) ? status.replace(/\.\.\.$/, "") : "模型处理中";
+    return detail ? `${statusLabel}；最近活动：${detail}` : statusLabel;
+  }
+  return detail;
 }
 
 export const HELP = "可以直接聊天、询问项目问题，或告诉我想修改什么。\n"

@@ -136,7 +136,7 @@ test("Thinking updates one stream then is replaced by a finished result without 
   await coordinator.finish("job", "黑色");
   await coordinator.refresh();
   assert.equal(calls[0].id, "stream");
-  assert.match(calls[0].text, /正在处理 · 已用时 \d+秒/);
+  assert.equal(calls[0].text, "正在处理");
   assert.equal(calls[0].finish, false);
   assert.deepEqual(calls[1], { id: "stream", text: "黑色", finish: true });
   assert.equal(await coordinator.finish("job", "duplicate"), false);

@@ -12,7 +12,7 @@ import type { WecomSession } from "./types.js";
 import type { Command } from "./commands.js";
 import { bindJob, getBinding, listBindings, rememberMessage, resetSession, silenceJobNotices } from "./sessionStore.js";
 import { listTopics, selectTopic } from "./topicStore.js";
-import { formatJob, formatProgress, HELP } from "./replies.js";
+import { formatJob, formatProgress, latestAgentActivity, HELP } from "./replies.js";
 import { isNonActionablePlanInput } from "../../services/agent/planInputGuard.js";
 import { getTopicTapd } from "./tapdStore.js";
 import { copyJobAttachments, deleteJobAttachments } from "../../services/uploadService.js";
@@ -241,9 +241,11 @@ export async function dispatchCommand(session: WecomSession, command: Command, m
   if (job.conversationId && job.conversationId !== session.conversation_id) selectTopic(session, job.conversationId);
   if (command.action === "status") {
     rememberMessage(messageKey);
-    return ["pending", "planning", "running"].includes(job.status)
-      ? formatProgress(job, getJobEvents(job.jobId).reverse().find(event => event.type === "stage" && event.phase)?.phase)
-      : formatJob(job);
+    if (!["pending", "planning", "running"].includes(job.status)) return formatJob(job);
+    const events = getJobEvents(job.jobId);
+    const phase = [...events].reverse().find(event => event.type === "stage" && event.phase)?.phase;
+    const activity = latestAgentActivity(events);
+    return formatProgress(job, phase) + (activity ? `\n当前：${activity}` : "");
   }
   if (command.action === "execute") {
     if (job.status !== "awaiting_confirm") throw new Error("当前任务不可执行，请先完成计划确认。");

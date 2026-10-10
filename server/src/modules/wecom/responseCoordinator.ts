@@ -1,6 +1,6 @@
 import type { WSClient } from "@wecom/aibot-node-sdk";
 import { reply, type MessageFrame } from "./client.js";
-import { formatProgress, progressStage, milestoneSignature } from "./replies.js";
+import { formatProgress, progressStage, milestoneSignature, latestAgentActivity } from "./replies.js";
 import { getJob } from "../../services/jobStore.js";
 import { getJobEvents } from "../../services/jobEvents.js";
 import { areJobNoticesSilent } from "./sessionStore.js";
@@ -15,6 +15,7 @@ interface LiveResponse {
   closed: boolean;
   lastUpdate: number;
   lastStage: string;
+  lastActivity: string;
 }
 
 export class ResponseCoordinator {
@@ -32,7 +33,7 @@ export class ResponseCoordinator {
   blocked(target: string): boolean { return (this.blocks.get(target) ?? 0) > 0; }
   track(jobId: string, frame: MessageFrame, streamId: string, target: string): void {
     this.live.set(jobId, { frame, streamId, target, started: this.now(), tail: Promise.resolve(),
-      closed: false, lastUpdate: -Infinity, lastStage: "" });
+      closed: false, lastUpdate: -Infinity, lastStage: "", lastActivity: "" });
   }
   async finish(jobId: string, text: string): Promise<boolean> {
     const live = this.live.get(jobId);
@@ -49,17 +50,18 @@ export class ResponseCoordinator {
       if (areJobNoticesSilent(jobId)) { this.live.delete(jobId); continue; }
       const job = getJob(jobId);
       const events = getJobEvents(jobId);
-      let phase = events.reverse().find(event => event.type === "stage" && event.phase)?.phase;
+      let phase = [...events].reverse().find(event => event.type === "stage" && event.phase)?.phase;
       const reverting = isJobReverting(jobId);
       if (reverting && phase !== "default_revert") phase = "revert_wait";
       if (job && milestoneSignature(job) && !reverting) continue;
       const now = this.now();
       const stage = progressStage(job, phase);
-      const text = formatProgress(job, phase, now - live.started);
+      const activity = latestAgentActivity(events);
+      const text = formatProgress(job, phase) + (activity ? `\n当前：${activity}` : "");
       if (live.closed) {
-        // After the stream closes, notify only meaningful phase changes, never elapsed-time ticks.
-        if (stage === live.lastStage || now - live.lastUpdate < 30_000 || !phase
-          || !["agent", "agent_retry", "commit", "merge", "release_merge", "default_revert"].includes(phase)) continue;
+        // Long analysis phases also need feedback: coalesce actual activity and heartbeat once a minute.
+        const changed = stage !== live.lastStage || activity !== live.lastActivity;
+        if (now - live.lastUpdate < (changed ? 30_000 : 60_000)) continue;
       } else if (now - live.lastUpdate < 10_000) continue;
       live.lastUpdate = now;
       live.tail = live.tail.then(async () => {
@@ -73,6 +75,7 @@ export class ResponseCoordinator {
           await reply(this.client, live.frame, `${text}\n结果稍后通知你。`, live.streamId);
         } else await this.client.replyStream(live.frame, live.streamId, text, false);
         live.lastStage = stage;
+        live.lastActivity = activity;
       }).catch(() => {});
       await live.tail;
     }

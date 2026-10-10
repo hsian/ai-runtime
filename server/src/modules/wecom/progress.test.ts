@@ -16,7 +16,7 @@ const { createJob, updateJob, getJob } = await import("../../services/jobStore.j
 const { appendJobEvent } = await import("../../services/jobEvents.js");
 const { initWecomStore, getSession, bindJob } = await import("./sessionStore.js");
 const { ResponseCoordinator } = await import("./responseCoordinator.js");
-const { progressStage, formatProgress } = await import("./replies.js");
+const { progressStage, formatProgress, latestAgentActivity } = await import("./replies.js");
 const { parseCommand } = await import("./commands.js");
 const { dispatchCommand } = await import("./jobBridge.js");
 const { setDialogue } = await import("./dialogueStore.js");
@@ -35,12 +35,12 @@ function setup(lifetime = 90_000) {
   return { job, coordinator, calls, time(value: number) { now = value; } };
 }
 
-test("progress uses actual phases, formats elapsed time and prioritizes queue state", () => {
+test("progress uses actual phases, omits elapsed time and prioritizes queue state", () => {
   const job = createJob({ prompt: "test", ownerId: "format" });
-  assert.equal(formatProgress(job, "agent", 80_000), "正在分析并修改代码 · 已用时 1分20秒");
+  assert.equal(formatProgress(job, "agent"), "正在分析并修改代码");
   assert.equal(progressStage({ ...job, jobsAhead: 2 }, "agent"), "正在排队，前面还有 2 个任务");
   assert.equal(progressStage(job, "unknown_internal_phase"), "正在等待处理");
-  assert.doesNotMatch(formatProgress(job, "agent", 80_000), /%|任务：|Thinking/);
+  assert.doesNotMatch(formatProgress(job, "agent"), /%|任务：|Thinking|已用时/);
 });
 
 test("stream updates are throttled, reuse the message and ignore raw Agent logs", async () => {
@@ -55,7 +55,8 @@ test("stream updates are throttled, reuse the message and ignore raw Agent logs"
     assert.equal(context.calls.length, 1);
     context.time(10_000);
     await context.coordinator.refresh();
-    assert.match(context.calls[1].text, /已用时 10秒/);
+    assert.match(context.calls[1].text, /当前：执行项目命令/);
+    assert.ok(context.calls.every(call => !call.text.includes("已用时")));
     assert.ok(context.calls.every(call => call.streamId === "same-stream" && call.finish === false && !call.text.includes("SECRET")));
     await context.coordinator.finish(context.job.jobId, "修改完成");
     context.time(20_000);
@@ -123,4 +124,56 @@ test("a queued revert still reports progress even though its source job remains 
     await context.coordinator.refresh();
     assert.equal(context.calls.length, 2);
   } finally { context.coordinator.stop(); setDialogue(session); }
+});
+
+test("planning progress reuses Web tool and status events, without exposing command arguments", async () => {
+  const context = setup();
+  try {
+    updateJob(context.job.jobId, { status: "planning" });
+    appendJobEvent(context.job.jobId, { type: "stage", phase: "plan" });
+    appendJobEvent(context.job.jobId, { type: "agent_tool", toolName: "Read", toolDetail: JSON.stringify({ file_path: "D:\\repo\\accountSelect\\index.vue" }) });
+    appendJobEvent(context.job.jobId, { type: "agent_status", statusText: "正在思考..." });
+    await context.coordinator.refresh();
+    assert.match(context.calls[0].text, /正在思考；最近活动：读取文件：accountSelect\/index.vue/);
+    appendJobEvent(context.job.jobId, { type: "agent_tool", toolName: "Bash", toolDetail: '{"command":"SECRET_TOKEN=private curl https://private.example"}' });
+    context.time(10_000);
+    await context.coordinator.refresh();
+    assert.match(context.calls[1].text, /执行项目命令/);
+    assert.doesNotMatch(context.calls[1].text, /SECRET|private|curl|D:/);
+    appendJobEvent(context.job.jobId, { type: "stage", phase: "merge" });
+    context.time(20_000);
+    await context.coordinator.refresh();
+    assert.doesNotMatch(context.calls[2].text, /读取文件|执行项目命令/);
+  } finally { context.coordinator.stop(); }
+});
+
+test("long planning continues reporting activity changes and periodic feedback after 90 seconds", async () => {
+  const context = setup(0);
+  try {
+    updateJob(context.job.jobId, { status: "planning" });
+    appendJobEvent(context.job.jobId, { type: "stage", phase: "plan" });
+    await context.coordinator.refresh();
+    appendJobEvent(context.job.jobId, { type: "agent_tool", toolName: "Grep", toolDetail: '{"pattern":"color"}' });
+    context.time(30_000);
+    await context.coordinator.refresh();
+    assert.match(context.calls[1].text, /搜索代码/);
+    context.time(60_000);
+    await context.coordinator.refresh();
+    assert.equal(context.calls.length, 2);
+    context.time(90_000);
+    await context.coordinator.refresh();
+    assert.equal(context.calls.length, 3);
+    assert.match(context.calls[2].text, /正在分析修改计划[\s\S]*搜索代码/);
+    assert.ok(context.calls.every(call => !call.text.includes("已用时")));
+    updateJob(context.job.jobId, { status: "awaiting_confirm" });
+    context.time(150_000);
+    await context.coordinator.refresh();
+    assert.equal(context.calls.length, 3);
+  } finally { context.coordinator.stop(); }
+});
+
+test("Codex command activity and truncated tool input retain useful, safe labels", () => {
+  const stage = { id: "stage", jobId: "job", timestamp: "now", type: "stage" as const, phase: "agent" };
+  assert.equal(latestAgentActivity([stage, { ...stage, type: "agent_tool", toolName: "command_execution", toolDetail: "secret command" }]), "执行项目命令");
+  assert.equal(latestAgentActivity([stage, { ...stage, type: "agent_tool", toolName: "Read", toolDetail: '{"file_path":"truncated' }]), "读取文件");
 });
