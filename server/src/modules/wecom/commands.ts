@@ -11,9 +11,9 @@ export function requiresTextConfirmation(command: Command): boolean {
 export function parseCommand(raw: string): Command {
   const text = raw.trim();
   if (/^我的\s*id$/i.test(text)) return { action: "identity" };
-  const control = /^(执行|确认执行|状态|取消|合并|重试合并|放弃合并)(?:\s+([a-f0-9-]{36}))?$/.exec(text);
+  const control = /^(执行|确认执行|状态|进度|取消|合并|重试合并|放弃合并)(?:\s+([a-f0-9-]{36}))?$/.exec(text);
   if (control) {
-    const actions = { 执行: "execute", 确认执行: "execute", 状态: "status", 取消: "cancel",
+    const actions = { 执行: "execute", 确认执行: "execute", 状态: "status", 进度: "status", 取消: "cancel",
       合并: "merge", 重试合并: "merge", 放弃合并: "discard" } as const;
     return { action: actions[control[1] as keyof typeof actions], jobId: control[2] };
   }

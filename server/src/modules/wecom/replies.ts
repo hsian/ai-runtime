@@ -2,6 +2,31 @@ import type { Job } from "../../types.js";
 
 export const THINKING = "Thinking...";
 
+export function progressStage(job: Job | undefined, phase?: string): string {
+  if (job?.jobsAhead && job.jobsAhead > 0) return `正在排队，前面还有 ${job.jobsAhead} 个任务`;
+  const stages: Record<string, string> = {
+    pull: job?.status === "planning" || job?.taskMode === "question" ? "正在同步项目代码" : "正在准备工作区",
+    branch: "正在准备工作区", attachments: "正在准备分析资料",
+    plan: "正在分析修改计划", plan_resume: "正在分析修改计划", execute_confirmed: "正在准备工作区",
+    question: "正在读取项目代码", agent: "正在分析并修改代码", agent_retry: "正在重试代码修改",
+    commit: "正在整理并提交改动", merge: "正在合并改动", release_merge: "正在合并改动",
+    default_revert: "正在撤回修改", revert_wait: "正在等待撤回处理",
+  };
+  if (phase && stages[phase]) return stages[phase];
+  if (job?.status === "pending") return "正在等待处理";
+  if (job?.status === "planning") return "正在分析修改计划";
+  if (job?.taskMode === "question") return "正在分析项目问题";
+  return "正在处理";
+}
+
+export function formatProgress(job: Job | undefined, phase?: string, elapsedMs?: number): string {
+  const stage = progressStage(job, phase);
+  if (elapsedMs === undefined) return stage;
+  const seconds = Math.max(0, Math.floor(elapsedMs / 1000));
+  const minutes = Math.floor(seconds / 60);
+  return `${stage} · 已用时 ${minutes ? `${minutes}分` : ""}${seconds % 60}秒`;
+}
+
 export const HELP = "可以直接聊天、询问项目问题，或告诉我想修改什么。\n"
   + "项目问题只读分析；明确要求修改时先返回计划，回复「执行」后开始修改，合并和预览沿用项目配置。\n"
   + "也可以用「问答：问题」「修改：需求」指定处理方式；「状态」「取消」「新会话」管理当前任务。\n"

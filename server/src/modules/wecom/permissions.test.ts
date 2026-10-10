@@ -74,7 +74,7 @@ test("read-only members can inspect and cancel their own read-only questions", a
   const job = createJob({ prompt: "标题颜色", ownerId: session.owner_id, conversationId: session.conversation_id, taskMode: "question" });
   updateJob(job.jobId, { status: "pending" });
   store.bindJob(session, job.jobId);
-  assert.match(await dispatchCommand(session, { action: "status", jobId: job.jobId }, "reader-status", options), /处理中/);
+  assert.match(await dispatchCommand(session, { action: "status", jobId: job.jobId }, "reader-status", options), /等待处理/);
   assert.match(await dispatchCommand(session, { action: "cancel", jobId: job.jobId }, "reader-cancel", options), /已取消/);
   assert.equal(getJob(job.jobId)?.status, "cancelled");
 });

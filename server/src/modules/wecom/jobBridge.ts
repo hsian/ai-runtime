@@ -1,6 +1,6 @@
 import { getDatabase } from "../../services/database.js";
 import { createJob, getJob, updateJob } from "../../services/jobStore.js";
-import { appendJobEvent } from "../../services/jobEvents.js";
+import { appendJobEvent, getJobEvents } from "../../services/jobEvents.js";
 import { cancelOwnedJob, executePlannedJob, resumePlannedJob, runQueuedPlan, runQuestion } from "../../services/jobActions.js";
 import { confirmJobMerge, discardJobMerge, revertCompletedJobFromDefaultBranch } from "../../services/jobMergeService.js";
 import { jobQueue } from "../../services/jobQueue.js";
@@ -12,7 +12,7 @@ import type { WecomSession } from "./types.js";
 import type { Command } from "./commands.js";
 import { bindJob, getBinding, listBindings, rememberMessage, resetSession, silenceJobNotices } from "./sessionStore.js";
 import { listTopics, selectTopic } from "./topicStore.js";
-import { formatJob, HELP } from "./replies.js";
+import { formatJob, formatProgress, HELP } from "./replies.js";
 import { isNonActionablePlanInput } from "../../services/agent/planInputGuard.js";
 import { getTopicTapd } from "./tapdStore.js";
 import { copyJobAttachments, deleteJobAttachments } from "../../services/uploadService.js";
@@ -239,7 +239,12 @@ export async function dispatchCommand(session: WecomSession, command: Command, m
   }
   const job = currentJob(session, "jobId" in command ? command.jobId : undefined);
   if (job.conversationId && job.conversationId !== session.conversation_id) selectTopic(session, job.conversationId);
-  if (command.action === "status") { rememberMessage(messageKey); return formatJob(job); }
+  if (command.action === "status") {
+    rememberMessage(messageKey);
+    return ["pending", "planning", "running"].includes(job.status)
+      ? formatProgress(job, getJobEvents(job.jobId).reverse().find(event => event.type === "stage" && event.phase)?.phase)
+      : formatJob(job);
+  }
   if (command.action === "execute") {
     if (job.status !== "awaiting_confirm") throw new Error("当前任务不可执行，请先完成计划确认。");
     onJob?.(job.jobId);

@@ -26,6 +26,11 @@ export function getDialogue(session: WecomSession): DialogueState | undefined {
   return row ? JSON.parse(row.state) : undefined;
 }
 
+export function isJobReverting(jobId: string): boolean {
+  return Boolean(getDatabase().prepare(`SELECT 1 FROM wecom_dialogue_state
+    WHERE json_extract(state, '$.sourceJobId') = ? AND json_extract(state, '$.step') = 'reverting'`).get(jobId));
+}
+
 export function setDialogue(session: WecomSession, state?: DialogueState): void {
   if (!state) {
     getDatabase().prepare("DELETE FROM wecom_dialogue_state WHERE session_key = ? AND conversation_id = ?")
