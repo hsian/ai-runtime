@@ -22,6 +22,7 @@ import {
 } from "./agentProcessRegistry.js";
 import { pickPlanOutput } from "./planSummaryResolver.js";
 import { AgentAbortedError } from "./errors.js";
+import { loadCodexWebSocketOverrides } from "./codexWebSocketOverrides.js";
 
 export { killAgentForJob } from "./agentProcessRegistry.js";
 
@@ -349,10 +350,7 @@ export async function runCodexAgent(
   }
 
   if (config.CODEX_DISABLE_WEBSOCKETS) {
-    args.push(
-      "-c",
-      "model_providers.code-switch.supports_websockets=false"
-    );
+    args.push(...await loadCodexWebSocketOverrides());
   }
 
   if (config.CODEX_MODEL) {
