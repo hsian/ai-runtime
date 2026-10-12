@@ -23,6 +23,7 @@ import {
 import { pickPlanOutput } from "./planSummaryResolver.js";
 import { AgentAbortedError } from "./errors.js";
 import { loadCodexWebSocketOverrides } from "./codexWebSocketOverrides.js";
+import { commandActivity } from "./commandActivity.js";
 
 export { killAgentForJob } from "./agentProcessRegistry.js";
 
@@ -57,7 +58,7 @@ function killChildProcess(child: ChildProcess): void {
   child.kill("SIGTERM");
 }
 
-interface CodexStreamState {
+export interface CodexStreamState {
   seenTools: Set<string>;
   lastStatusAt: number;
   lastStatusText: string;
@@ -102,25 +103,7 @@ function describeCodexLine(line: string): string {
   }
 }
 
-function emitToolStart(
-  state: CodexStreamState,
-  onEvent: AgentEventHandler | undefined,
-  toolName: string,
-  toolDetail?: unknown
-): void {
-  const detail = summarizeToolInput(toolDetail);
-  const key = `${toolName}:${detail ?? ""}`;
-  if (state.seenTools.has(key)) return;
-  state.seenTools.add(key);
-  onEvent?.({
-    type: "agent_tool",
-    toolAction: "start",
-    toolName,
-    toolDetail: detail,
-  });
-}
-
-function handleCodexJsonLine(
+export function handleCodexJsonLine(
   line: string,
   onEvent: AgentEventHandler | undefined,
   state: CodexStreamState
@@ -143,11 +126,19 @@ function handleCodexJsonLine(
 
   const item = asRecord(parsed.item) ?? asRecord(parsed.message) ?? asRecord(parsed.delta);
   const itemType = String(item?.type ?? "");
-  if (item && /(tool|call|exec|command)/i.test(`${type}:${itemType}`)) {
+  if (item && (/(tool|call|exec|command)/i.test(`${type}:${itemType}`) || itemType === "file_change")) {
     const command = item.command ?? item.cmd ?? item.arguments ?? item.input;
     const name = String(item.name ?? (itemType || type || "tool"));
-    emitToolStart(state, onEvent, name, command);
+    const done = type === "item.completed" || item.status === "completed" || item.status === "failed";
+    const key = `${String(item.id ?? name)}:${done ? "done" : "start"}:${summarizeToolInput(command) ?? ""}`;
+    if (!state.seenTools.has(key)) {
+      state.seenTools.add(key);
+      onEvent?.({ type: "agent_tool", toolAction: done ? "done" : "start", toolName: name,
+        toolDetail: JSON.stringify({ activity: itemType === "file_change" ? "修改代码文件" : commandActivity(command),
+          failed: item.status === "failed" || (typeof item.exit_code === "number" && item.exit_code !== 0) }) });
+    }
   }
+  if (itemType === "reasoning") emitStatus(state, onEvent, "正在思考...");
 
   const deltaText = extractText(parsed.delta);
   if (deltaText) {

@@ -147,7 +147,7 @@ test("planning progress reuses Web tool and status events, without exposing comm
   } finally { context.coordinator.stop(); }
 });
 
-test("long planning continues reporting activity changes and periodic feedback after 90 seconds", async () => {
+test("unchanged progress stays silent even during long waits and real activity resumes updates", async () => {
   const context = setup(0);
   try {
     updateJob(context.job.jobId, { status: "planning" });
@@ -162,11 +162,22 @@ test("long planning continues reporting activity changes and periodic feedback a
     assert.equal(context.calls.length, 2);
     context.time(90_000);
     await context.coordinator.refresh();
+    assert.equal(context.calls.length, 2);
+    context.time(150_000);
+    await context.coordinator.refresh();
+    assert.equal(context.calls.length, 2);
+    context.time(210_000);
+    await context.coordinator.refresh();
+    assert.equal(context.calls.length, 2);
+    appendJobEvent(context.job.jobId, { type: "agent_tool", toolName: "Bash", toolAction: "done", toolDetail: '{"activity":"运行回归测试","failed":false}' });
+    context.time(240_000);
+    await context.coordinator.refresh();
     assert.equal(context.calls.length, 3);
-    assert.match(context.calls[2].text, /正在分析修改计划[\s\S]*搜索代码/);
+    assert.match(context.calls[2].text, /已完成：运行回归测试/);
+    assert.ok(context.calls.every(call => !/未收到|卡住|暂无新进展/.test(call.text)));
     assert.ok(context.calls.every(call => !call.text.includes("已用时")));
     updateJob(context.job.jobId, { status: "awaiting_confirm" });
-    context.time(150_000);
+    context.time(300_000);
     await context.coordinator.refresh();
     assert.equal(context.calls.length, 3);
   } finally { context.coordinator.stop(); }

@@ -1,6 +1,6 @@
 import type { WSClient } from "@wecom/aibot-node-sdk";
 import { reply, type MessageFrame } from "./client.js";
-import { formatProgress, progressStage, milestoneSignature, latestAgentActivity, withEngineFooter } from "./replies.js";
+import { progressStage, milestoneSignature, latestAgentActivity, withEngineFooter } from "./replies.js";
 import { getJob } from "../../services/jobStore.js";
 import { getJobEvents } from "../../services/jobEvents.js";
 import { areJobNoticesSilent } from "./sessionStore.js";
@@ -57,12 +57,12 @@ export class ResponseCoordinator {
       const now = this.now();
       const stage = progressStage(job, phase);
       const activity = latestAgentActivity(events);
-      const text = formatProgress(job, phase, activity);
+      const changed = stage !== live.lastStage || activity !== live.lastActivity;
+      const body = stage + (activity ? `\n当前：${activity}` : "");
+      const text = withEngineFooter(job, body);
       if (live.closed) {
-        // Long analysis phases also need feedback: coalesce actual activity and heartbeat once a minute.
-        const changed = stage !== live.lastStage || activity !== live.lastActivity;
-        if (now - live.lastUpdate < (changed ? 30_000 : 60_000)) continue;
-      } else if (now - live.lastUpdate < 10_000) continue;
+        if (!changed || now - live.lastUpdate < 30_000) continue;
+      } else if (now - live.lastUpdate < 10_000 || (!changed && now - live.started < this.lifetimeMs)) continue;
       live.lastUpdate = now;
       live.tail = live.tail.then(async () => {
         if (this.live.get(jobId) !== live || this.blocked(live.target) || areJobNoticesSilent(jobId)) return;
@@ -72,7 +72,7 @@ export class ResponseCoordinator {
         } else if (now - live.started >= this.lifetimeMs) {
           // Retain tracking for coarse later updates; the persisted outbox still owns final results.
           live.closed = true;
-          await reply(this.client, live.frame, formatProgress(job, phase, [activity, "结果稍后通知你。"].filter(Boolean).join("\n")), live.streamId);
+          await reply(this.client, live.frame, withEngineFooter(job, `${body}\n结果稍后通知你。`), live.streamId);
         } else await this.client.replyStream(live.frame, live.streamId, text, false);
         live.lastStage = stage;
         live.lastActivity = activity;
