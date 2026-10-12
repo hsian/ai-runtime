@@ -8,7 +8,7 @@ import { normalizeTapdEditableContent } from "../../services/tapd/tapdEditableCo
 import { saveImageBuffers, deleteJobAttachments } from "../../services/uploadService.js";
 import { findTapdTopic, getTopicTapd, saveTopicTapd, type TapdSnapshot } from "./tapdStore.js";
 import { selectTopic } from "./topicStore.js";
-import { parseCommand, type Command } from "./commands.js";
+import { parseAgentPrefix, parseCommand, type Command } from "./commands.js";
 import type { WecomSession } from "./types.js";
 import { getDatabase } from "../../services/database.js";
 
@@ -96,9 +96,12 @@ export function formatTapdSnapshot(snapshot: TapdSnapshot): string {
 export interface PreparedTapdMessage { command: Command; prefix?: string; topicId?: string }
 
 export async function prepareTapdMessage(session: WecomSession, text: string, loader: TapdLoader = loadTapdSnapshot): Promise<PreparedTapdMessage> {
+  const raw = text;
+  const prefixed = parseAgentPrefix(text);
+  text = prefixed.text;
   const link = extractTapdLink(text);
   const refresh = /^(重新读取需求|重新读取|刷新需求)$/.test(text.trim());
-  if (!link && !refresh) return { command: parseCommand(text) };
+  if (!link && !refresh) return { command: parseCommand(raw) };
   const previous = getTopicTapd(session);
   if (refresh && !previous) throw new Error("当前话题还没有关联 TAPD 条目，请先发送详情链接。");
   const url = link?.url ?? previous!.context.url;
@@ -127,7 +130,8 @@ export async function prepareTapdMessage(session: WecomSession, text: string, lo
   if (!link?.request || refresh) return { command: { action: "chat", topicId: session.conversation_id,
     reply: `${summary}\n\n${refresh ? "资料已更新，已启动的任务仍使用原快照。" : "你想先分析这个条目，还是按它实现？"}` } };
   const requested = parseCommand(link.request);
-  const command: Command = ["auto", "question", "plan", "clarify"].includes(requested.action)
+  const command: Command = ["auto", "question", "plan", "test-case", "clarify"].includes(requested.action)
     ? requested : { action: "auto", text: link.request };
-  return { command: { ...command, topicId: session.conversation_id }, prefix: summary, topicId: session.conversation_id };
+  return { command: { ...command, topicId: session.conversation_id,
+    ...(prefixed.agentProvider ? { agentProvider: prefixed.agentProvider } : {}) }, prefix: summary, topicId: session.conversation_id };
 }

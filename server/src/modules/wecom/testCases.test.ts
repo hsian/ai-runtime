@@ -16,6 +16,7 @@ process.env.QWECHAT_BOT_ENABLED = "false";
 process.env.CLIENT_COOKIE_SECRET = "wecom-test-case-secret";
 process.env.QWECHAT_BOT_PREVIEW_HOST = "192.168.1.10:5173";
 process.env.PORT = "6080";
+process.env.AGENT_PROVIDER = "claude";
 const store = await import("./sessionStore.js");
 const { closeDatabase } = await import("../../services/database.js");
 const { createJob, getJob, updateJob } = await import("../../services/jobStore.js");
@@ -66,6 +67,69 @@ test("read-only submission binds a running test-case job without execution confi
   assert.doesNotThrow(() => requireCommandPermission(session, { action: "cancel", jobId }, options));
   await dispatchCommand(session, { action: "cancel", jobId }, "cancel-cases", options);
   assert.equal(getJob(jobId)?.status, "cancelled");
+});
+
+test("Codex prefix applies only at the beginning and preserves explicit control commands", () => {
+  assert.deepEqual(parseCommand("  #codex 问答：登录逻辑"), { action: "question", text: "登录逻辑", agentProvider: "codex" });
+  assert.deepEqual(parseCommand("#CODEX：测试用例：登录"), { action: "test-case", text: "登录", agentProvider: "codex" });
+  assert.deepEqual(parseCommand("#codex\n修改：按钮颜色"), { action: "plan", text: "按钮颜色", agentProvider: "codex" });
+  assert.deepEqual(parseCommand("说明 #codex 的含义"), { action: "auto", text: "说明 #codex 的含义" });
+  assert.deepEqual(parseCommand("#codexx 登录"), { action: "auto", text: "#codexx 登录" });
+  assert.deepEqual(parseCommand("#codex 执行"), { action: "execute", jobId: undefined });
+  assert.deepEqual(parseCommand("#codex 取消"), { action: "cancel", jobId: undefined });
+  assert.equal(parseCommand("#codex").action, "chat");
+});
+
+test("semantic routing strips Codex marker and retains the explicit task engine", async () => {
+  const session = store.getSession(options.botId, "codex-intent", "reader", options.projectId);
+  const prepared = await prepareTapdMessage(session, "#codex 给登录生成测试用例");
+  const command = await resolveIntent(prepared.command, session, async input => {
+    assert.equal(JSON.parse(input).message, "给登录生成测试用例");
+    assert.doesNotMatch(input, /#codex/);
+    return JSON.stringify({ intent: "test-case", prompt: "登录用例", reply: "", topicId: "new", topicTitle: "登录" });
+  });
+  assert.equal(command.agentProvider, "codex");
+  assert.equal(command.action, "test-case");
+  const next = await resolveIntent(parseCommand("给登录生成测试用例"), session, async () =>
+    JSON.stringify({ intent: "test-case", prompt: "登录用例", reply: "", topicId: "new", topicTitle: "登录" }));
+  assert.equal(next.agentProvider, undefined);
+});
+
+test("question, change and test-case jobs pin Codex once without changing subsequent defaults", async () => {
+  const session = store.getSession(options.botId, "codex-jobs", "reader", options.projectId);
+  const allowed = { ...options, codeAllowedUserIds: ["reader"] };
+  const stopBeforeAgent = new Error("Stop before external agent");
+  for (const prefix of ["问答", "修改", "测试用例"]) {
+    for (const codex of [true, false]) {
+      const command = parseCommand(`${codex ? "#codex " : ""}${prefix}：登录`);
+      let jobId = "";
+      await assert.rejects(dispatchCommand(session, command, `${prefix}-${codex}`, allowed,
+        id => { jobId = id; throw stopBeforeAgent; }), error => error === stopBeforeAgent);
+      const job = getJob(jobId)!;
+      assert.equal(job.agentProvider, codex ? "codex" : "claude");
+      assert.equal(job.prompt, "登录");
+      updateJob(jobId, { status: "completed" });
+    }
+  }
+});
+
+test("TAPD requests retain the message prefix, while a bare tagged link only reads the requirement", async () => {
+  const session = store.getSession(options.botId, "codex-tapd", "reader", options.projectId);
+  const url = "https://www.tapd.cn/123/stories/view/789";
+  const loader = async () => ({ snapshotId: randomUUID(), context: { url, workspaceId: "123", itemType: "story" as const,
+    itemId: "789", title: "Login", description: "Validation", commentCount: 0, fetchedAt: new Date().toISOString() },
+    attachments: [], warnings: [] });
+  const prepared = await prepareTapdMessage(session, `#codex ${url} 生成用例`, loader);
+  assert.equal(prepared.command.agentProvider, "codex");
+  assert.equal(prepared.command.action, "auto");
+  assert.equal("text" in prepared.command && prepared.command.text, "生成用例");
+  assert.equal(prepared.command.topicId, session.conversation_id);
+  const explicit = await prepareTapdMessage(session, `#codex 测试用例：${url} 登录校验`, loader);
+  assert.equal(explicit.command.action, "test-case");
+  assert.equal(explicit.command.agentProvider, "codex");
+  const bare = await prepareTapdMessage(session, `#codex ${url}`, loader);
+  assert.equal(bare.command.action, "chat");
+  assert.equal(bare.command.agentProvider, undefined);
 });
 
 test("TAPD-linked generation copies requirement and image snapshots into the test-case job", async () => {

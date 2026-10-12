@@ -38,6 +38,13 @@ Execution uses the existing project `autoMerge` setting, including automatic
 merge into `test` and the existing preview service for `b2b-composite`.
 `问答：...` runs the shared read-only project question workflow.
 
+Start a message with `#codex ` to use Codex only for the task it creates, such as
+`#codex 问答：登录逻辑` or `#codex https://www.tapd.cn/123/stories/view/456 生成测试用例`.
+The prefix is removed before intent classification, which uses the default
+engine. No session preference is saved: later new tasks use `AGENT_PROVIDER`.
+A task retains its engine through clarification and execution. Prefixes on
+control commands do not change an existing task's engine or permissions.
+
 `测试用例：...` (or `生成测试用例：...`) runs the shared Web test-case workflow
 without code-writing permission or execution confirmation. Natural-language
 requests such as `给这个需求生成测试用例` are also classified as `test-case`.

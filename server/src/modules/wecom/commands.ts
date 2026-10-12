@@ -2,14 +2,26 @@ export type Command = ({ action: "execute" | "status" | "cancel" | "merge" | "di
   | { action: "new" | "help" | "topics" | "identity" }
   | { action: "question" | "plan" | "test-case" | "clarify" | "auto"; text: string; jobId?: string }
   | { action: "revert"; jobId?: string }
-  | { action: "chat"; reply: string }) & { topicId?: string; topicTitle?: string };
+  | { action: "chat"; reply: string }) & { topicId?: string; topicTitle?: string; agentProvider?: "claude" | "codex" };
 
 export function requiresTextConfirmation(command: Command): boolean {
   return ["execute", "cancel", "merge", "discard", "revert"].includes(command.action);
 }
 
-export function parseCommand(raw: string): Command {
+export function parseAgentPrefix(raw: string): { text: string; agentProvider?: "codex" } {
   const text = raw.trim();
+  const prefix = /^#codex(?=\s|[:：]|$)\s*[:：]?\s*/i.exec(text);
+  return prefix ? { text: text.slice(prefix[0].length).trim(), agentProvider: "codex" } : { text };
+}
+
+export function parseCommand(raw: string): Command {
+  const { text, agentProvider } = parseAgentPrefix(raw);
+  if (agentProvider && !text) return { action: "chat", reply: "请在 #codex 后加上本次任务，例如「#codex 测试用例：登录校验」。" };
+  const command = parseCommandText(text);
+  return agentProvider && "text" in command ? { ...command, agentProvider } : command;
+}
+
+function parseCommandText(text: string): Command {
   if (/^我的\s*id$/i.test(text)) return { action: "identity" };
   const control = /^(执行|确认执行|状态|进度|取消|合并|重试合并|放弃合并)(?:\s+([a-f0-9-]{36}))?$/.exec(text);
   if (control) {

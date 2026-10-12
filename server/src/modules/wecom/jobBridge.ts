@@ -215,6 +215,7 @@ export async function dispatchCommand(session: WecomSession, command: Command, m
     const tapd = getTopicTapd(session);
     const job = getDatabase().transaction(() => {
       const created = createJob({ prompt: command.text, projectId: options.projectId,
+        agentProvider: command.agentProvider ?? config.AGENT_PROVIDER,
         tapdContext: tapd?.context,
         ownerId: session.owner_id, conversationId: session.conversation_id,
         submittedBy: session.user_id, taskMode: testCase ? "test-case" : question ? "question" : "code" });
@@ -232,7 +233,7 @@ export async function dispatchCommand(session: WecomSession, command: Command, m
       return created;
     })();
     logOperation({ action: "job_submit", status: "success", jobId: job.jobId,
-      ownerId: session.owner_id, mode: testCase ? "test-case" : question ? "question" : "plan", engine: config.AGENT_PROVIDER });
+      ownerId: session.owner_id, mode: testCase ? "test-case" : question ? "question" : "plan", engine: job.agentProvider });
     onJob?.(job.jobId);
     if (question) void runQuestion(job.jobId, {
       responseInstructions: "这是企业微信对话，请直接回答本次问题，优先简短结论。用户要求只给颜色、数字或简答时严格遵守。不要输出任务跟踪、TaskCreate、工具使用说明或内部模式限制，不要求用户切换网页模式。只有用户需要比较方案时才列选项，选项用独立行 A：、B：标注，选方案不等于确认执行。",

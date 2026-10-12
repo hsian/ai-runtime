@@ -143,6 +143,7 @@ export async function resolveIntent(command: Command, session: WecomSession, mod
     }
     if (selection) setDialogue(contextSession);
     return { action: result.intent, text: result.prompt.trim(),
+      ...(command.agentProvider ? { agentProvider: command.agentProvider } : {}),
       ...(result.topicId ? { topicId: result.topicId, topicTitle: result.topicTitle ?? "" } : {}) };
   } catch {
     console.warn("[WeCom] 意图识别未成功，请检查 Agent 连接或输出格式");
