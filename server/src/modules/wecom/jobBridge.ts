@@ -226,7 +226,7 @@ export async function dispatchCommand(session: WecomSession, command: Command, m
         throw error;
       }
       updateJob(created.jobId, { status: readOnly ? "running" : "planning", requiresConfirm: !readOnly, attachments,
-        previewHost: options.previewHost });
+        previewHost: options.previewHost, wecomExplicitEngine: command.agentProvider === "codex" });
       bindJob(session, created.jobId, !(readOnly && active && ["awaiting_input", "awaiting_confirm"].includes(active.status)));
       rememberMessage(messageKey);
       appendJobEvent(created.jobId, { type: "user", text: command.text });

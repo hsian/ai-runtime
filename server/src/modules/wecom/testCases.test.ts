@@ -107,6 +107,7 @@ test("question, change and test-case jobs pin Codex once without changing subseq
         id => { jobId = id; throw stopBeforeAgent; }), error => error === stopBeforeAgent);
       const job = getJob(jobId)!;
       assert.equal(job.agentProvider, codex ? "codex" : "claude");
+      assert.equal(job.wecomExplicitEngine, codex);
       assert.equal(job.prompt, "登录");
       updateJob(jobId, { status: "completed" });
     }
@@ -201,20 +202,23 @@ test("completion includes Excel link; credentials reject tampering, expiry and o
   process.env.QWECHAT_BOT_PREVIEW_HOST = "192.168.1.10:5173";
 });
 
-test("completed task replies identify the recorded engine after the answer and download links", () => {
+test("completed task replies identify only explicitly selected Codex after the answer and download links", () => {
   const created = createJob({ prompt: "#codex is just text here", taskMode: "question", agentProvider: "claude" });
   const completed = updateJob(created.jobId, { status: "completed", message: "Answer" })!;
-  assert.match(formatJob(completed), /本次回答执行引擎为 claude。$/);
-  assert.doesNotMatch(formatJob(completed), /执行引擎为 codex/);
-  assert.match(formatJob({ ...completed, agentProvider: "codex" }), /本次回答执行引擎为 codex。$/);
-  assert.match(formatJob({ ...completed, taskMode: "code", agentProvider: "codex", implementationSummary: "Done",
+  assert.doesNotMatch(formatJob(completed), /本次回答执行引擎/);
+  assert.doesNotMatch(formatJob({ ...completed, projectId: "yuenongjiao-mini" }), /本次回答执行引擎/);
+  assert.doesNotMatch(formatJob({ ...completed, agentProvider: "codex" }), /本次回答执行引擎/);
+  assert.doesNotMatch(formatJob({ ...completed, wecomExplicitEngine: true }), /本次回答执行引擎/);
+  const explicit = { ...completed, agentProvider: "codex" as const, wecomExplicitEngine: true };
+  assert.match(formatJob(explicit), /本次回答执行引擎为 codex。$/);
+  assert.match(formatJob({ ...explicit, taskMode: "code", implementationSummary: "Done",
     previewUrl: "http://192.168.1.10:5173" }), /本次回答执行引擎为 codex。$/);
-  const cases = formatJob({ ...completed, taskMode: "test-case", agentProvider: "codex", testCaseDocument: document });
+  const cases = formatJob({ ...explicit, taskMode: "test-case", testCaseDocument: document });
   assert.match(cases, /下载 Excel/);
   assert.match(cases, /本次回答执行引擎为 codex。$/);
-  assert.doesNotMatch(formatJob({ ...completed, agentProvider: undefined }), /本次回答执行引擎/);
-  assert.doesNotMatch(formatJob({ ...completed, status: "running" }), /本次回答执行引擎/);
-  assert.doesNotMatch(formatJob({ ...completed, revertedFromDefaultAt: new Date().toISOString() }), /本次回答执行引擎/);
+  assert.doesNotMatch(formatJob({ ...explicit, agentProvider: undefined }), /本次回答执行引擎/);
+  assert.doesNotMatch(formatJob({ ...explicit, status: "running" }), /本次回答执行引擎/);
+  assert.doesNotMatch(formatJob({ ...explicit, revertedFromDefaultAt: new Date().toISOString() }), /本次回答执行引擎/);
 });
 
 test("signed download works without login while the normal Web route stays protected", async () => {

@@ -105,7 +105,8 @@ export function splitMessage(text: string, maxBytes = 3500): string[] {
 
 export function formatJob(job: Job, details = false): string {
   const header = details ? `**项目：${job.projectId}**\n任务：\`${job.jobId}\`\n` : "";
-  const engineFooter = job.agentProvider ? `\n\n本次回答执行引擎为 ${job.agentProvider}。` : "";
+  const engineFooter = job.wecomExplicitEngine && job.agentProvider === "codex"
+    ? "\n\n本次回答执行引擎为 codex。" : "";
   if (job.status === "awaiting_confirm") return `${header}\n${job.planSummary ?? job.message}\n\n回复「执行」开始修改，回复「取消」取消任务。`;
   if (job.status === "awaiting_input") {
     const questions = job.clarificationQuestions?.map((q, i) => `${i + 1}. ${q.question}${q.options?.length ? `\n选项：${q.options.join(" / ")}` : ""}`).join("\n\n");
