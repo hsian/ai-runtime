@@ -173,7 +173,8 @@ test("unchanged progress stays silent and real activity updates the same stream"
     context.time(240_000);
     await context.coordinator.refresh();
     assert.equal(context.calls.length, 3);
-    assert.match(context.calls[2].text, /已完成：运行回归测试/);
+    assert.equal(context.calls[2].text, "正在分析修改计划");
+    assert.ok(context.calls.every(call => !/已完成|本阶段已结束/.test(call.text)));
     assert.ok(context.calls.every(call => call.streamId === "same-stream" && call.finish === false));
     assert.ok(context.calls.every(call => !/未收到|卡住|暂无新进展/.test(call.text)));
     assert.ok(context.calls.every(call => !call.text.includes("已用时")));

@@ -1,5 +1,46 @@
 # Enterprise WeChat integration
 
+## TAPD backend completion notifications
+
+The optional monitor polls TAPD every ten minutes during 09:00–19:00 in
+Asia/Shanghai (including weekends). Configure these separately from the code
+permission whitelist:
+
+```dotenv
+TAPD_COMPLETION_NOTIFY_ENABLED=true
+TAPD_COMPLETION_NOTIFY_WORKSPACE_IDS=34579999,61733891
+TAPD_COMPLETION_NOTIFY_RECIPIENTS={"TAPD姓名":"wecom_userid"}
+```
+
+Workspace IDs must already be registered in `TAPD_WORKSPACES`. Only iterations
+whose names contain the current year and month in `YYYY年M月` form are monitored;
+both date names and names such as `【研发】2026年10月` match. Each new iteration
+first establishes a silent baseline. Subsequent requests filter by last modified
+time with a one-minute overlap, paginate all results, and retain the cursor on
+failure. Existing iteration cursors survive restarts and overnight downtime.
+At a month change, monitoring switches to the new month; previous-month work is
+outside the configured scope.
+
+Only task titles starting with `后端` trigger completion notifications. Frontend
+tasks must start with `前端`, belong to the same story and a monitored iteration,
+and have an owner with an exact entry in the recipient mapping. Owners separated
+by semicolons or commas are supported. No name guessing, directory lookup, or
+notification to unconfigured users is performed.
+
+Task states and pending messages are stored in SQLite. Successful messages are
+marked sent; failed/blocked messages retry in a subsequent daytime cycle. A
+queued notice is discarded if the next poll observes the backend reopened.
+Read-only integration validation: build the server, then run
+`node scripts/verify-tapd-completion.mjs` from `server/`; this checks real TAPD
+queries and recipient matches without starting the bot or sending messages. A
+backend task reopened and later completed can notify again. As with other
+external sends, a crash after delivery but before recording its acknowledgement
+can cause a duplicate on retry. Changes that both complete and reopen between
+polls are not observable through task snapshots.
+
+Restart the server after configuration changes. Tests use simulated TAPD data
+and simulated message delivery; they do not contact or message teammates.
+
 This module uses the official `@wecom/aibot-node-sdk` long connection. Run only
 one enabled server process per bot. It starts with the server and shuts down
 with it; no public callback endpoint is required.

@@ -10,6 +10,7 @@ import { getDatabase } from "../../services/database.js";
 import { getDialogue } from "./dialogueStore.js";
 import type { WecomSession } from "./types.js";
 import type { WecomConfig } from "./config.js";
+import { startTapdCompletionMonitor } from "./tapdCompletion.js";
 
 export function startWecomBot(options: WecomConfig | undefined = getWecomConfig(), clientFactory = createWecomClient): () => void {
   if (!options) return () => {};
@@ -22,6 +23,9 @@ export function startWecomBot(options: WecomConfig | undefined = getWecomConfig(
   let authenticated = false;
   let stopped = false;
   let flushing = false;
+  const stopCompletionMonitor = options.tapdCompletion ? startTapdCompletionMonitor(options.botId, options.tapdCompletion,
+    target => authenticated && !stopped && (!target || !responses.blocked(target)),
+    (target, content) => client.sendMessage(target, { msgtype: "markdown", markdown: { content } })) : () => {};
   const reconcile = () => {
     const bindings = listBindings();
     const existing = new Set(bindings.map(binding => binding.job_id));
@@ -114,6 +118,7 @@ export function startWecomBot(options: WecomConfig | undefined = getWecomConfig(
   client.connect();
   return () => {
     stopped = true;
+    stopCompletionMonitor();
     handler.stop();
     responses.stop();
     clearInterval(timer);

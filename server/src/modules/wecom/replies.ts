@@ -56,17 +56,15 @@ export function latestAgentActivity(events: JobEvent[]): string {
     Bash: "执行项目命令", command_execution: "执行项目命令", exec_command: "执行项目命令",
   };
   let detail = "";
-  if (tool) {
+  if (tool && tool.toolAction !== "done") {
     const name = tool.toolName!.split(".").at(-1)!;
     detail = labels[name] ?? `调用 ${name.replace(/[^a-zA-Z0-9_:-]/g, "").slice(0, 40) || "工具"}`;
-    let failed = false;
     if (["Bash", "command_execution", "exec_command", "file_change"].includes(name)) {
       let input: unknown = tool.toolDetail;
       try { input = JSON.parse(tool.toolDetail ?? "null"); } catch { /* Raw command input is also supported. */ }
       const safe = input && typeof input === "object" ? input as Record<string, unknown> : undefined;
       const activities = ["安装项目依赖", "运行回归测试", "检查编译和代码规范", "检查代码变更", "查阅和定位代码", "执行项目命令", "修改代码文件"];
       detail = typeof safe?.activity === "string" && activities.includes(safe.activity) ? safe.activity : commandActivity(input);
-      failed = safe?.failed === true;
     }
     // Display only a file name, never raw shell commands, file contents or arbitrary tool input.
     if (["Read", "read_file", "Edit", "Write", "MultiEdit"].includes(name) && tool.toolDetail) {
@@ -79,9 +77,6 @@ export function latestAgentActivity(events: JobEvent[]): string {
         }
       } catch { /* Truncated tool input still has a useful tool label. */ }
     }
-    if (tool.toolAction === "done") detail = `${failed ? "未通过" : "已完成"}：${detail}`;
-    const completed = current.filter(event => event.type === "agent_tool" && event.toolAction === "done").length;
-    if (completed) detail += `（本阶段已结束 ${completed} 项操作）`;
   }
   if (latest?.type === "agent_status") {
     const status = latest.statusText ?? latest.text ?? "";

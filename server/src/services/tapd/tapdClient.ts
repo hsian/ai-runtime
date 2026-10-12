@@ -33,6 +33,8 @@ export interface TapdTask {
   priority_label?: string;
   story_id?: string;
   iteration_id?: string;
+  modified?: string;
+  completed?: string;
 }
 
 export interface TapdBug {
@@ -102,6 +104,7 @@ async function tapdRequest<T>(
 
   const res = await fetch(url, {
     headers: { Authorization: `Bearer ${token}` },
+    signal: AbortSignal.timeout(30_000),
   });
   const body = (await res.json()) as TapdApiEnvelope<T>;
   if (!res.ok || body.status !== 1) {
@@ -169,9 +172,9 @@ async function fetchAllPages<T>(
     });
     const batch = unwrapRecords<T>(body.data, recordKey);
     all.push(...batch);
-    if (batch.length < pageSize) break;
+    if (batch.length < pageSize) return all;
   }
-  return all;
+  throw new Error("TAPD 查询超过分页上限，请缩小查询范围");
 }
 
 export async function getAccessToken(cfg: TapdConfig = getTapdConfig()): Promise<string> {
@@ -182,6 +185,7 @@ export async function getAccessToken(cfg: TapdConfig = getTapdConfig()): Promise
 
   const res = await fetch(new URL("/tokens/request_token", cfg.apiBase), {
     method: "POST",
+    signal: AbortSignal.timeout(30_000),
     headers: {
       Authorization: `Basic ${Buffer.from(`${cfg.clientId}:${cfg.clientSecret}`).toString("base64")}`,
       "Content-Type": "application/x-www-form-urlencoded",
@@ -211,14 +215,14 @@ export async function listIterations(
 
 export async function listIterationTasks(
   iterationId: string,
-  options?: { workspaceId?: string; prefix?: string },
+  options?: { workspaceId?: string; prefix?: string; modified?: string },
   cfg: TapdConfig = getTapdConfig()
 ): Promise<TapdTask[]> {
   const wsId = options?.workspaceId ?? cfg.workspaceId;
   const tasks = await fetchAllPages<TapdTask>(
     cfg,
     "/tasks",
-    { workspace_id: wsId, iteration_id: iterationId },
+    { workspace_id: wsId, iteration_id: iterationId, modified: options?.modified, order: "id ASC" },
     "Task"
   );
   const prefix = options?.prefix?.trim();
@@ -241,6 +245,10 @@ export async function listIterationBugs(
   const prefix = options?.prefix?.trim();
   if (!prefix) return bugs;
   return bugs.filter((bug) => (bug.title ?? bug.name ?? "").startsWith(prefix));
+}
+
+export async function listStoryTasks(storyId: string, workspaceId: string, cfg: TapdConfig = getTapdConfig()): Promise<TapdTask[]> {
+  return fetchAllPages<TapdTask>(cfg, "/tasks", { workspace_id: workspaceId, story_id: storyId, order: "id ASC" }, "Task");
 }
 
 export async function createBug(
