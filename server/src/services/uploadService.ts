@@ -80,12 +80,12 @@ export async function stageAttachmentsForAgent(
   return staged;
 }
 
-export function saveImageBuffers(id: string, images: { name: string; mime: string; buffer: Buffer }[]): JobAttachment[] {
+export function saveImageBuffers(id: string, images: { name: string; mime: string; buffer: Buffer }[], maxBytes = config.UPLOAD_MAX_BYTES): JobAttachment[] {
   if (!/^[a-f0-9-]{36}$/.test(id)) throw new Error("Invalid attachment directory");
   const directory = resolve(config.UPLOAD_DIR, id);
   if (images.length) mkdirSync(directory, { recursive: true });
   return images.map((image, index) => {
-    if (!IMAGE_MIME.test(image.mime) || !image.buffer.length || image.buffer.length > config.UPLOAD_MAX_BYTES) {
+    if (!IMAGE_MIME.test(image.mime) || !image.buffer.length || image.buffer.length > maxBytes) {
       throw new Error("Invalid image attachment");
     }
     const ext = image.mime === "image/png" ? ".png" : image.mime === "image/webp" ? ".webp"

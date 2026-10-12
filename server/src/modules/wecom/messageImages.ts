@@ -1,5 +1,5 @@
 import type { BaseMessage, ImageContent, WSClient } from "@wecom/aibot-node-sdk";
-import { config } from "../../config.js";
+export const WECOM_IMAGE_MAX_BYTES = 10 * 1024 * 1024;
 
 export function extractMessageContent(body: BaseMessage): { text: string; images: ImageContent[] } {
   if (body.msgtype === "mixed") {
@@ -33,20 +33,36 @@ export async function downloadMessageImages(client: Pick<WSClient, "downloadFile
   const results: { name: string; mime: string; buffer: Buffer }[] = [];
   let total = 0;
   for (const [index, image] of images.entries()) {
+    let stage = "address";
+    let host = "";
+    const fail = (reason: string) => new Error(`第 ${index + 1} 张图片读取失败：${reason} 本次消息未提交任务。`);
     try {
       const url = new URL(image.url);
+      host = url.hostname;
       if (url.protocol !== "https:" || url.username || url.password
-        || !["qq.com", "weixin.qq.com", "wecom.cn"].some(host => url.hostname === host || url.hostname.endsWith(`.${host}`))) {
+        || !["qq.com", "wecom.cn", "qpic.cn"].some(host => url.hostname === host || url.hostname.endsWith(`.${host}`))) {
         throw new Error("Invalid image URL");
       }
+      stage = "download";
       const { buffer } = await client.downloadFile(image.url, image.aeskey);
+      stage = "size";
       total += buffer.length;
-      if (!buffer.length || buffer.length > config.UPLOAD_MAX_BYTES || total > 20 * 1024 * 1024) throw new Error("Image too large");
+      if (!buffer.length) throw fail("下载结果为空，请重新发送图片。");
+      if (buffer.length > WECOM_IMAGE_MAX_BYTES) throw fail("单张图片不能超过 10MB，请缩小后重新发送。");
+      if (total > 20 * 1024 * 1024) throw fail("本条消息的图片总大小不能超过 20MB，请分批发送。");
+      stage = "format";
       const format = imageFormat(buffer);
-      if (!format) throw new Error("Unsupported image format");
+      if (!format) throw fail("下载内容无法识别为 JPEG、PNG、WebP 或 GIF 图片，请重新发送。");
       results.push({ name: `wecom-image-${index + 1}.${format.ext}`, mime: format.mime, buffer });
-    } catch {
-      throw new Error(`第 ${index + 1} 张图片读取失败，请重新发送 JPEG、PNG、WebP 或 GIF 图片，并确保未超过上传大小限制。本次需求未执行。`);
+    } catch (error) {
+      const metadata = error as { code?: unknown; response?: { status?: unknown } } | undefined;
+      // Never log signed URLs, keys, response bodies or raw SDK errors.
+      console.warn("[WeCom] 图片读取失败", { index: index + 1, stage, host,
+        code: typeof metadata?.code === "string" && /^[A-Z0-9_]{1,40}$/.test(metadata.code) ? metadata.code : undefined,
+        httpStatus: typeof metadata?.response?.status === "number" ? metadata.response.status : undefined });
+      if (stage === "size" || stage === "format") throw error;
+      throw fail(stage === "address" ? "图片下载地址未通过校验，请联系管理员检查服务日志。"
+        : "服务器下载或解密企微图片失败，请重新发送；若仍失败，请联系管理员检查服务日志。");
     }
   }
   return results;

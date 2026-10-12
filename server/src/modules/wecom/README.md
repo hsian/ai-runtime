@@ -116,7 +116,9 @@ job attachments as TAPD images. Send screenshots and the request together;
 `#codex` and `#小程序` in the text retain their single-task behavior. Image-only
 messages use read-only analysis. Failed images stop submission rather than
 silently submitting text alone. A message accepts up to nine images and 20 MiB
-total, with the existing per-image upload limit. File/video messages are not supported.
+total, with a 10 MiB per-image limit independent of Web uploads. Download errors
+log only the stage, host and safe error codes, never signed URLs or image keys.
+File/video messages are not supported.
 
 `tapdBridge.ts` reads the body, comments and available inline images using the
 shared `resolveContext.ts` and existing TAPD client. No editing or TAPD writeback

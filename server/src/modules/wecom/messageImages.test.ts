@@ -45,8 +45,18 @@ test("download uses per-image keys, recognizes bytes and rejects failed or unsaf
   } };
   assert.deepEqual(await downloadMessageImages(downloader, [image]), [{ name: "wecom-image-1.png", mime: "image/png", buffer: png }]);
   await assert.rejects(downloadMessageImages(downloader, [{ ...image, url: "https://127.0.0.1/private" }]), /第 1 张图片读取失败/);
-  await assert.rejects(downloadMessageImages({ async downloadFile() { return { buffer: Buffer.from("not an image") }; } }, [image]), /未执行/);
+  await assert.rejects(downloadMessageImages({ async downloadFile() { return { buffer: Buffer.from("not an image") }; } }, [image]), /无法识别.*未提交任务/);
   await assert.rejects(downloadMessageImages(downloader, Array(10).fill(image)), /最多支持 9/);
+});
+
+test("normal screenshots over 300KB and Tencent image CDN URLs work without changing Web upload limits", async () => {
+  const large = Buffer.concat([png, Buffer.alloc(400 * 1024)]);
+  const result = await downloadMessageImages({ async downloadFile() { return { buffer: large }; } }, [{ ...image, url: "https://wework.qpic.cn/signed-image" }]);
+  const { WECOM_IMAGE_MAX_BYTES } = await import("./messageImages.js");
+  const id = "87654321-1234-1234-1234-123456789abc";
+  assert.equal(saveImageBuffers(id, result, WECOM_IMAGE_MAX_BYTES)[0].sizeBytes, large.length);
+  assert.throws(() => saveImageBuffers("87654321-1234-1234-1234-123456789abd", result), /Invalid image attachment/);
+  await assert.rejects(downloadMessageImages({ async downloadFile() { return { buffer: Buffer.alloc(WECOM_IMAGE_MAX_BYTES + 1) }; } }, [image]), /不能超过 10MB/);
 });
 
 test("handler passes actual image bytes with Codex and project selection and cleans temporary files", async () => {
@@ -95,7 +105,7 @@ test("image failure stops routing and dispatch instead of submitting text alone"
   try {
     handler.handle(frame("failed", "#codex 修改：不用置灰"));
     for (let count = 0; count < 100 && !calls.some(text => text.includes("读取失败")); count++) await new Promise(resolve => setTimeout(resolve, 10));
-    assert.match(calls.at(-1)!, /图片读取失败.*未执行/);
+    assert.match(calls.at(-1)!, /图片读取失败.*下载或解密.*未提交任务/);
     assert.doesNotMatch(calls.at(-1)!, /secret|must not route/);
   } finally { handler.stop(); }
 });

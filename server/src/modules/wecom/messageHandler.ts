@@ -12,7 +12,7 @@ import { randomUUID } from "node:crypto";
 import { THINKING, withEngineFooter } from "./replies.js";
 import { prepareTapdMessage, extractTapdLink } from "./tapdBridge.js";
 import type { ResponseCoordinator } from "./responseCoordinator.js";
-import { extractMessageContent, downloadMessageImages } from "./messageImages.js";
+import { extractMessageContent, downloadMessageImages, WECOM_IMAGE_MAX_BYTES } from "./messageImages.js";
 import { saveImageBuffers, deleteJobAttachments } from "../../services/uploadService.js";
 
 const VOICE_CONFIRMATION_REQUIRED = "为避免语音识别误操作，执行、取消、撤回和合并等操作请用文字发送。语音可以用于问答和描述修改需求。";
@@ -92,7 +92,7 @@ export function createMessageHandler(client: WSClient, options: WecomConfig, rou
               throw new Error("图片需与问题或修改说明一起发送；执行、取消等操作请单独发送文字命令。");
             }
             imageDirectory = imageBuffers.length ? randomUUID() : undefined;
-            const attachments = imageDirectory ? saveImageBuffers(imageDirectory, imageBuffers) : [];
+            const attachments = imageDirectory ? saveImageBuffers(imageDirectory, imageBuffers, WECOM_IMAGE_MAX_BYTES) : [];
             text = await dispatch(session, command, messageKey, taskOptions, responses ? jobId => {
               trackedJob = jobId;
               responses.track(jobId, frame, streamId, target, responseStarted);
