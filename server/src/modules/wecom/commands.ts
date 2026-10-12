@@ -2,7 +2,7 @@ export type Command = ({ action: "execute" | "status" | "cancel" | "merge" | "di
   | { action: "new" | "help" | "topics" | "identity" }
   | { action: "question" | "plan" | "test-case" | "clarify" | "auto"; text: string; jobId?: string }
   | { action: "revert"; jobId?: string }
-  | { action: "chat"; reply: string }) & { topicId?: string; topicTitle?: string; agentProvider?: "claude" | "codex"; projectId?: string };
+  | { action: "chat"; reply: string; historySource?: "task" }) & { topicId?: string; topicTitle?: string; agentProvider?: "claude" | "codex"; projectId?: string };
 
 export function requiresTextConfirmation(command: Command): boolean {
   return ["execute", "cancel", "merge", "discard", "revert"].includes(command.action);

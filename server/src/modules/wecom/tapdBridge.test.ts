@@ -81,11 +81,13 @@ test("bare links read data without jobs or semantic inference, reuse item topics
 test("linked requests retain the TAPD topic and never turn link-plus-execute into a control command", async () => {
   const session = store.getSession("bot", "routing", "alice", options.projectId);
   const prepared = await bridge.prepareTapdMessage(session, `分析这个需求 ${url}`, async link => snapshot(link));
-  const command = await resolveIntent(prepared.command, session, async input => {
+  const command = await resolveIntent(prepared.command, session, async (input, stage) => {
     const context = JSON.parse(input);
-    assert.equal(context.linkedTopicId, session.conversation_id);
-    assert.equal(context.topics.length, 1);
-    assert.match(context.topics[0].tapd.description, /需求正文/);
+    if (stage === "context") {
+      assert.equal(context.linkedTopicId, session.conversation_id);
+      assert.equal(context.topics.length, 1);
+      assert.match(context.topics[0].tapd.description, /需求正文/);
+    } else assert.equal(context.linkedReference, true);
     return JSON.stringify({ intent: "question", reply: "", prompt: "分析关联需求", topicId: "new" });
   });
   assert.equal(command.action, "question");

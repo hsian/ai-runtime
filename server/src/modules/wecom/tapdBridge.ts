@@ -127,7 +127,7 @@ export async function prepareTapdMessage(session: WecomSession, text: string, lo
     await deleteJobAttachments(old.snapshotId).catch(() => console.warn("[WeCom] 旧 TAPD 配图清理失败"));
   }
   const summary = formatTapdSnapshot(snapshot);
-  if (!link?.request || refresh) return { command: { action: "chat", topicId: session.conversation_id,
+  if (!link?.request || refresh) return { command: { action: "chat", topicId: session.conversation_id, historySource: "task",
     reply: `${summary}\n\n${refresh ? "资料已更新，已启动的任务仍使用原快照。" : "你想先分析这个条目，还是按它实现？"}` } };
   const requested = parseCommand(link.request);
   const command: Command = ["auto", "question", "plan", "test-case", "clarify"].includes(requested.action)

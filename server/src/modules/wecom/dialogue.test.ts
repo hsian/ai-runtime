@@ -52,11 +52,12 @@ test("side questions keep pending confirmation and workflow answers do not creat
   const session = store.getSession("dialogue", "workflow", "alice", options.projectId);
   setDialogue(session, { step: "revert_confirm", sourceJobId: "original" });
   const command = await resolveIntent({ action: "auto", text: "这是 revert 还是改回去？" }, session, async input => {
-    assert.match(input, /revert_confirm/);
+    assert.doesNotMatch(input, /revert_confirm/);
     return JSON.stringify({ intent: "workflow", reply: "将使用 Git revert，还在等待你确认执行。", prompt: "", topicId: session.conversation_id });
   });
   assert.equal(command.action, "chat");
-  await dispatchCommand(session, command, "workflow-question", options);
+  const reply = await dispatchCommand(session, command, "workflow-question", options);
+  assert.match(reply, /Git revert/);
   assert.equal(getDialogue(session)?.sourceJobId, "original");
   assert.equal(store.listBindings().filter(binding => binding.session_key === session.session_key).length, 0);
 });

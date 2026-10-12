@@ -39,10 +39,12 @@ function makeTopics(user: string, pending = false) {
 
 test("A/B/A routing restores A history and never feeds B task results to A jobs", async () => {
   const { session, a, b } = makeTopics("interleaved");
-  const command = await resolveIntent(parseCommand("账套列表的字号呢？"), session, async input => {
+  const command = await resolveIntent(parseCommand("账套列表的字号呢？"), session, async (input, stage) => {
     const context = JSON.parse(input);
-    assert.ok(context.topics.some((topic: { id: string }) => topic.id === a.topicId));
-    assert.ok(context.topics.some((topic: { id: string }) => topic.id === b.topicId));
+    if (stage === "context") {
+      assert.ok(context.topics.some((topic: { id: string }) => topic.id === a.topicId));
+      assert.ok(context.topics.some((topic: { id: string }) => topic.id === b.topicId));
+    } else assert.equal(context.topics, undefined);
     return JSON.stringify({ intent: "question", prompt: "账套选择页账套列表标题字号是多少？", reply: "", topicId: a.topicId });
   });
   assert.equal(command.topicId, a.topicId);

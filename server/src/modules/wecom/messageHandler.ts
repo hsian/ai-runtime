@@ -82,7 +82,8 @@ export function createMessageHandler(client: WSClient, options: WecomConfig, rou
               if (cancelledId) await responses?.finish(cancelledId, "任务已取消。");
             }
             if (prepared.prefix) text = `${prepared.prefix}\n\n${text}`;
-            recordChatExchange(getSession(options.botId, target, body.from.userid, projectId), content, trackedJob ? undefined : text);
+            recordChatExchange(getSession(options.botId, target, body.from.userid, projectId), content, trackedJob ? undefined : text,
+              command.action === "chat" && !command.historySource && !prepared.prefix ? "conversation" : "task");
           }
         } catch (error) {
           rememberMessage(messageKey);

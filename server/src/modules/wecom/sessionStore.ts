@@ -37,6 +37,10 @@ export function initWecomStore(): void {
       job_id TEXT PRIMARY KEY REFERENCES jobs(job_id) ON DELETE CASCADE
     );
   `);
+  const historyColumns = getDatabase().prepare("PRAGMA table_info(wecom_chat_history)").all() as { name: string }[];
+  if (!historyColumns.some(column => column.name === "source")) {
+    getDatabase().exec("ALTER TABLE wecom_chat_history ADD COLUMN source TEXT NOT NULL DEFAULT 'unknown'");
+  }
   initTopicStore();
   initTapdStore();
   initDialogueStore();
@@ -85,12 +89,19 @@ export function getChatHistory(session: WecomSession): { role: "user" | "assista
     .all(session.session_key, session.conversation_id) as { role: "user" | "assistant"; content: string }[]).reverse();
 }
 
-export function recordChatExchange(session: WecomSession, user: string, assistant?: string): void {
+export function getConversationHistory(session: WecomSession): { role: "user" | "assistant"; content: string }[] {
+  return (getDatabase().prepare(`SELECT role, content FROM wecom_chat_history
+    WHERE session_key = ? AND conversation_id = ? AND (role = 'user' OR source = 'conversation')
+    ORDER BY id DESC LIMIT 8`).all(session.session_key, session.conversation_id) as
+    { role: "user" | "assistant"; content: string }[]).reverse();
+}
+
+export function recordChatExchange(session: WecomSession, user: string, assistant?: string, source: "conversation" | "task" = "conversation"): void {
   const db = getDatabase();
   db.transaction(() => {
-    const insert = db.prepare("INSERT INTO wecom_chat_history (session_key, conversation_id, role, content) VALUES (?, ?, ?, ?)");
-    insert.run(session.session_key, session.conversation_id, "user", user.slice(0, 2000));
-    if (assistant) insert.run(session.session_key, session.conversation_id, "assistant", assistant.slice(0, 2000));
+    const insert = db.prepare("INSERT INTO wecom_chat_history (session_key, conversation_id, role, content, source) VALUES (?, ?, ?, ?, ?)");
+    insert.run(session.session_key, session.conversation_id, "user", user.slice(0, 2000), "conversation");
+    if (assistant) insert.run(session.session_key, session.conversation_id, "assistant", assistant.slice(0, 2000), source);
     db.prepare(`DELETE FROM wecom_chat_history WHERE session_key = ? AND conversation_id = ? AND id NOT IN
       (SELECT id FROM wecom_chat_history WHERE session_key = ? AND conversation_id = ? ORDER BY id DESC LIMIT 12)`)
       .run(session.session_key, session.conversation_id, session.session_key, session.conversation_id);
@@ -103,7 +114,7 @@ export function recordFinalAnswer(jobId: string, answer: string): void {
     JOIN wecom_job_bindings b ON b.session_key = s.session_key
     JOIN jobs j ON j.job_id = b.job_id WHERE b.job_id = ?`).get(jobId) as WecomSession | undefined;
   if (!row?.conversation_id) return;
-  getDatabase().prepare("INSERT INTO wecom_chat_history (session_key, conversation_id, role, content) VALUES (?, ?, 'assistant', ?)")
+  getDatabase().prepare("INSERT INTO wecom_chat_history (session_key, conversation_id, role, content, source) VALUES (?, ?, 'assistant', ?, 'task')")
     .run(row.session_key, row.conversation_id, answer.length > 6000 ? answer.slice(0, 2000) + "\n...\n" + answer.slice(-4000) : answer);
   getDatabase().prepare(`DELETE FROM wecom_chat_history WHERE session_key = ? AND conversation_id = ? AND id NOT IN
     (SELECT id FROM wecom_chat_history WHERE session_key = ? AND conversation_id = ? ORDER BY id DESC LIMIT 12)`)
