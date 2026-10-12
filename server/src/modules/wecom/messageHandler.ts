@@ -2,7 +2,9 @@ import type { WSClient } from "@wecom/aibot-node-sdk";
 import type { MessageFrame } from "./client.js";
 import { reply } from "./client.js";
 import type { WecomConfig } from "./config.js";
-import { getSession, hasMessage, rememberMessage, recordChatExchange } from "./sessionStore.js";
+import { getSession, getBinding, hasMessage, rememberMessage, recordChatExchange } from "./sessionStore.js";
+import { getJob } from "../../services/jobStore.js";
+import { getProject } from "../../services/projectRegistry.js";
 import { parseCommand, requiresTextConfirmation } from "./commands.js";
 import { dispatchCommand } from "./jobBridge.js";
 import { resolveIntent, quickReply } from "./intentRouter.js";
@@ -43,8 +45,17 @@ export function createMessageHandler(client: WSClient, options: WecomConfig, rou
             if (typeof content !== "string" || !content.trim()) throw new Error(voice
               ? "这条语音没有可用的转写文本，请重发或改用文字。" : "请发送文字需求。");
             if (content.length > 50_000) throw new Error("消息不能超过 50000 字符。");
-            const session = getSession(options.botId, target, body.from.userid, options.projectId);
             const parsed = parseCommand(content);
+            let projectId = getProject(parsed.projectId ?? options.projectId).id;
+            if ("jobId" in parsed && parsed.jobId && !parsed.projectId) {
+              const job = getJob(parsed.jobId);
+              if (job?.ownerId === `wecom:${options.botId}:${body.from.userid}`) {
+                const jobSession = getSession(options.botId, target, body.from.userid, job.projectId);
+                if (getBinding(job.jobId, jobSession.session_key)) projectId = job.projectId;
+              }
+            }
+            const taskOptions = { ...options, projectId };
+            const session = getSession(options.botId, target, body.from.userid, projectId);
             // Transcription may append punctuation; never let it turn a spoken confirmation into an action.
             const voiceCommand = voice ? parseCommand(content.trim().replace(/[。.!！?？]+$/, "").trim()) : parsed;
             if (voice && requiresTextConfirmation(voiceCommand)) {
@@ -62,7 +73,7 @@ export function createMessageHandler(client: WSClient, options: WecomConfig, rou
             if (voice && requiresTextConfirmation(command)) {
               throw new Error(VOICE_CONFIRMATION_REQUIRED);
             }
-            text = await dispatchCommand(session, command, messageKey, options, responses ? jobId => {
+            text = await dispatchCommand(session, command, messageKey, taskOptions, responses ? jobId => {
               trackedJob = jobId;
               responses.track(jobId, frame, streamId, target);
             } : undefined);
@@ -71,7 +82,7 @@ export function createMessageHandler(client: WSClient, options: WecomConfig, rou
               if (cancelledId) await responses?.finish(cancelledId, "任务已取消。");
             }
             if (prepared.prefix) text = `${prepared.prefix}\n\n${text}`;
-            recordChatExchange(getSession(options.botId, target, body.from.userid, options.projectId), content, trackedJob ? undefined : text);
+            recordChatExchange(getSession(options.botId, target, body.from.userid, projectId), content, trackedJob ? undefined : text);
           }
         } catch (error) {
           rememberMessage(messageKey);

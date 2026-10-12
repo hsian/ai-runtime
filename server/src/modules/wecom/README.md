@@ -45,6 +45,14 @@ engine. No session preference is saved: later new tasks use `AGENT_PROVIDER`.
 A task retains its engine through clarification and execution. Prefixes on
 control commands do not change an existing task's engine or permissions.
 
+Start a message with `#小程序 ` to target the configured `yuenongjiao-mini`
+project for that message. Combine it with `#codex ` in either order. Unmarked
+new requests use the bot's default project; no project preference is saved.
+Project sessions isolate topics, TAPD snapshots, history and active jobs.
+Use `#小程序 补充：...`, `#小程序 执行` or `#小程序 状态` to continue or manage
+a mini-program task. Commands with a full owned job ID automatically locate its
+project when no project prefix is supplied, retaining session binding checks.
+
 `测试用例：...` (or `生成测试用例：...`) runs the shared Web test-case workflow
 without code-writing permission or execution confirmation. Natural-language
 requests such as `给这个需求生成测试用例` are also classified as `test-case`.

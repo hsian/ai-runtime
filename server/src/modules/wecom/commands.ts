@@ -2,23 +2,31 @@ export type Command = ({ action: "execute" | "status" | "cancel" | "merge" | "di
   | { action: "new" | "help" | "topics" | "identity" }
   | { action: "question" | "plan" | "test-case" | "clarify" | "auto"; text: string; jobId?: string }
   | { action: "revert"; jobId?: string }
-  | { action: "chat"; reply: string }) & { topicId?: string; topicTitle?: string; agentProvider?: "claude" | "codex" };
+  | { action: "chat"; reply: string }) & { topicId?: string; topicTitle?: string; agentProvider?: "claude" | "codex"; projectId?: string };
 
 export function requiresTextConfirmation(command: Command): boolean {
   return ["execute", "cancel", "merge", "discard", "revert"].includes(command.action);
 }
 
-export function parseAgentPrefix(raw: string): { text: string; agentProvider?: "codex" } {
-  const text = raw.trim();
-  const prefix = /^#codex(?=\s|[:：]|$)\s*[:：]?\s*/i.exec(text);
-  return prefix ? { text: text.slice(prefix[0].length).trim(), agentProvider: "codex" } : { text };
+export function parseTaskPrefixes(raw: string): { text: string; agentProvider?: "codex"; projectId?: string } {
+  let text = raw.trim();
+  let agentProvider: "codex" | undefined;
+  let projectId: string | undefined;
+  let prefix: RegExpExecArray | null;
+  while ((prefix = /^#(codex|小程序)(?=\s|[:：]|$)\s*[:：]?\s*/i.exec(text))) {
+    if (prefix[1].toLowerCase() === "codex") agentProvider = "codex";
+    else projectId = "yuenongjiao-mini";
+    text = text.slice(prefix[0].length).trim();
+  }
+  return { text, ...(agentProvider ? { agentProvider } : {}), ...(projectId ? { projectId } : {}) };
 }
 
 export function parseCommand(raw: string): Command {
-  const { text, agentProvider } = parseAgentPrefix(raw);
-  if (agentProvider && !text) return { action: "chat", reply: "请在 #codex 后加上本次任务，例如「#codex 测试用例：登录校验」。" };
+  const { text, agentProvider, projectId } = parseTaskPrefixes(raw);
+  if ((agentProvider || projectId) && !text) return { action: "chat", reply: "请在标识后加上本次任务，例如「#codex 测试用例：登录校验」或「#小程序 问答：登录逻辑」。",
+    ...(projectId ? { projectId } : {}) };
   const command = parseCommandText(text);
-  return agentProvider && "text" in command ? { ...command, agentProvider } : command;
+  return { ...command, ...(agentProvider && "text" in command ? { agentProvider } : {}), ...(projectId ? { projectId } : {}) };
 }
 
 function parseCommandText(text: string): Command {

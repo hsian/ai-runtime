@@ -8,7 +8,7 @@ import { normalizeTapdEditableContent } from "../../services/tapd/tapdEditableCo
 import { saveImageBuffers, deleteJobAttachments } from "../../services/uploadService.js";
 import { findTapdTopic, getTopicTapd, saveTopicTapd, type TapdSnapshot } from "./tapdStore.js";
 import { selectTopic } from "./topicStore.js";
-import { parseAgentPrefix, parseCommand, type Command } from "./commands.js";
+import { parseTaskPrefixes, parseCommand, type Command } from "./commands.js";
 import type { WecomSession } from "./types.js";
 import { getDatabase } from "../../services/database.js";
 
@@ -97,7 +97,7 @@ export interface PreparedTapdMessage { command: Command; prefix?: string; topicI
 
 export async function prepareTapdMessage(session: WecomSession, text: string, loader: TapdLoader = loadTapdSnapshot): Promise<PreparedTapdMessage> {
   const raw = text;
-  const prefixed = parseAgentPrefix(text);
+  const prefixed = parseTaskPrefixes(text);
   text = prefixed.text;
   const link = extractTapdLink(text);
   const refresh = /^(重新读取需求|重新读取|刷新需求)$/.test(text.trim());
@@ -133,5 +133,6 @@ export async function prepareTapdMessage(session: WecomSession, text: string, lo
   const command: Command = ["auto", "question", "plan", "test-case", "clarify"].includes(requested.action)
     ? requested : { action: "auto", text: link.request };
   return { command: { ...command, topicId: session.conversation_id,
+    ...(prefixed.projectId ? { projectId: prefixed.projectId } : {}),
     ...(prefixed.agentProvider ? { agentProvider: prefixed.agentProvider } : {}) }, prefix: summary, topicId: session.conversation_id };
 }
