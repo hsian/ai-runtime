@@ -22,7 +22,7 @@ function getLanHost(): string | undefined {
   return addresses.find((address) => address.startsWith("192.168.")) ?? addresses[0];
 }
 
-function normalizePreviewHost(host?: string): string {
+export function normalizePreviewHost(host?: string): string {
   const fallback = getLanHost() ?? "localhost";
   if (!host) return fallback;
 

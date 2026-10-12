@@ -34,6 +34,21 @@ function loadCookieSecret(): string {
 
 const cookieSecret = loadCookieSecret();
 
+export function createResourceDownloadToken(resource: string, expiresAt: number): string {
+  const signature = createHmac("sha256", cookieSecret)
+    .update(JSON.stringify(["resource-download", resource, expiresAt])).digest("base64url");
+  return `${expiresAt}.${signature}`;
+}
+
+export function verifyResourceDownloadToken(resource: string, token: unknown, now = Date.now()): boolean {
+  if (typeof token !== "string" || !/^\d{13}\.[A-Za-z0-9_-]{43}$/.test(token)) return false;
+  const expiresAt = Number(token.split(".")[0]);
+  if (!Number.isSafeInteger(expiresAt) || expiresAt <= now) return false;
+  const expected = Buffer.from(createResourceDownloadToken(resource, expiresAt));
+  const received = Buffer.from(token);
+  return expected.length === received.length && timingSafeEqual(expected, received);
+}
+
 function signOwnerId(ownerId: string): string {
   return createHmac("sha256", cookieSecret).update(ownerId).digest("base64url");
 }

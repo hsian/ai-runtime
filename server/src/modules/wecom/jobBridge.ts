@@ -20,6 +20,7 @@ import { getDialogue, setDialogue } from "./dialogueStore.js";
 import { milestoneSignature, splitMessage } from "./replies.js";
 import { queueNotice, pendingNotices, acknowledgeChunk } from "./sessionStore.js";
 import { canModifyCode, requireCommandPermission } from "./permissions.js";
+import { runTestCaseJob } from "../../services/testCases/testCaseJobService.js";
 
 function acknowledgeMilestone(job: Job, session: WecomSession): void {
   const signature = milestoneSignature(job);
@@ -184,13 +185,13 @@ export async function dispatchCommand(session: WecomSession, command: Command, m
     getDatabase().transaction(() => { resetSession(session); rememberMessage(messageKey); })();
     return "已开启新会话，默认项目为 " + options.projectId + "。";
   }
-  if (command.action === "plan" || command.action === "question" || command.action === "clarify") {
+  if (command.action === "plan" || command.action === "question" || command.action === "test-case" || command.action === "clarify") {
     if (!command.text.trim() || command.text.length > 50_000) throw new Error("需求不能为空，且不能超过 50000 字符。");
     let active = session.active_job_id ? getJob(session.active_job_id) : undefined;
     if (command.action !== "clarify" && active && await cleanupObsoletePlan(session, active)) {
       active = getJob(active.jobId);
     }
-    if ((command.action === "plan" || command.action === "question") && !command.topicId) {
+    if ((command.action === "plan" || command.action === "question" || command.action === "test-case") && !command.topicId) {
       selectTopic(session, "new", command.text.slice(0, 120));
       active = undefined;
     }
@@ -205,35 +206,38 @@ export async function dispatchCommand(session: WecomSession, command: Command, m
       return "Thinking...";
     }
     if (active && !["completed", "failed", "cancelled"].includes(active.status)
-      && !(command.action === "question" && ["awaiting_input", "awaiting_confirm"].includes(active.status))) {
+      && !(["question", "test-case"].includes(command.action) && ["awaiting_input", "awaiting_confirm"].includes(active.status))) {
       throw new Error(`当前任务尚未结束：${active.jobId}。请回复「状态」「执行」或「取消」。`);
     }
     const question = command.action === "question";
+    const testCase = command.action === "test-case";
+    const readOnly = question || testCase;
     const tapd = getTopicTapd(session);
     const job = getDatabase().transaction(() => {
       const created = createJob({ prompt: command.text, projectId: options.projectId,
         tapdContext: tapd?.context,
         ownerId: session.owner_id, conversationId: session.conversation_id,
-        submittedBy: session.user_id, taskMode: question ? "question" : "code" });
+        submittedBy: session.user_id, taskMode: testCase ? "test-case" : question ? "question" : "code" });
       let attachments;
       try { attachments = tapd ? copyJobAttachments(created.jobId, tapd.attachments) : undefined; }
       catch (error) {
         void deleteJobAttachments(created.jobId).catch(() => console.warn("[WeCom] 未提交任务的配图清理失败"));
         throw error;
       }
-      updateJob(created.jobId, { status: question ? "running" : "planning", requiresConfirm: !question, attachments,
+      updateJob(created.jobId, { status: readOnly ? "running" : "planning", requiresConfirm: !readOnly, attachments,
         previewHost: options.previewHost });
-      bindJob(session, created.jobId, !(question && active && ["awaiting_input", "awaiting_confirm"].includes(active.status)));
+      bindJob(session, created.jobId, !(readOnly && active && ["awaiting_input", "awaiting_confirm"].includes(active.status)));
       rememberMessage(messageKey);
       appendJobEvent(created.jobId, { type: "user", text: command.text });
       return created;
     })();
     logOperation({ action: "job_submit", status: "success", jobId: job.jobId,
-      ownerId: session.owner_id, mode: question ? "question" : "plan", engine: config.AGENT_PROVIDER });
+      ownerId: session.owner_id, mode: testCase ? "test-case" : question ? "question" : "plan", engine: config.AGENT_PROVIDER });
     onJob?.(job.jobId);
     if (question) void runQuestion(job.jobId, {
       responseInstructions: "这是企业微信对话，请直接回答本次问题，优先简短结论。用户要求只给颜色、数字或简答时严格遵守。不要输出任务跟踪、TaskCreate、工具使用说明或内部模式限制，不要求用户切换网页模式。只有用户需要比较方案时才列选项，选项用独立行 A：、B：标注，选方案不等于确认执行。",
     });
+    else if (testCase) void runTestCaseJob(job.jobId);
     else void runQueuedPlan(job.jobId);
     return "Thinking...";
   }

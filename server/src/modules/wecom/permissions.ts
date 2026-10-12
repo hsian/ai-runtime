@@ -19,7 +19,7 @@ export function requireCommandPermission(session: WecomSession, command: Command
   if (command.action !== "cancel") return;
   if (command.jobId) {
     // Ownership is checked separately by the bridge; do not inspect another member's job.
-    if (getBinding(command.jobId, session.session_key) && getJob(command.jobId)?.taskMode !== "question") {
+    if (getBinding(command.jobId, session.session_key) && !["question", "test-case"].includes(getJob(command.jobId)?.taskMode ?? "code")) {
       throw new Error(CODE_PERMISSION_DENIED);
     }
     return;
@@ -29,7 +29,7 @@ export function requireCommandPermission(session: WecomSession, command: Command
   if (flow?.step === "revert_confirm" || flow?.step === "reverting") throw new Error(CODE_PERMISSION_DENIED);
   const jobs = listBindings().filter(binding => binding.session_key === session.session_key)
     .map(binding => getJob(binding.job_id));
-  if (jobs.some(job => job && job.taskMode !== "question" && job.ownerId === session.owner_id
+  if (jobs.some(job => job && !["question", "test-case"].includes(job.taskMode ?? "code") && job.ownerId === session.owner_id
     && (!command.topicId || job.conversationId === command.topicId)
     && !["completed", "failed", "cancelled"].includes(job.status))) throw new Error(CODE_PERMISSION_DENIED);
 }

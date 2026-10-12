@@ -7,7 +7,7 @@ import cors from "cors";
 import { config } from "./config.js";
 
 import { jobsRouter } from "./routes/jobs.js";
-import { testCasesRouter } from "./routes/testCases.js";
+import { testCasesRouter, testCaseDownloadsRouter } from "./routes/testCases.js";
 
 import { tapdRouter } from "./routes/tapd.js";
 
@@ -62,6 +62,7 @@ app.use(
 );
 
 app.use(express.json({ limit: "2mb" }));
+app.use("/api/test-case-downloads", testCaseDownloadsRouter);
 app.use(clientIdentityMiddleware);
 app.use(authMiddleware);
 app.use("/api/auth", requireSameOrigin, authRouter);

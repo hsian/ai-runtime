@@ -37,6 +37,19 @@ Only a change request generates a plan. Reply `执行` to execute that plan.
 Execution uses the existing project `autoMerge` setting, including automatic
 merge into `test` and the existing preview service for `b2b-composite`.
 `问答：...` runs the shared read-only project question workflow.
+
+`测试用例：...` (or `生成测试用例：...`) runs the shared Web test-case workflow
+without code-writing permission or execution confirmation. Natural-language
+requests such as `给这个需求生成测试用例` are also classified as `test-case`.
+The selected topic's TAPD snapshot and images are copied into the job. Requests
+to implement automated test code still use the code-change workflow.
+Completion replies include the case count, implementation assessment and Excel
+download link. Links reuse the existing preview hostname and the server `PORT`;
+without a configured hostname, the existing LAN address detection is used.
+No separate download URL configuration is required. Download credentials grant
+access only to that task's workbook, expire after 24 hours and require no Web
+login. `状态 任务编号` returns a fresh link. Keep the cookie signing secret stable
+across restarts.
 Explicit `问答：` / `修改：` messages without a TAPD link start a fresh topic. Natural-language
 follow-ups select an existing topic semantically. Unknown topic IDs are rejected;
 ambiguous references ask the user to name the page or feature instead of guessing.

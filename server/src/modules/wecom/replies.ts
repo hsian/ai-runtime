@@ -1,5 +1,6 @@
 import type { Job } from "../../types.js";
 import type { JobEvent } from "../../services/jobEvents.js";
+import { testCaseDownloadUrl } from "../../services/testCases/testCaseDownloadService.js";
 
 export const THINKING = "Thinking...";
 
@@ -10,6 +11,7 @@ export function progressStage(job: Job | undefined, phase?: string): string {
     branch: "正在准备工作区", attachments: "正在准备分析资料",
     plan: "正在分析修改计划", plan_resume: "正在分析修改计划", execute_confirmed: "正在准备工作区",
     question: "正在读取项目代码", agent: "正在分析并修改代码", agent_retry: "正在重试代码修改",
+    test_case: "正在分析需求并设计测试用例",
     commit: "正在整理并提交改动", merge: "正在合并改动", release_merge: "正在合并改动",
     default_revert: "正在撤回修改", revert_wait: "正在等待撤回处理",
   };
@@ -17,6 +19,7 @@ export function progressStage(job: Job | undefined, phase?: string): string {
   if (job?.status === "pending") return "正在等待处理";
   if (job?.status === "planning") return "正在分析修改计划";
   if (job?.taskMode === "question") return "正在分析项目问题";
+  if (job?.taskMode === "test-case") return "正在生成测试用例";
   return "正在处理";
 }
 
@@ -28,7 +31,7 @@ export function latestAgentActivity(events: JobEvent[]): string {
   const stageIndex = events.map(event => event.type === "stage" ? event.phase : undefined)
     .reduce((last, phase, index) => phase ? index : last, -1);
   const phase = events[stageIndex]?.phase;
-  if (!["plan", "plan_resume", "agent", "agent_retry", "question"].includes(phase ?? "")) return "";
+  if (!["plan", "plan_resume", "agent", "agent_retry", "question", "test_case"].includes(phase ?? "")) return "";
   const current = events.slice(stageIndex + 1).reverse();
   const latest = current.find(event => event.type === "agent_status" || event.type === "agent_tool");
   const tool = current.find(event => event.type === "agent_tool" && event.toolName);
@@ -65,6 +68,7 @@ export function latestAgentActivity(events: JobEvent[]): string {
 export const HELP = "可以直接聊天、询问项目问题，或告诉我想修改什么。\n"
   + "项目问题只读分析；明确要求修改时先返回计划，回复「执行」后开始修改，合并和预览沿用项目配置。\n"
   + "也可以用「问答：问题」「修改：需求」指定处理方式；「状态」「取消」「新会话」管理当前任务。\n"
+  + "「测试用例：需求」生成测试用例 Excel，也可以说「给这个需求生成测试用例」，完成后返回下载链接。\n"
   + "不同话题可以穿插提问，追问时可带上页面或功能名称；指代不清时会先询问。\n"
   + "「话题」查看已有话题，「状态 任务编号」回到对应话题。\n"
   + "发送 TAPD 详情链接可读取正文、评论和配图；可以同时说「分析这个需求」或「按需求实现」。\n"
@@ -99,6 +103,15 @@ export function formatJob(job: Job, details = false): string {
   if (job.revertedFromDefaultAt) return `${header}已使用 Git revert 撤回这次修改。`
     + (job.previewUrl ? `\n预览：${job.previewUrl}` : "");
   if (job.revertError) return `${header}撤回失败：${job.revertError}\n原修改仍未撤回。`;
+  if (job.status === "completed" && job.taskMode === "test-case" && job.testCaseDocument) {
+    const document = job.testCaseDocument;
+    const assessment = document.implementationAssessment;
+    const url = testCaseDownloadUrl(job);
+    return `${header}已生成「${document.moduleName}」测试用例，共 ${document.cases.length} 条。\n`
+      + (assessment ? `实现评估：${assessment.recommendedResult}\n${assessment.summary}\n\n` : "\n")
+      + (url ? `[下载 Excel](${url})\n链接有效期 24 小时，过期后发送「状态 ${job.jobId}」获取新链接。`
+        : `任务：${job.jobId}`);
+  }
   if (job.status === "completed") return uniqueLinks(`${header}\n${job.implementationSummary || job.message || "任务完成"}`
     + `${job.mergedToDefaultBranch ? `\n\n已合并到：${job.mergedToDefaultBranch}` : ""}`
     + `${job.previewUrl ? `\n预览：${job.previewUrl}` : ""}${job.previewMessage ? `\n${job.previewMessage}` : ""}`).trim();

@@ -10,6 +10,8 @@ import { createJob, getJob, updateJob } from "../services/jobStore.js";
 import { logOperation } from "../services/operationLog.js";
 import { buildTestCaseWorkbook, testCaseWorkbookFileName } from "../services/testCases/testCaseWorkbookService.js";
 import { runTestCaseJob } from "../services/testCases/testCaseJobService.js";
+import { authorizeTestCaseDownload } from "../services/testCases/testCaseDownloadService.js";
+import type { Job } from "../types.js";
 import { finalizeJobAttachments, jobImagesUpload, multerErrorMessage } from "../services/uploadService.js";
 
 function handleImages(
@@ -88,9 +90,7 @@ testCasesRouter.post("/", handleImages, (req, res) => {
   });
 });
 
-testCasesRouter.get("/:jobId/download", async (req, res) => {
-  const job = authorizedJob(req, res);
-  if (!job) return;
+async function sendWorkbook(job: Job, res: import("express").Response): Promise<void> {
   if (job.taskMode !== "test-case" || !job.testCaseDocument) {
     res.status(409).json({ error: "测试用例尚未生成" });
     return;
@@ -109,4 +109,22 @@ testCasesRouter.get("/:jobId/download", async (req, res) => {
   } catch (error) {
     res.status(500).json({ error: error instanceof Error ? error.message : "Excel 生成失败" });
   }
+}
+
+testCasesRouter.get("/:jobId/download", async (req, res) => {
+  const job = authorizedJob(req, res);
+  if (job) await sendWorkbook(job, res);
+});
+
+// This router is mounted before login; the credential grants only this workbook.
+export const testCaseDownloadsRouter = Router();
+testCaseDownloadsRouter.get("/:jobId", async (req, res) => {
+  const job = getJob(req.params.jobId);
+  if (!job || !authorizeTestCaseDownload(job, req.query.token)) {
+    res.status(404).json({ error: "下载链接无效或已过期，请在企微发送「状态 任务编号」获取新链接。" });
+    return;
+  }
+  res.setHeader("Cache-Control", "no-store");
+  res.setHeader("Referrer-Policy", "no-referrer");
+  await sendWorkbook(job, res);
 });
