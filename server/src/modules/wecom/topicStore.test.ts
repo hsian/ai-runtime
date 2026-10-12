@@ -86,17 +86,34 @@ test("clarification is validated against the selected topic instead of the last 
   assert.equal(invalid.action, "chat");
 });
 
-test("multiple pending tasks require explicit control and cancelling A leaves B untouched", async () => {
+test("execution targets the current plan while ambiguous cancellation still requires an ID", async () => {
   const { session, a, b } = makeTopics("controls", true);
-  for (const action of ["execute", "cancel"] as const) {
-    await assert.rejects(dispatchCommand(session, { action }, `ambiguous-${action}`, options), /有多个任务/);
-  }
+  const stopBeforeExecution = new Error("Stop before external execution");
+  let selected = "";
+  await assert.rejects(dispatchCommand(session, parseCommand("#codex 执行"), "execute-current", options,
+    id => { selected = id; throw stopBeforeExecution; }), error => error === stopBeforeExecution);
+  assert.equal(selected, b.jobId);
+  await assert.rejects(dispatchCommand(session, { action: "cancel" }, "ambiguous-cancel", options), /有多个任务/);
   assert.equal(jobs.getJob(a.jobId)?.status, "awaiting_confirm");
   assert.equal(jobs.getJob(b.jobId)?.status, "awaiting_confirm");
   await dispatchCommand(session, { action: "cancel", jobId: a.jobId }, "cancel-a-only", options);
   assert.equal(jobs.getJob(a.jobId)?.status, "cancelled");
   assert.equal(jobs.getJob(b.jobId)?.status, "awaiting_confirm");
   assert.deepEqual(parseCommand(`补充 ${b.jobId}：蓝色`), { action: "clarify", jobId: b.jobId, text: "蓝色" });
+});
+
+test("execution stays ambiguous without a current plan and an explicit ID overrides the current topic", async () => {
+  const { session, a, b } = makeTopics("controls", true);
+  topics.selectTopic(session, "new", "没有待执行计划的话题");
+  await assert.rejects(dispatchCommand(session, parseCommand("执行"), "ambiguous-execute", options), /有多个任务/);
+  topics.selectTopic(session, b.topicId);
+  const stopBeforeExecution = new Error("Stop before external execution");
+  let selected = "";
+  await assert.rejects(dispatchCommand(session, parseCommand(`执行 ${a.jobId}`), "execute-explicit", options,
+    id => { selected = id; throw stopBeforeExecution; }), error => error === stopBeforeExecution);
+  assert.equal(selected, a.jobId);
+  assert.equal(session.conversation_id, a.topicId);
+  assert.equal(jobs.getJob(b.jobId)?.status, "awaiting_confirm");
 });
 
 test("a unique pending task remains controllable after switching to another completed topic", async () => {
@@ -109,7 +126,7 @@ test("a unique pending task remains controllable after switching to another comp
   assert.equal(session.conversation_id, a.topicId);
 });
 
-test("topic list is scoped to the member and explicit fresh plans preserve existing pending topics", async () => {
+test("a new plan discards previous drafts in the same chat while preserving other members and executing jobs", async () => {
   const { session, a, b } = makeTopics("topic-list", true);
   const reply = await dispatchCommand(session, parseCommand("话题"), "list-topics", options);
   assert.match(reply, /账套列表标题颜色/);
@@ -118,12 +135,33 @@ test("topic list is scoped to the member and explicit fresh plans preserve exist
   const other = store.getSession("bot", "topic-list", "other-member", options.projectId);
   const otherReply = await dispatchCommand(other, parseCommand("话题"), "other-list", options);
   assert.ok(!otherReply.includes(a.jobId));
+  jobs.updateJob(a.jobId, { requiresConfirm: true });
+  jobs.updateJob(b.jobId, { requiresConfirm: true, status: "awaiting_input" });
+  const otherPlan = jobs.createJob({ prompt: "Other member plan", ownerId: other.owner_id, conversationId: other.conversation_id });
+  jobs.updateJob(otherPlan.jobId, { status: "awaiting_confirm", requiresConfirm: true, planSummary: "Other plan" });
+  store.bindJob(other, otherPlan.jobId);
+  const miniSession = store.getSession("bot", "topic-list", "topic-list", "yuenongjiao-mini");
+  const miniPlan = jobs.createJob({ prompt: "Mini plan", projectId: "yuenongjiao-mini", ownerId: miniSession.owner_id,
+    conversationId: miniSession.conversation_id });
+  jobs.updateJob(miniPlan.jobId, { status: "awaiting_confirm", requiresConfirm: true });
+  store.bindJob(miniSession, miniPlan.jobId);
+  const merging = jobs.createJob({ prompt: "Awaiting merge", ownerId: session.owner_id, conversationId: session.conversation_id });
+  jobs.updateJob(merging.jobId, { status: "awaiting_merge", requiresConfirm: true });
+  store.bindJob(session, merging.jobId, false);
+  const executing = jobs.createJob({ prompt: "Executing change", ownerId: session.owner_id, conversationId: session.conversation_id });
+  jobs.updateJob(executing.jobId, { status: "running", requiresConfirm: true });
+  store.bindJob(session, executing.jobId, false);
   // The greeting guard finishes locally, so no real Agent or Git process is launched.
   await dispatchCommand(session, parseCommand("修改：你好"), "fresh-local-plan", options);
   assert.notEqual(session.conversation_id, a.topicId);
   assert.notEqual(session.conversation_id, b.topicId);
-  assert.equal(jobs.getJob(a.jobId)?.status, "awaiting_confirm");
-  assert.equal(jobs.getJob(b.jobId)?.status, "awaiting_confirm");
+  assert.equal(jobs.getJob(a.jobId)?.status, "cancelled");
+  assert.equal(jobs.getJob(b.jobId)?.status, "cancelled");
+  assert.equal(jobs.getJob(a.jobId)?.planSummary, undefined);
+  assert.equal(jobs.getJob(otherPlan.jobId)?.status, "awaiting_confirm");
+  assert.equal(jobs.getJob(miniPlan.jobId)?.status, "awaiting_confirm");
+  assert.equal(jobs.getJob(merging.jobId)?.status, "awaiting_merge");
+  assert.equal(jobs.getJob(executing.jobId)?.status, "running");
   const fresh = store.getSession("bot", "topic-list", "topic-list", options.projectId);
   assert.deepEqual(jobs.getJob(fresh.active_job_id!)?.conversationHistory, []);
 });

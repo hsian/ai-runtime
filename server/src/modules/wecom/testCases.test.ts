@@ -211,6 +211,10 @@ test("completed task replies identify only explicitly selected Codex after the a
   assert.doesNotMatch(formatJob({ ...completed, wecomExplicitEngine: true }), /本次回答执行引擎/);
   const explicit = { ...completed, agentProvider: "codex" as const, wecomExplicitEngine: true };
   assert.match(formatJob(explicit), /本次回答执行引擎为 codex。$/);
+  for (const status of ["awaiting_confirm", "awaiting_input"] as const) {
+    assert.match(formatJob({ ...explicit, status, planSummary: "Plan" }), /本次回答执行引擎为 codex。$/);
+    assert.doesNotMatch(formatJob({ ...completed, status, planSummary: "Plan" }), /本次回答执行引擎/);
+  }
   assert.match(formatJob({ ...explicit, taskMode: "code", implementationSummary: "Done",
     previewUrl: "http://192.168.1.10:5173" }), /本次回答执行引擎为 codex。$/);
   const cases = formatJob({ ...explicit, taskMode: "test-case", testCaseDocument: document });

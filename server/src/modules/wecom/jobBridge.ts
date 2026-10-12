@@ -50,6 +50,19 @@ export async function cleanupObsoletePlan(session: WecomSession, job: Job): Prom
   return true;
 }
 
+async function discardPreviousPlans(session: WecomSession, latestJobId: string): Promise<void> {
+  const drafts = listBindings().filter(binding => binding.session_key === session.session_key && binding.job_id !== latestJobId)
+    .map(binding => getJob(binding.job_id)).filter((job): job is Job => Boolean(job
+      && job.ownerId === session.owner_id && job.requiresConfirm
+      && ["planning", "awaiting_input", "awaiting_confirm"].includes(job.status)));
+  for (const draft of drafts) {
+    silenceJobNotices(draft.jobId);
+    await cancelOwnedJob(draft.jobId, session.owner_id);
+    updateJob(draft.jobId, { planSummary: undefined, clarificationQuestions: undefined,
+      clarificationHistory: undefined, requiresConfirm: false, message: "旧计划已被最新修改需求替代。" });
+  }
+}
+
 export function parseAnswers(job: Job, text: string): { questionId: string; value: string }[] {
   const questions = job.clarificationQuestions ?? [];
   if (questions.length === 1) {
@@ -90,6 +103,15 @@ export async function dispatchCommand(session: WecomSession, command: Command, m
     return session.target_id === session.user_id
       ? `你的企微用户 ID：\`${session.user_id}\`\n当前权限：${canModifyCode(options, session.user_id) ? "问答和修改代码" : "仅问答"}`
       : "请私聊机器人发送「我的ID」，避免在群内公开你的用户标识。";
+  }
+  if (command.action === "execute" && !command.topicId && !command.jobId) {
+    const active = session.active_job_id ? getJob(session.active_job_id) : undefined;
+    const dialogue = getDialogue(session);
+    if (dialogue?.step === "revert_confirm" || (active?.status === "awaiting_confirm"
+      && active.ownerId === session.owner_id && active.conversationId === session.conversation_id
+      && getBinding(active.jobId, session.session_key))) {
+      command = { ...command, topicId: session.conversation_id };
+    }
   }
   if (["execute", "cancel"].includes(command.action) && !command.topicId && !("jobId" in command && command.jobId)) {
     const topics = listTopics(session);
@@ -206,6 +228,7 @@ export async function dispatchCommand(session: WecomSession, command: Command, m
       return "Thinking...";
     }
     if (active && !["completed", "failed", "cancelled"].includes(active.status)
+      && !(command.action === "plan" && active.requiresConfirm && ["planning", "awaiting_input", "awaiting_confirm"].includes(active.status))
       && !(["question", "test-case"].includes(command.action) && ["awaiting_input", "awaiting_confirm"].includes(active.status))) {
       throw new Error(`当前任务尚未结束：${active.jobId}。请回复「状态」「执行」或「取消」。`);
     }
@@ -232,6 +255,7 @@ export async function dispatchCommand(session: WecomSession, command: Command, m
       appendJobEvent(created.jobId, { type: "user", text: command.text });
       return created;
     })();
+    if (command.action === "plan") await discardPreviousPlans(session, job.jobId);
     logOperation({ action: "job_submit", status: "success", jobId: job.jobId,
       ownerId: session.owner_id, mode: testCase ? "test-case" : question ? "question" : "plan", engine: job.agentProvider });
     onJob?.(job.jobId);

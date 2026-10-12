@@ -107,10 +107,10 @@ export function formatJob(job: Job, details = false): string {
   const header = details ? `**项目：${job.projectId}**\n任务：\`${job.jobId}\`\n` : "";
   const engineFooter = job.wecomExplicitEngine && job.agentProvider === "codex"
     ? "\n\n本次回答执行引擎为 codex。" : "";
-  if (job.status === "awaiting_confirm") return `${header}\n${job.planSummary ?? job.message}\n\n回复「执行」开始修改，回复「取消」取消任务。`;
+  if (job.status === "awaiting_confirm") return `${header}\n${job.planSummary ?? job.message}\n\n回复「执行」开始修改，回复「取消」取消任务。` + engineFooter;
   if (job.status === "awaiting_input") {
     const questions = job.clarificationQuestions?.map((q, i) => `${i + 1}. ${q.question}${q.options?.length ? `\n选项：${q.options.join(" / ")}` : ""}`).join("\n\n");
-    return `${header}\n${job.message ?? "请补充信息"}\n\n${questions}\n\n请按编号逐行回答。`;
+    return `${header}\n${job.message ?? "请补充信息"}\n\n${questions}\n\n请按编号逐行回答。` + engineFooter;
   }
   if (job.revertedFromDefaultAt) return `${header}已使用 Git revert 撤回这次修改。`
     + (job.previewUrl ? `\n预览：${job.previewUrl}` : "");
