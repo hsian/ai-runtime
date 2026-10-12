@@ -39,8 +39,10 @@ export async function downloadMessageImages(client: Pick<WSClient, "downloadFile
     try {
       const url = new URL(image.url);
       host = url.hostname;
+      const trustedHost = ["qq.com", "wecom.cn", "qpic.cn"].some(domain => host === domain || host.endsWith(`.${domain}`))
+        || host === "ww-aibot-img-1258476243.cos.ap-guangzhou.myqcloud.com";
       if (url.protocol !== "https:" || url.username || url.password
-        || !["qq.com", "wecom.cn", "qpic.cn"].some(host => url.hostname === host || url.hostname.endsWith(`.${host}`))) {
+        || !trustedHost) {
         throw new Error("Invalid image URL");
       }
       stage = "download";

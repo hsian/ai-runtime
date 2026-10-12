@@ -59,6 +59,27 @@ test("normal screenshots over 300KB and Tencent image CDN URLs work without chan
   await assert.rejects(downloadMessageImages({ async downloadFile() { return { buffer: Buffer.alloc(WECOM_IMAGE_MAX_BYTES + 1) }; } }, [image]), /不能超过 10MB/);
 });
 
+test("the observed WeCom COS host downloads with its image key while unrelated COS hosts stay blocked", async () => {
+  const host = "ww-aibot-img-1258476243.cos.ap-guangzhou.myqcloud.com";
+  const url = `https://${host}/image?signature=private`;
+  let calls = 0;
+  const client = { async downloadFile(actualUrl: string, key?: string) {
+    calls++;
+    assert.equal(actualUrl, url);
+    assert.equal(key, image.aeskey);
+    return { buffer: png };
+  } };
+  assert.deepEqual(await downloadMessageImages(client, [{ ...image, url }]), [
+    { name: "wecom-image-1.png", mime: "image/png", buffer: png },
+  ]);
+  for (const rejected of [
+    `https://${host}.evil.example/image`,
+    "https://other-bucket.cos.ap-guangzhou.myqcloud.com/image",
+    `http://${host}/image`,
+  ]) await assert.rejects(downloadMessageImages(client, [{ ...image, url: rejected }]), /地址未通过校验/);
+  assert.equal(calls, 1);
+});
+
 test("handler passes actual image bytes with Codex and project selection and cleans temporary files", async () => {
   const calls: string[] = [];
   const dispatched: Command[] = [];
