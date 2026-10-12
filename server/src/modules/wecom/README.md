@@ -15,9 +15,12 @@ TAPD_COMPLETION_NOTIFY_RECIPIENTS={"TAPD姓名":"wecom_userid"}
 Workspace IDs must already be registered in `TAPD_WORKSPACES`. Only iterations
 whose names contain the current year and month in `YYYY年M月` form are monitored;
 both date names and names such as `【研发】2026年10月` match. Each new iteration
-first establishes a silent baseline. Subsequent requests filter by last modified
-time with a one-minute overlap, paginate all results, and retain the cursor on
-failure. Existing iteration cursors survive restarts and overnight downtime.
+first establishes a silent baseline. Every cycle re-reads the complete story and
+task lists for these iterations and paginates all results. Newly added stories
+and tasks are picked up automatically, including new tasks already completed
+when they first become visible after the baseline. Their completion timestamp
+is not compared with the last polling time. Existing task states survive restarts
+and overnight downtime; each observed completion is deduplicated in SQLite.
 At a month change, monitoring switches to the new month; previous-month work is
 outside the configured scope.
 
@@ -29,7 +32,9 @@ notification to unconfigured users is performed.
 
 Task states and pending messages are stored in SQLite. Successful messages are
 marked sent; failed/blocked messages retry in a subsequent daytime cycle. A
-queued notice is discarded if the next poll observes the backend reopened.
+queued notice is discarded if the next poll observes the backend reopened,
+the task or requirement deleted, or the frontend owner removed. Messages wait
+when the latest workspace scan fails, rather than relying on stale assignments.
 Read-only integration validation: build the server, then run
 `node scripts/verify-tapd-completion.mjs` from `server/`; this checks real TAPD
 queries and recipient matches without starting the bot or sending messages. A
