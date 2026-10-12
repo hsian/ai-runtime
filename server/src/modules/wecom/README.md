@@ -19,12 +19,20 @@ Messages are routed by intent: greetings reply immediately without creating
 jobs; other natural-language messages use the configured Agent to distinguish
 conversation, read-only project questions, change requests and clarification
 answers. Unclear requests ask a short follow-up instead of creating a plan.
-The classifier selects a topic before choosing an intent. It receives up to
-12 topic candidates with bounded task/result snapshots and two recent exchanges
-per candidate, plus up to six exchanges from the currently selected topic.
+One model call understands the latest goal and selects relevant context together.
+It receives up to 12 topic candidates with bounded user-goal/TAPD summaries and
+two recent user messages per candidate, plus scoped conversation history. It never
+receives pending plan bodies, task statuses or historical task-result replies.
+Independent goals start a clean topic; linked TAPD references and option choices
+stay bound to their source topic. Ambiguous references ask a specific follow-up.
 It runs in a temporary directory, with no Git preparation,
 Claude tools disabled and Codex in read-only mode with execution tools disabled.
-Classification times out after 45 seconds; failures ask the user to clarify.
+Each classification call times out after 45 seconds. Invalid JSON/schema output
+is repaired once from the original input; transport failures are not retried.
+Failed classification creates no task and is excluded from conversation memory.
+Only explicit control commands can authorize execution; model output cannot
+produce execute/cancel/merge actions, and task ownership/confirmation checks remain
+in the program rather than the model.
 Explicit control commands and `问答：` / `修改：` / `补充：` bypass classification.
 `node server/scripts/verify-wecom-intent.mjs` checks classification against
 three synthetic messages using the configured Agent; it creates no project jobs

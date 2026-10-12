@@ -9,7 +9,7 @@ import type { Command } from "./commands.js";
 import { topicCandidates } from "./topicStore.js";
 import { getDialogue, setDialogue } from "./dialogueStore.js";
 import { formatJob } from "./replies.js";
-import { parseRoutingResult, routingAgentOptions, type RoutingStage } from "./conversationRouting.js";
+import { parseRoutingResult, routingAgentOptions } from "./conversationRouting.js";
 
 export function quickReply(text: string): Command | undefined {
   const content = text.trim();
@@ -27,12 +27,12 @@ export function quickReply(text: string): Command | undefined {
   return undefined;
 }
 
-export type IntentModel = (input: string, stage?: RoutingStage) => Promise<string>;
+export type IntentModel = (input: string) => Promise<string>;
 
-export async function classifyWithAgent(input: string, stage: RoutingStage = "request"): Promise<string> {
+export async function classifyWithAgent(input: string): Promise<string> {
   const directory = await mkdtemp(join(tmpdir(), "ai-runtime-wecom-intent-"));
   try {
-    const result = await runAgent(directory, input, undefined, undefined, routingAgentOptions(stage));
+    const result = await runAgent(directory, input, undefined, undefined, routingAgentOptions());
     return result.summary;
   } finally {
     // Windows may hold the CLI's working directory until its process exits.
@@ -63,35 +63,34 @@ export async function resolveIntent(command: Command, session: WecomSession, mod
     const available = topicCandidates(session);
     const topics = command.topicId ? available.filter(topic => topic.id === command.topicId) : available;
     if (command.topicId && !topics.length) throw new Error("Unknown linked topic");
-    const request = parseRoutingResult(await model(JSON.stringify({ message: text,
-      history: getConversationHistory(contextSession),
+    const payload = { message: text,
+      history: getConversationHistory(contextSession).map(turn => ({ role: turn.role, content: turn.content.slice(0, 600) })),
       lastQuestion: active?.clarificationQuestions ?? (selection ? dialogue?.question : undefined),
-      linkedReference: Boolean(command.topicId) }), "request"));
-    if (request.intent === "chat" || request.intent === "uncertain") {
-      if (!request.reply.trim()) throw new Error("Empty reply");
-      return { action: "chat", reply: request.reply.trim() };
+      topics: topics.map(topic => ({ id: topic.id, title: topic.title, current: topic.current,
+        tapd: topic.tapd ? { title: topic.tapd.title, itemId: topic.tapd.itemId, description: topic.tapd.description.slice(0, 600) } : undefined,
+        questions: topic.activeTask?.questions?.slice(0, 2),
+        history: getChatHistory({ ...session, conversation_id: topic.id }).filter(turn => turn.role === "user")
+          .slice(-2).map(turn => ({ role: turn.role, content: turn.content.slice(0, 600) })),
+        userGoal: topic.activeTask?.prompt.slice(0, 600) })),
+      linkedTopicId: command.topicId, selectionTopicId: selection ? contextSession.conversation_id : undefined };
+    // Retry malformed model output once, never transport failures or execution authorization.
+    let result: ReturnType<typeof parseRoutingResult>;
+    const raw = await model(JSON.stringify(payload));
+    try { result = parseRoutingResult(raw); }
+    catch {
+      console.warn("[WeCom] 对话理解输出格式无效，正在修正一次");
+      result = parseRoutingResult(await model(JSON.stringify({ ...payload, outputRepair: true })));
     }
-    if (!["workflow", "revert"].includes(request.intent) && !request.prompt.trim()) throw new Error("Empty task prompt");
-    const needsContext = Boolean(command.topicId || selection) || request.relation !== "new"
-      || ["workflow", "revert", "clarify"].includes(request.intent);
-    let result: ReturnType<typeof parseRoutingResult> = { ...request, topicId: "new" };
-    if (needsContext) {
-      result = parseRoutingResult(await model(JSON.stringify({ message: text, request,
-        topics: topics.map(topic => ({ id: topic.id, title: topic.title, current: topic.current,
-          tapd: topic.tapd,
-          questions: topic.activeTask?.questions,
-          history: getChatHistory({ ...session, conversation_id: topic.id }).filter(turn => turn.role === "user").slice(-4),
-          userGoal: topic.activeTask?.prompt })),
-        linkedTopicId: command.topicId, selectionTopicId: selection ? contextSession.conversation_id : undefined }), "context"));
-      if (result.intent !== request.intent) throw new Error("Context selection changed request intent");
-      if (!result.topicId) {
-        return { action: "chat", reply: result.reply.trim() || "你指的是哪个页面或需求？我确认后再继续。" };
-      }
-    }
-    if (selection && result.topicId && result.topicId !== contextSession.conversation_id) {
-      return { action: "chat", reply: "这个选项属于当前话题，请确认你要继续哪个话题的方案。" };
+    if (result.intent === "chat" || result.intent === "uncertain") {
+      if (!result.reply.trim()) throw new Error("Empty reply");
+      return { action: "chat", reply: result.reply.trim() };
     }
     if (command.topicId) result.topicId = command.topicId;
+    else if (selection) result.topicId = contextSession.conversation_id;
+    else if (result.relation === "new" && !["workflow", "revert", "clarify"].includes(result.intent)) result.topicId = "new";
+    if (!result.topicId || result.relation === "uncertain") {
+      return { action: "chat", reply: result.reply.trim() || "你指的是哪个页面或需求？我确认后再继续。" };
+    }
     if (result.intent === "revert") {
       const topic = topics.find(topic => topic.id === result.topicId);
       if (!topic) throw new Error("Unknown revert topic");
@@ -113,12 +112,11 @@ export async function resolveIntent(command: Command, session: WecomSession, mod
       }
       return { action: "chat", topicId: topic.id, historySource: "task", reply: `以下是已有任务的状态，不是本次新生成的方案：\n${formatJob(current)}` };
     }
-    if (result.intent === "chat" || result.intent === "uncertain") throw new Error("Unexpected task intent");
     if (!result.prompt.trim()) throw new Error("Empty task prompt");
     const topic = result.topicId && result.topicId !== "new" ? topics.find(item => item.id === result.topicId) : undefined;
-    if (result.topicId && result.topicId !== "new" && !topic) throw new Error("Unknown topic");
-    if (result.intent === "clarify" && (topic?.activeTask ?? (!result.topicId ? active : undefined))?.status !== "awaiting_input") {
-      throw new Error("Unexpected clarification");
+    if (result.topicId !== "new" && !topic) return { action: "chat", reply: "你指的是哪个页面或需求？请补充一下名称，我再继续。" };
+    if (result.intent === "clarify" && topic?.activeTask?.status !== "awaiting_input") {
+      return { action: "chat", reply: "这个话题没有等待补充的问题。你是想调整需求，还是询问当前实现？" };
     }
     if (selection) setDialogue(contextSession);
     return { action: result.intent, text: result.prompt.trim(),
@@ -127,6 +125,6 @@ export async function resolveIntent(command: Command, session: WecomSession, mod
       ...(result.topicId ? { topicId: result.topicId, topicTitle: result.topicTitle ?? "" } : {}) };
   } catch (error) {
     console.warn("[WeCom] 意图识别失败：", error instanceof Error ? error.message : "Unknown error");
-    return { action: "chat", reply: "抱歉，这次消息处理失败了，不是你表达的问题。请稍后重试，刚才关联的需求资料仍然保留。" };
+    return { action: "chat", historySource: "task", reply: "抱歉，这次消息处理失败了，不是你表达的问题。请稍后重试，刚才关联的需求资料仍然保留。" };
   }
 }

@@ -24,7 +24,7 @@ after(() => { closeDatabase(); rmSync(directory, { recursive: true, force: true 
 const session = store.getSession("bot", "alice", "alice", "b2b-composite");
 
 test("intent classification uses locally validated JSON without native CLI schema requirements", () => {
-  const options = routingAgentOptions("request");
+  const options = routingAgentOptions();
   assert.equal(options.mode, "conversation");
   assert.equal(options.disableTools, true);
   assert.equal("jsonSchema" in options, false);
@@ -59,22 +59,20 @@ test("natural change follow-ups use the linked TAPD topic and preserve the singl
   } });
   store.recordChatExchange(local, "需求本身已经实现，只是产品增加了一处", "已读取合同录入页面优化需求");
   const command = { ...parseCommand('#codex “复制合同页”也要修改'), topicId: local.conversation_id };
-  const result = await resolveIntent(command, local, async (input, stage) => {
+  let calls = 0;
+  const result = await resolveIntent(command, local, async input => {
+    calls++;
     const data = JSON.parse(input);
-    if (stage === "context") {
-      assert.equal(data.linkedTopicId, local.conversation_id);
-      assert.match(input, /复制合同页面也要修改/);
-      assert.match(input, /需求本身已经实现/);
-    } else {
-      assert.equal(data.linkedReference, true);
-      assert.equal(data.topics, undefined);
-    }
+    assert.equal(data.linkedTopicId, local.conversation_id);
+    assert.match(input, /复制合同页面也要修改/);
+    assert.match(input, /需求本身已经实现/);
     return JSON.stringify({ intent: "plan", prompt: "现有需求已经实现，仅将新增调整同步到复制合同页",
       reply: "", topicId: local.conversation_id, topicTitle: null });
   });
   assert.equal(result.action, "plan");
   assert.equal(result.topicId, local.conversation_id);
   assert.equal(result.agentProvider, "codex");
+  assert.equal(calls, 1);
 });
 
 test("connection failure does not blame user wording or request command syntax", async () => {
@@ -87,22 +85,22 @@ test("connection failure does not blame user wording or request command syntax",
   }
 });
 
-test("a pending plan is absent from both request understanding and context selection", async () => {
+test("one understanding call receives topic summaries but never pending plan bodies or statuses", async () => {
   const local = store.getSession("bot", "renew-plan", "alice", "b2b-composite");
   const old = jobs.createJob({ prompt: "旧需求", ownerId: local.owner_id, conversationId: local.conversation_id });
   jobs.updateJob(old.jobId, { status: "awaiting_confirm", requiresConfirm: true, planSummary: "Old plan body" });
   store.bindJob(local, old.jobId);
   let calls = 0;
-  const command = await resolveIntent(parseCommand("#codex 这需求已经实现，只补齐复制页面"), local, async (input, stage) => {
+  const command = await resolveIntent(parseCommand("#codex 这需求已经实现，只补齐复制页面"), local, async input => {
     calls++;
     const data = JSON.parse(input);
     assert.doesNotMatch(input, /Old plan body|awaiting_confirm/);
     assert.equal(data.message, "这需求已经实现，只补齐复制页面");
-    if (stage === "request") assert.equal(data.topics, undefined);
-    else assert.equal(data.request.intent, "plan");
+    assert.equal(data.request, undefined);
+    assert.ok(data.topics.some((topic: { id: string }) => topic.id === local.conversation_id));
     return JSON.stringify({ intent: "plan", reply: "", prompt: data.message, topicId: local.conversation_id });
   });
-  assert.equal(calls, 2);
+  assert.equal(calls, 1);
   assert.equal(command.action, "plan");
   assert.equal(command.agentProvider, "codex");
 });
@@ -120,11 +118,10 @@ test("an independent request bypasses old topics, creates a clean job and supers
   store.bindJob(local, old.jobId);
   store.recordChatExchange(local, "修改合同", "Old contract plan", "task");
   let calls = 0;
-  const command = await resolveIntent(parseCommand("#codex 登录按钮改成蓝色"), local, async (input, stage) => {
+  const command = await resolveIntent(parseCommand("#codex 登录按钮改成蓝色"), local, async input => {
     calls++;
-    assert.equal(stage, "request");
-    assert.doesNotMatch(input, /Old contract plan|awaiting_confirm|合同相关资料/);
-    assert.equal(JSON.parse(input).topics, undefined);
+    assert.doesNotMatch(input, /Old contract plan|awaiting_confirm/);
+    assert.ok(JSON.parse(input).topics.length > 0);
     return JSON.stringify({ intent: "plan", relation: "new", prompt: "登录按钮改成蓝色", reply: "", topicTitle: "登录按钮" });
   });
   assert.equal(calls, 1);
@@ -143,17 +140,59 @@ test("an independent request bypasses old topics, creates a clean job and supers
   assert.equal(jobs.getJob(old.jobId)?.status, "cancelled");
 });
 
-test("context selection cannot convert a new change goal into old-plan status or a read-only question into a change", async () => {
+test("a project question and its topic are decided together without a second classifier", async () => {
   const local = store.getSession("bot", "intent-lock", "alice", "b2b-composite");
   const before = jobs.listJobs(local.owner_id).length;
-  for (const [initial, changed] of [["plan", "workflow"], ["question", "plan"]]) {
-    const result = await resolveIntent(parseCommand("处理当前问题"), local, async (_input, stage) => JSON.stringify({
-      intent: stage === "request" ? initial : changed, relation: "related", prompt: "当前目标", reply: "催执行", topicId: local.conversation_id,
-    }));
-    assert.equal(result.action, "chat");
-    if (result.action === "chat") assert.match(result.reply, /处理失败/);
-  }
+  let calls = 0;
+  const result = await resolveIntent(parseCommand("合同录入页面的地址是多少"), local, async () => {
+    calls++;
+    return JSON.stringify({ intent: "question", relation: "related", prompt: "查询合同录入页面路由地址", reply: "", topicId: local.conversation_id });
+  });
+  assert.equal(result.action, "question");
+  assert.equal(calls, 1);
   assert.equal(jobs.listJobs(local.owner_id).length, before);
+});
+
+test("malformed output is repaired once using the original message, without trusting invalid output", async () => {
+  let calls = 0;
+  const result = await resolveIntent(parseCommand("合同录入页面的地址是多少"), session, async input => {
+    const payload = JSON.parse(input);
+    calls++;
+    assert.equal(payload.message, "合同录入页面的地址是多少");
+    assert.doesNotMatch(input, /malformed untrusted output/);
+    if (calls === 1) return "malformed untrusted output";
+    assert.equal(payload.outputRepair, true);
+    return JSON.stringify({ intent: "question", relation: "new", prompt: payload.message, reply: "" });
+  });
+  assert.equal(calls, 2);
+  assert.equal(result.action, "question");
+});
+
+test("ambiguous or foreign topics request clarification without creating or executing tasks", async () => {
+  const before = jobs.listJobs(session.owner_id).length;
+  for (const decision of [
+    { intent: "plan", relation: "uncertain", topicId: session.conversation_id, reply: "你指的是复制合同页还是编辑合同页？" },
+    { intent: "question", relation: "related", topicId: "another-users-topic", reply: "" },
+    { intent: "clarify", relation: "related", topicId: session.conversation_id, reply: "" },
+  ]) {
+    const result = await resolveIntent(parseCommand("这个调整一下"), session, async () => JSON.stringify({ ...decision, prompt: "这个调整一下" }));
+    assert.equal(result.action, "chat");
+    if (result.action === "chat") assert.doesNotMatch(result.reply, /处理失败|任务编号|执行/);
+  }
+  assert.equal(jobs.listJobs(session.owner_id).length, before);
+});
+
+test("scope summaries are bounded, exclude assistant task output and keep other users private", async () => {
+  const local = store.getSession("bot", "bounded", "alice", "b2b-composite");
+  const other = store.getSession("bot", "bounded", "bob", "b2b-composite");
+  store.recordChatExchange(local, "x".repeat(5000), "Assistant plan must not enter summaries", "task");
+  store.recordChatExchange(other, "Private Bob goal", "Private Bob answer");
+  await resolveIntent(parseCommand("查页面地址"), local, async input => {
+    const payload = JSON.parse(input);
+    assert.doesNotMatch(input, /Private Bob|Assistant plan/);
+    for (const topic of payload.topics) for (const turn of topic.history) assert.ok(turn.content.length <= 600);
+    return JSON.stringify({ intent: "question", relation: "new", prompt: "查页面地址", reply: "" });
+  });
 });
 
 test("workflow status renders the recorded plan and engine, never the classifier's invented summary", async () => {
