@@ -5,18 +5,20 @@ import type { WecomConfig } from "./config.js";
 import { getSession, getBinding, hasMessage, rememberMessage, recordChatExchange } from "./sessionStore.js";
 import { getJob } from "../../services/jobStore.js";
 import { getProject } from "../../services/projectRegistry.js";
-import { parseCommand, requiresTextConfirmation } from "./commands.js";
+import { parseCommand, parseTaskPrefixes, requiresTextConfirmation } from "./commands.js";
 import { dispatchCommand } from "./jobBridge.js";
 import { resolveIntent, quickReply } from "./intentRouter.js";
 import { randomUUID } from "node:crypto";
 import { THINKING, withEngineFooter } from "./replies.js";
 import { prepareTapdMessage, extractTapdLink } from "./tapdBridge.js";
 import type { ResponseCoordinator } from "./responseCoordinator.js";
+import { extractMessageContent, downloadMessageImages } from "./messageImages.js";
+import { saveImageBuffers, deleteJobAttachments } from "../../services/uploadService.js";
 
 const VOICE_CONFIRMATION_REQUIRED = "为避免语音识别误操作，执行、取消、撤回和合并等操作请用文字发送。语音可以用于问答和描述修改需求。";
 
 export function createMessageHandler(client: WSClient, options: WecomConfig, routeIntent = resolveIntent, prepareMessage = prepareTapdMessage,
-  responses?: ResponseCoordinator) {
+  responses?: ResponseCoordinator, dispatch = dispatchCommand) {
   const chains = new Map<string, Promise<void>>();
   let stopped = false;
   return {
@@ -32,17 +34,23 @@ export function createMessageHandler(client: WSClient, options: WecomConfig, rou
       const next = previous.then(async () => {
         if (stopped || hasMessage(messageKey)) return;
         const streamId = randomUUID();
+        const responseStarted = Date.now();
         const release = responses?.block(target);
         let trackedJob: string | undefined;
+        let imageDirectory: string | undefined;
         let text: string;
         try {
           const voice = body.msgtype === "voice";
-          if (body.msgtype !== "text" && !voice) {
+          if (!["text", "voice", "image", "mixed"].includes(body.msgtype)) {
             rememberMessage(messageKey);
-            text = "目前支持文字和语音消息，请用文字或语音描述你的问题。";
+            text = "目前支持文字、语音、图片和图文消息，暂不支持这种消息类型。";
           } else {
-            const content = ((voice ? body.voice : body.text) as { content?: unknown } | undefined)?.content;
-            if (typeof content !== "string" || !content.trim()) throw new Error(voice
+            const extracted = extractMessageContent(body);
+            let content = extracted.text;
+            if (extracted.images.length && !parseTaskPrefixes(content).text) {
+              content = `${content.trim()} 问答：请分析本条消息附带的图片；如没有明确操作要求，只解释图片或询问需要处理什么，不修改代码。`.trim();
+            }
+            if (!content.trim()) throw new Error(voice
               ? "这条语音没有可用的转写文本，请重发或改用文字。" : "请发送文字需求。");
             if (content.length > 50_000) throw new Error("消息不能超过 50000 字符。");
             const parsed = parseCommand(content);
@@ -67,16 +75,28 @@ export function createMessageHandler(client: WSClient, options: WecomConfig, rou
             }
             const prepared = await prepareMessage(session, content);
             if (stopped) return;
-            const resolved = await routeIntent(prepared.command, session);
+            const imageBuffers = await downloadMessageImages(client, extracted.images);
+            let resolved = await routeIntent(prepared.command, session);
+            // A text-only classifier cannot answer an image question itself.
+            if (imageBuffers.length && resolved.action === "chat") {
+              const prefixes = parseTaskPrefixes(content);
+              resolved = { action: "question", text: prefixes.text, agentProvider: prefixes.agentProvider,
+                projectId: prefixes.projectId, topicId: resolved.topicId, topicTitle: resolved.topicTitle };
+            }
             const command = prepared.topicId ? { ...resolved, topicId: prepared.topicId } : resolved;
             if (stopped) return;
             if (voice && requiresTextConfirmation(command)) {
               throw new Error(VOICE_CONFIRMATION_REQUIRED);
             }
-            text = await dispatchCommand(session, command, messageKey, taskOptions, responses ? jobId => {
+            if (imageBuffers.length && !["plan", "question", "test-case", "clarify"].includes(command.action)) {
+              throw new Error("图片需与问题或修改说明一起发送；执行、取消等操作请单独发送文字命令。");
+            }
+            imageDirectory = imageBuffers.length ? randomUUID() : undefined;
+            const attachments = imageDirectory ? saveImageBuffers(imageDirectory, imageBuffers) : [];
+            text = await dispatch(session, command, messageKey, taskOptions, responses ? jobId => {
               trackedJob = jobId;
-              responses.track(jobId, frame, streamId, target);
-            } : undefined);
+              responses.track(jobId, frame, streamId, target, responseStarted);
+            } : undefined, attachments);
             if (command.action === "cancel") {
               const cancelledId = command.jobId ?? session.active_job_id;
               if (cancelledId) await responses?.finish(cancelledId, "任务已取消。");
@@ -94,6 +114,8 @@ export function createMessageHandler(client: WSClient, options: WecomConfig, rou
             release?.();
             return;
           }
+        } finally {
+          if (imageDirectory) await deleteJobAttachments(imageDirectory).catch(() => console.warn("[WeCom] 临时图片清理失败"));
         }
         try {
           if (trackedJob) await client.replyStream(frame, streamId, withEngineFooter(getJob(trackedJob), THINKING), false);

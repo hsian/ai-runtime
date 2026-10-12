@@ -96,12 +96,12 @@ export function saveImageBuffers(id: string, images: { name: string; mime: strin
   });
 }
 
-export function copyJobAttachments(jobId: string, attachments: JobAttachment[]): JobAttachment[] {
+export function copyJobAttachments(jobId: string, attachments: JobAttachment[], startIndex = 0): JobAttachment[] {
   if (!/^[a-f0-9-]{36}$/.test(jobId)) throw new Error("Invalid attachment directory");
   const directory = resolve(config.UPLOAD_DIR, jobId);
   if (attachments.length) mkdirSync(directory, { recursive: true });
   return attachments.map((attachment, index) => {
-    const path = resolve(directory, `${index}${extname(attachment.path) || ".webp"}`);
+    const path = resolve(directory, `${startIndex + index}${extname(attachment.path) || ".webp"}`);
     copyFileSync(attachment.path, path);
     return { ...attachment, path };
   });

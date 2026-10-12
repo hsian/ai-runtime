@@ -23,7 +23,7 @@ const { setDialogue } = await import("./dialogueStore.js");
 initWecomStore();
 after(() => { closeDatabase(); rmSync(directory, { recursive: true, force: true }); });
 
-function setup(lifetime = 90_000) {
+function setup(lifetime = 300_000) {
   let now = 0;
   const calls: { text: string; finish?: boolean; streamId?: string }[] = [];
   const client = { async replyStream(_frame: unknown, streamId: string, text: string, finish: boolean) { calls.push({ text, finish, streamId }); },
@@ -66,7 +66,7 @@ test("stream updates are throttled, reuse the message and ignore raw Agent logs"
   } finally { context.coordinator.stop(); }
 });
 
-test("long tasks send only throttled phase changes after stream closure, not periodic cards", async () => {
+test("long tasks never send more progress messages after stream closure", async () => {
   const context = setup(0);
   try {
     appendJobEvent(context.job.jobId, { type: "stage", phase: "agent" });
@@ -78,18 +78,18 @@ test("long tasks send only throttled phase changes after stream closure, not per
     assert.equal(context.calls.length, 1);
     appendJobEvent(context.job.jobId, { type: "stage", phase: "commit" });
     await context.coordinator.refresh();
-    assert.match(context.calls[1].text, /整理并提交改动/);
+    assert.equal(context.calls.length, 1);
     appendJobEvent(context.job.jobId, { type: "stage", phase: "merge" });
     context.time(45_000);
     await context.coordinator.refresh();
-    assert.equal(context.calls.length, 2);
+    assert.equal(context.calls.length, 1);
     context.time(70_000);
     await context.coordinator.refresh();
-    assert.match(context.calls[2].text, /合并改动/);
+    assert.equal(context.calls.length, 1);
     updateJob(context.job.jobId, { status: "completed" });
     context.time(100_000);
     await context.coordinator.refresh();
-    assert.equal(context.calls.length, 3);
+    assert.equal(context.calls.length, 1);
     assert.equal(await context.coordinator.finish(context.job.jobId, "已完成"), false);
   } finally { context.coordinator.stop(); }
 });
@@ -147,8 +147,8 @@ test("planning progress reuses Web tool and status events, without exposing comm
   } finally { context.coordinator.stop(); }
 });
 
-test("unchanged progress stays silent even during long waits and real activity resumes updates", async () => {
-  const context = setup(0);
+test("unchanged progress stays silent and real activity updates the same stream", async () => {
+  const context = setup();
   try {
     updateJob(context.job.jobId, { status: "planning" });
     appendJobEvent(context.job.jobId, { type: "stage", phase: "plan" });
@@ -174,12 +174,35 @@ test("unchanged progress stays silent even during long waits and real activity r
     await context.coordinator.refresh();
     assert.equal(context.calls.length, 3);
     assert.match(context.calls[2].text, /已完成：运行回归测试/);
+    assert.ok(context.calls.every(call => call.streamId === "same-stream" && call.finish === false));
     assert.ok(context.calls.every(call => !/未收到|卡住|暂无新进展/.test(call.text)));
     assert.ok(context.calls.every(call => !call.text.includes("已用时")));
     updateJob(context.job.jobId, { status: "awaiting_confirm" });
     context.time(300_000);
     await context.coordinator.refresh();
     assert.equal(context.calls.length, 3);
+  } finally { context.coordinator.stop(); }
+});
+
+test("the stream remains editable after ninety seconds and closes once at five minutes", async () => {
+  const context = setup();
+  try {
+    appendJobEvent(context.job.jobId, { type: "stage", phase: "agent" });
+    await context.coordinator.refresh();
+    context.time(120_000);
+    appendJobEvent(context.job.jobId, { type: "agent_tool", toolName: "Grep" });
+    await context.coordinator.refresh();
+    assert.equal(context.calls[1].streamId, "same-stream");
+    assert.equal(context.calls[1].finish, false);
+    context.time(300_000);
+    await context.coordinator.refresh();
+    assert.equal(context.calls[2].finish, true);
+    assert.match(context.calls[2].text, /结果稍后通知/);
+    context.time(600_000);
+    appendJobEvent(context.job.jobId, { type: "stage", phase: "merge" });
+    await context.coordinator.refresh();
+    assert.equal(context.calls.length, 3);
+    assert.equal(await context.coordinator.finish(context.job.jobId, "最终结果"), false);
   } finally { context.coordinator.stop(); }
 });
 

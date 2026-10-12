@@ -1,12 +1,12 @@
 import { getDatabase } from "../../services/database.js";
 import { createJob, getJob, updateJob } from "../../services/jobStore.js";
 import { appendJobEvent, getJobEvents } from "../../services/jobEvents.js";
-import { cancelOwnedJob, executePlannedJob, resumePlannedJob, runQueuedPlan, runQuestion } from "../../services/jobActions.js";
+import { cancelOwnedJob, executePlannedJob, resumePlannedJob, runQueuedPlan, runQuestion, parseClarificationAnswers } from "../../services/jobActions.js";
 import { confirmJobMerge, discardJobMerge, revertCompletedJobFromDefaultBranch } from "../../services/jobMergeService.js";
 import { jobQueue } from "../../services/jobQueue.js";
 import { config } from "../../config.js";
 import { logOperation } from "../../services/operationLog.js";
-import type { Job } from "../../types.js";
+import type { Job, JobAttachment } from "../../types.js";
 import type { WecomConfig } from "./config.js";
 import type { WecomSession } from "./types.js";
 import type { Command } from "./commands.js";
@@ -81,9 +81,9 @@ export function parseAnswers(job: Job, text: string): { questionId: string; valu
 }
 
 export async function dispatchCommand(session: WecomSession, command: Command, messageKey: string, options: WecomConfig,
-  onJob?: (jobId: string) => void): Promise<string> {
+  onJob?: (jobId: string) => void, messageAttachments: JobAttachment[] = []): Promise<string> {
   const revertSource = getDialogue(session)?.sourceJobId;
-  const text = await dispatchCommandBody(session, command, messageKey, options, onJob);
+  const text = await dispatchCommandBody(session, command, messageKey, options, onJob, messageAttachments);
   if (!["execute", "cancel", "status", "merge", "discard", "revert"].includes(command.action)) return text;
   const id = ("jobId" in command ? command.jobId : undefined) ?? revertSource ?? session.active_job_id;
   const job = id ? getJob(id) : undefined;
@@ -91,7 +91,7 @@ export async function dispatchCommand(session: WecomSession, command: Command, m
 }
 
 async function dispatchCommandBody(session: WecomSession, command: Command, messageKey: string, options: WecomConfig,
-  onJob?: (jobId: string) => void): Promise<string> {
+  onJob?: (jobId: string) => void, messageAttachments: JobAttachment[] = []): Promise<string> {
   requireCommandPermission(session, command, options);
   if (command.action === "plan" || command.action === "question") {
     const previous = session.active_job_id ? getJob(session.active_job_id) : undefined;
@@ -230,9 +230,16 @@ async function dispatchCommandBody(session: WecomSession, command: Command, mess
     if (command.action === "clarify") {
       const job = currentJob(session, command.jobId);
       const answers = parseAnswers(job, command.text);
+      let addedAttachments: JobAttachment[] = [];
+      if (messageAttachments.length) {
+        if (job.status !== "awaiting_input") throw new Error("当前任务没有等待补充，请发送新的图文需求。");
+        const parsed = parseClarificationAnswers(answers, job);
+        if (parsed.error) throw new Error(parsed.error);
+        addedAttachments = copyJobAttachments(job.jobId, messageAttachments, job.attachments?.length ?? 0);
+      }
       onJob?.(job.jobId);
       getDatabase().transaction(() => {
-        resumePlannedJob(job.jobId, session.owner_id, answers);
+        resumePlannedJob(job.jobId, session.owner_id, answers, "", addedAttachments);
         rememberMessage(messageKey);
       })();
       return "Thinking...";
@@ -253,7 +260,10 @@ async function dispatchCommandBody(session: WecomSession, command: Command, mess
         ownerId: session.owner_id, conversationId: session.conversation_id,
         submittedBy: session.user_id, taskMode: testCase ? "test-case" : question ? "question" : "code" });
       let attachments;
-      try { attachments = tapd ? copyJobAttachments(created.jobId, tapd.attachments) : undefined; }
+      try {
+        const source = [...(tapd?.attachments ?? []), ...messageAttachments];
+        attachments = source.length ? copyJobAttachments(created.jobId, source) : undefined;
+      }
       catch (error) {
         void deleteJobAttachments(created.jobId).catch(() => console.warn("[WeCom] 未提交任务的配图清理失败"));
         throw error;

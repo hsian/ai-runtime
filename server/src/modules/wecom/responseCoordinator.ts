@@ -22,7 +22,7 @@ export class ResponseCoordinator {
   private live = new Map<string, LiveResponse>();
   private blocks = new Map<string, number>();
   private timer: ReturnType<typeof setInterval>;
-  constructor(private client: WSClient, private lifetimeMs = 90_000, private now = Date.now) {
+  constructor(private client: WSClient, private lifetimeMs = 300_000, private now = Date.now) {
     this.timer = setInterval(() => { void this.refresh(); }, 10_000);
     this.timer.unref();
   }
@@ -31,8 +31,8 @@ export class ResponseCoordinator {
     return () => { this.blocks.set(target, Math.max(0, (this.blocks.get(target) ?? 1) - 1)); };
   }
   blocked(target: string): boolean { return (this.blocks.get(target) ?? 0) > 0; }
-  track(jobId: string, frame: MessageFrame, streamId: string, target: string): void {
-    this.live.set(jobId, { frame, streamId, target, started: this.now(), tail: Promise.resolve(),
+  track(jobId: string, frame: MessageFrame, streamId: string, target: string, started = this.now()): void {
+    this.live.set(jobId, { frame, streamId, target, started, tail: Promise.resolve(),
       closed: false, lastUpdate: -Infinity, lastStage: "", lastActivity: "" });
   }
   async finish(jobId: string, text: string): Promise<boolean> {
@@ -40,7 +40,7 @@ export class ResponseCoordinator {
     if (!live) return false;
     this.live.delete(jobId);
     await live.tail;
-    if (live.closed) return false;
+    if (live.closed || this.now() - live.started >= this.lifetimeMs) return false;
     await reply(this.client, live.frame, withEngineFooter(getJob(jobId), text), live.streamId);
     return true;
   }
@@ -48,6 +48,7 @@ export class ResponseCoordinator {
     for (const [jobId, live] of this.live) {
       if (this.blocked(live.target)) continue;
       if (areJobNoticesSilent(jobId)) { this.live.delete(jobId); continue; }
+      if (live.closed) continue;
       const job = getJob(jobId);
       const events = getJobEvents(jobId);
       let phase = [...events].reverse().find(event => event.type === "stage" && event.phase)?.phase;
@@ -60,17 +61,12 @@ export class ResponseCoordinator {
       const changed = stage !== live.lastStage || activity !== live.lastActivity;
       const body = stage + (activity ? `\n当前：${activity}` : "");
       const text = withEngineFooter(job, body);
-      if (live.closed) {
-        if (!changed || now - live.lastUpdate < 30_000) continue;
-      } else if (now - live.lastUpdate < 10_000 || (!changed && now - live.started < this.lifetimeMs)) continue;
+      if (now - live.lastUpdate < 10_000 || (!changed && now - live.started < this.lifetimeMs)) continue;
       live.lastUpdate = now;
       live.tail = live.tail.then(async () => {
         if (this.live.get(jobId) !== live || this.blocked(live.target) || areJobNoticesSilent(jobId)) return;
-        if (live.closed) {
-          const title = job?.prompt.slice(0, 60);
-          await this.client.sendMessage(live.target, { msgtype: "markdown", markdown: { content: title ? `进度：${title}\n${text}` : text } });
-        } else if (now - live.started >= this.lifetimeMs) {
-          // Retain tracking for coarse later updates; the persisted outbox still owns final results.
+        if (now - live.started >= this.lifetimeMs) {
+          // Close before WeCom's stream deadline; only the final result is sent separately.
           live.closed = true;
           await reply(this.client, live.frame, withEngineFooter(job, `${body}\n结果稍后通知你。`), live.streamId);
         } else await this.client.replyStream(live.frame, live.streamId, text, false);

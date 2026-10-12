@@ -102,6 +102,14 @@ per 30 seconds. Images, files, voice and interactive cards are not implemented.
 Send one TAPD story/task/bug detail link, optionally with a question or change
 request. Bare links read and associate the material, then ask whether to analyze
 or implement; the material itself never authorizes a plan or execution.
+Direct image and mixed text/image messages are downloaded and decrypted with
+the SDK's per-image key, validated as JPEG/PNG/WebP/GIF, and copied into the same
+job attachments as TAPD images. Send screenshots and the request together;
+`#codex` and `#小程序` in the text retain their single-task behavior. Image-only
+messages use read-only analysis. Failed images stop submission rather than
+silently submitting text alone. A message accepts up to nine images and 20 MiB
+total, with the existing per-image upload limit. File/video messages are not supported.
+
 `tapdBridge.ts` reads the body, comments and available inline images using the
 shared `resolveContext.ts` and existing TAPD client. No editing or TAPD writeback
 is performed. `tapdStore.ts` persists snapshots per member/topic and identifies
