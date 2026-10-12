@@ -21,6 +21,8 @@ const { prepareTapdMessage } = await import("./tapdBridge.js");
 const { resolveIntent } = await import("./intentRouter.js");
 const { dispatchCommand } = await import("./jobBridge.js");
 const { createMessageHandler } = await import("./messageHandler.js");
+const { questionChangeInstructions } = await import("./replies.js");
+const { buildClaudeQuestionPrompt, buildQuestionSystemPrompt } = await import("../../services/agent/types.js");
 const store = await import("./sessionStore.js");
 const { createJob, updateJob, getJob } = await import("../../services/jobStore.js");
 const { closeDatabase } = await import("../../services/database.js");
@@ -28,6 +30,31 @@ store.initWecomStore();
 after(() => { closeDatabase(); rmSync(directory, { recursive: true, force: true }); });
 const mini = "yuenongjiao-mini";
 const options = { botId: "project-prefix", secret: "test", projectId: "b2b-composite", codeAllowedUserIds: ["alice"] };
+
+test("WeCom question prompts guide changes through chat while Web keeps its mode selector", () => {
+  for (const agentProvider of ["claude", "codex"] as const) {
+    for (const projectId of [options.projectId, mini]) {
+      const guidance = questionChangeInstructions({ agentProvider, projectId }, true);
+      const system = buildQuestionSystemPrompt(guidance);
+      const prompt = buildClaudeQuestionPrompt("登录逻辑如何工作？", undefined, undefined, undefined, guidance);
+      for (const text of [system, prompt]) {
+        assert.doesNotMatch(text, /提示(?:其|必须选择).*「功能修改」模式后重新提交/);
+        assert.match(text, /直接在此对话/);
+        assert.match(text, /禁止修改|严禁修改/);
+        assert.match(text, /不要让用户对当前问答任务直接回复执行/);
+      }
+      const command = [agentProvider === "codex" ? "#codex" : "", projectId === mini ? "#小程序" : "",
+        "修改：具体需求"].filter(Boolean).join(" ");
+      assert.ok(guidance.includes(`「${command}」`));
+    }
+  }
+  for (const text of [buildQuestionSystemPrompt(), buildClaudeQuestionPrompt("登录逻辑如何工作？")]) {
+    assert.match(text, /选择「功能修改」模式后重新提交/);
+  }
+  const readOnlyGuidance = questionChangeInstructions({ projectId: mini, agentProvider: "codex" }, false);
+  assert.match(readOnlyGuidance, /联系管理员开通权限/);
+  assert.doesNotMatch(readOnlyGuidance, /修改：具体需求/);
+});
 
 test("project and engine prefixes combine in either order and do not match embedded text", () => {
   for (const prefix of ["#codex #小程序", "#小程序 #codex"]) {

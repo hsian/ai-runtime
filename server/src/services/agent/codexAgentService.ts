@@ -9,7 +9,7 @@ import {
   buildClaudeQuestionPrompt,
   buildClaudeTaskPrompt,
   PLAN_SYSTEM_PROMPT,
-  QUESTION_SYSTEM_PROMPT,
+  buildQuestionSystemPrompt,
   summarizeToolInput,
   SYSTEM_PROMPT,
   type AgentEventHandler,
@@ -278,7 +278,7 @@ export async function runCodexAgent(
   const isReadOnly = isPlan || isQuestion || isTestCase || isConversation;
   const systemPrompt =
     options?.systemPrompt ??
-    (isPlan ? PLAN_SYSTEM_PROMPT : isQuestion ? QUESTION_SYSTEM_PROMPT : SYSTEM_PROMPT);
+    (isPlan ? PLAN_SYSTEM_PROMPT : isQuestion ? buildQuestionSystemPrompt(options?.questionChangeInstructions) : SYSTEM_PROMPT);
   const userPrompt = isTestCase || isConversation
     ? prompt
     : isPlan
@@ -293,7 +293,8 @@ export async function runCodexAgent(
           prompt,
           pageContext,
           options?.attachments,
-          options?.conversationHistory
+          options?.conversationHistory,
+          options?.questionChangeInstructions
         )
       : buildClaudeTaskPrompt(
           prompt,

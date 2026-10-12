@@ -509,7 +509,7 @@ export async function cancelOwnedJob(jobId: string, ownerId: string): Promise<vo
 
   appendJobEvent(jobId, { type: "cancelled", message: "任务已取消", text: "任务已取消" });
 }
-export async function runQuestion(jobId: string, options?: { responseInstructions?: string }): Promise<void> {
+export async function runQuestion(jobId: string, options?: { responseInstructions?: string; questionChangeInstructions?: string }): Promise<void> {
   const existing = getJob(jobId);
   const project = getProject(existing?.projectId);
   const job = updateJob(jobId, {
@@ -578,6 +578,7 @@ export async function runQuestion(jobId: string, options?: { responseInstruction
       },
       {
         mode: "question",
+        questionChangeInstructions: options?.questionChangeInstructions,
         jobId,
         agentProvider: getJobAgentProvider(job),
         attachments: stagedAttachments,

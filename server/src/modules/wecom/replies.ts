@@ -4,6 +4,14 @@ import { testCaseDownloadUrl } from "../../services/testCases/testCaseDownloadSe
 
 export const THINKING = "Thinking...";
 
+export function questionChangeInstructions(job: Pick<Job, "projectId" | "agentProvider">, canModifyCode: boolean): string {
+  const context = "这是企业微信对话，没有网页模式选择器。不要提示用户切换到功能修改、编码、Plan 等模式，不要要求打开 Web 页面或重新提交到网页。";
+  if (!canModifyCode) return context + "当前用户没有代码修改权限。若其要求实际修改，说明需要联系管理员开通权限；不要让其发送执行命令。";
+  const command = [job.agentProvider === "codex" ? "#codex" : "", job.projectId === "yuenongjiao-mini" ? "#小程序" : "",
+    "修改：具体需求"].filter(Boolean).join(" ");
+  return context + `本次只回答问题，不修改代码。若用户需要实际修改，可提示直接在此对话描述要改什么，或发送「${command}」。系统会先给出计划，用户确认后再执行；不要让用户对当前问答任务直接回复执行。仅分析、解释或讨论方案时不必附加修改提示。`;
+}
+
 export function progressStage(job: Job | undefined, phase?: string): string {
   if (job?.jobsAhead && job.jobsAhead > 0) return `正在排队，前面还有 ${job.jobsAhead} 个任务`;
   const stages: Record<string, string> = {
@@ -97,6 +105,7 @@ export function splitMessage(text: string, maxBytes = 3500): string[] {
 
 export function formatJob(job: Job, details = false): string {
   const header = details ? `**项目：${job.projectId}**\n任务：\`${job.jobId}\`\n` : "";
+  const engineFooter = job.agentProvider ? `\n\n本次回答执行引擎为 ${job.agentProvider}。` : "";
   if (job.status === "awaiting_confirm") return `${header}\n${job.planSummary ?? job.message}\n\n回复「执行」开始修改，回复「取消」取消任务。`;
   if (job.status === "awaiting_input") {
     const questions = job.clarificationQuestions?.map((q, i) => `${i + 1}. ${q.question}${q.options?.length ? `\n选项：${q.options.join(" / ")}` : ""}`).join("\n\n");
@@ -112,11 +121,11 @@ export function formatJob(job: Job, details = false): string {
     return `${header}已生成「${document.moduleName}」测试用例，共 ${document.cases.length} 条。\n`
       + (assessment ? `实现评估：${assessment.recommendedResult}\n${assessment.summary}\n\n` : "\n")
       + (url ? `[下载 Excel](${url})\n链接有效期 24 小时，过期后发送「状态 ${job.jobId}」获取新链接。`
-        : `任务：${job.jobId}`);
+        : `任务：${job.jobId}`) + engineFooter;
   }
   if (job.status === "completed") return uniqueLinks(`${header}\n${job.implementationSummary || job.message || "任务完成"}`
     + `${job.mergedToDefaultBranch ? `\n\n已合并到：${job.mergedToDefaultBranch}` : ""}`
-    + `${job.previewUrl ? `\n预览：${job.previewUrl}` : ""}${job.previewMessage ? `\n${job.previewMessage}` : ""}`).trim();
+    + `${job.previewUrl ? `\n预览：${job.previewUrl}` : ""}${job.previewMessage ? `\n${job.previewMessage}` : ""}`).trim() + engineFooter;
   if (job.status === "awaiting_merge") return `${header}\n${job.message ?? "等待合并处理"}\n${job.error ?? ""}\n`
     + (job.mergeRetryable ? "回复「重试合并」重试，或「放弃合并」。" : "回复「合并」再次尝试，或「放弃合并」。");
   if (["pending", "planning", "running"].includes(job.status)) return "仍在处理中，完成后会通知你。";

@@ -201,6 +201,22 @@ test("completion includes Excel link; credentials reject tampering, expiry and o
   process.env.QWECHAT_BOT_PREVIEW_HOST = "192.168.1.10:5173";
 });
 
+test("completed task replies identify the recorded engine after the answer and download links", () => {
+  const created = createJob({ prompt: "#codex is just text here", taskMode: "question", agentProvider: "claude" });
+  const completed = updateJob(created.jobId, { status: "completed", message: "Answer" })!;
+  assert.match(formatJob(completed), /本次回答执行引擎为 claude。$/);
+  assert.doesNotMatch(formatJob(completed), /执行引擎为 codex/);
+  assert.match(formatJob({ ...completed, agentProvider: "codex" }), /本次回答执行引擎为 codex。$/);
+  assert.match(formatJob({ ...completed, taskMode: "code", agentProvider: "codex", implementationSummary: "Done",
+    previewUrl: "http://192.168.1.10:5173" }), /本次回答执行引擎为 codex。$/);
+  const cases = formatJob({ ...completed, taskMode: "test-case", agentProvider: "codex", testCaseDocument: document });
+  assert.match(cases, /下载 Excel/);
+  assert.match(cases, /本次回答执行引擎为 codex。$/);
+  assert.doesNotMatch(formatJob({ ...completed, agentProvider: undefined }), /本次回答执行引擎/);
+  assert.doesNotMatch(formatJob({ ...completed, status: "running" }), /本次回答执行引擎/);
+  assert.doesNotMatch(formatJob({ ...completed, revertedFromDefaultAt: new Date().toISOString() }), /本次回答执行引擎/);
+});
+
 test("signed download works without login while the normal Web route stays protected", async () => {
   const created = createJob({ prompt: "Download", taskMode: "test-case", ownerId: "wecom-owner" });
   const job = updateJob(created.jobId, { status: "completed", testCaseDocument: document })!;

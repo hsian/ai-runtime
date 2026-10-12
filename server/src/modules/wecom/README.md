@@ -37,6 +37,10 @@ Only a change request generates a plan. Reply `执行` to execute that plan.
 Execution uses the existing project `autoMerge` setting, including automatic
 merge into `test` and the existing preview service for `b2b-composite`.
 `问答：...` runs the shared read-only project question workflow.
+Both Agent providers use WeCom-specific question guidance in their system and
+user prompts: changes are requested directly in chat, never through a Web mode
+selector. Suggested explicit commands retain the task's project/engine prefix.
+Read-only members are directed to an administrator for code-change permission.
 
 Start a message with `#codex ` to use Codex only for the task it creates, such as
 `#codex 问答：登录逻辑` or `#codex https://www.tapd.cn/123/stories/view/456 生成测试用例`.

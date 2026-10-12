@@ -12,7 +12,7 @@ import type { WecomSession } from "./types.js";
 import type { Command } from "./commands.js";
 import { bindJob, getBinding, listBindings, rememberMessage, resetSession, silenceJobNotices } from "./sessionStore.js";
 import { listTopics, selectTopic } from "./topicStore.js";
-import { formatJob, formatProgress, latestAgentActivity, HELP } from "./replies.js";
+import { formatJob, formatProgress, latestAgentActivity, questionChangeInstructions, HELP } from "./replies.js";
 import { isNonActionablePlanInput } from "../../services/agent/planInputGuard.js";
 import { getTopicTapd } from "./tapdStore.js";
 import { copyJobAttachments, deleteJobAttachments } from "../../services/uploadService.js";
@@ -236,6 +236,7 @@ export async function dispatchCommand(session: WecomSession, command: Command, m
       ownerId: session.owner_id, mode: testCase ? "test-case" : question ? "question" : "plan", engine: job.agentProvider });
     onJob?.(job.jobId);
     if (question) void runQuestion(job.jobId, {
+      questionChangeInstructions: questionChangeInstructions(job, canModifyCode(options, session.user_id)),
       responseInstructions: "这是企业微信对话，请直接回答本次问题，优先简短结论。用户要求只给颜色、数字或简答时严格遵守。不要输出任务跟踪、TaskCreate、工具使用说明或内部模式限制，不要求用户切换网页模式。只有用户需要比较方案时才列选项，选项用独立行 A：、B：标注，选方案不等于确认执行。",
     });
     else if (testCase) void runTestCaseJob(job.jobId);
