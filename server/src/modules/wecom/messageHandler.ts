@@ -9,7 +9,7 @@ import { parseCommand, requiresTextConfirmation } from "./commands.js";
 import { dispatchCommand } from "./jobBridge.js";
 import { resolveIntent, quickReply } from "./intentRouter.js";
 import { randomUUID } from "node:crypto";
-import { THINKING } from "./replies.js";
+import { THINKING, withEngineFooter } from "./replies.js";
 import { prepareTapdMessage, extractTapdLink } from "./tapdBridge.js";
 import type { ResponseCoordinator } from "./responseCoordinator.js";
 
@@ -96,7 +96,7 @@ export function createMessageHandler(client: WSClient, options: WecomConfig, rou
           }
         }
         try {
-          if (trackedJob) await client.replyStream(frame, streamId, THINKING, false);
+          if (trackedJob) await client.replyStream(frame, streamId, withEngineFooter(getJob(trackedJob), THINKING), false);
           else await reply(client, frame, text, streamId);
         }
         catch { console.warn("[WeCom] 即时回复发送失败，任务结果会异步通知"); }

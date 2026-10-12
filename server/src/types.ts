@@ -123,7 +123,6 @@ export interface Job {
   status: JobStatus;
   prompt: string;
   agentProvider?: "claude" | "codex";
-  wecomExplicitEngine?: boolean;
   pageContext?: PageContext;
   tapdContext?: TapdContext;
   submittedBy?: string;

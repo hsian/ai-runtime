@@ -160,7 +160,7 @@ test("workflow status renders the recorded plan and engine, never the classifier
   const local = store.getSession("bot", "real-status", "alice", "b2b-composite");
   const old = jobs.createJob({ prompt: "旧需求", ownerId: local.owner_id, conversationId: local.conversation_id, agentProvider: "codex" });
   jobs.updateJob(old.jobId, { status: "awaiting_confirm", requiresConfirm: true,
-    wecomExplicitEngine: true, planSummary: "Actual recorded plan" });
+    planSummary: "Actual recorded plan" });
   store.bindJob(local, old.jobId);
   const command = await resolveIntent(parseCommand("现在是什么状态？"), local, async () => JSON.stringify({
     intent: "workflow", reply: "Invented plan", prompt: "", topicId: local.conversation_id }));

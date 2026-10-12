@@ -26,7 +26,7 @@ const { saveImageBuffers } = await import("../../services/uploadService.js");
 const { resolveIntent } = await import("./intentRouter.js");
 const { dispatchCommand } = await import("./jobBridge.js");
 const { requireCommandPermission } = await import("./permissions.js");
-const { formatJob, progressStage } = await import("./replies.js");
+const { formatJob, progressStage, formatProgress, withEngineFooter } = await import("./replies.js");
 const { testCaseDownloadUrl, authorizeTestCaseDownload } = await import("../../services/testCases/testCaseDownloadService.js");
 const { testCaseDownloadsRouter, testCasesRouter } = await import("../../routes/testCases.js");
 store.initWecomStore();
@@ -107,7 +107,6 @@ test("question, change and test-case jobs pin Codex once without changing subseq
         id => { jobId = id; throw stopBeforeAgent; }), error => error === stopBeforeAgent);
       const job = getJob(jobId)!;
       assert.equal(job.agentProvider, codex ? "codex" : "claude");
-      assert.equal(job.wecomExplicitEngine, codex);
       assert.equal(job.prompt, "登录");
       updateJob(jobId, { status: "completed" });
     }
@@ -202,14 +201,12 @@ test("completion includes Excel link; credentials reject tampering, expiry and o
   process.env.QWECHAT_BOT_PREVIEW_HOST = "192.168.1.10:5173";
 });
 
-test("completed task replies identify only explicitly selected Codex after the answer and download links", () => {
+test("all Codex task replies carry one footer regardless of status, mode or old prefix metadata", () => {
   const created = createJob({ prompt: "#codex is just text here", taskMode: "question", agentProvider: "claude" });
   const completed = updateJob(created.jobId, { status: "completed", message: "Answer" })!;
   assert.doesNotMatch(formatJob(completed), /本次回答执行引擎/);
   assert.doesNotMatch(formatJob({ ...completed, projectId: "yuenongjiao-mini" }), /本次回答执行引擎/);
-  assert.doesNotMatch(formatJob({ ...completed, agentProvider: "codex" }), /本次回答执行引擎/);
-  assert.doesNotMatch(formatJob({ ...completed, wecomExplicitEngine: true }), /本次回答执行引擎/);
-  const explicit = { ...completed, agentProvider: "codex" as const, wecomExplicitEngine: true };
+  const explicit = { ...completed, agentProvider: "codex" as const };
   assert.match(formatJob(explicit), /本次回答执行引擎为 codex。$/);
   for (const status of ["awaiting_confirm", "awaiting_input"] as const) {
     assert.match(formatJob({ ...explicit, status, planSummary: "Plan" }), /本次回答执行引擎为 codex。$/);
@@ -221,8 +218,17 @@ test("completed task replies identify only explicitly selected Codex after the a
   assert.match(cases, /下载 Excel/);
   assert.match(cases, /本次回答执行引擎为 codex。$/);
   assert.doesNotMatch(formatJob({ ...explicit, agentProvider: undefined }), /本次回答执行引擎/);
-  assert.doesNotMatch(formatJob({ ...explicit, status: "running" }), /本次回答执行引擎/);
-  assert.doesNotMatch(formatJob({ ...explicit, revertedFromDefaultAt: new Date().toISOString() }), /本次回答执行引擎/);
+  for (const status of ["pending", "planning", "running", "awaiting_input", "awaiting_confirm", "awaiting_merge", "completed", "failed", "cancelled"] as const) {
+    for (const taskMode of ["question", "code", "test-case"] as const) {
+      const text = formatJob({ ...explicit, status, taskMode });
+      assert.match(text, /本次回答执行引擎为 codex。$/);
+      assert.equal(text.split("本次回答执行引擎为 codex。").length, 2);
+      assert.doesNotMatch(formatJob({ ...completed, status, taskMode }), /本次回答执行引擎/);
+    }
+  }
+  assert.match(formatJob({ ...explicit, revertedFromDefaultAt: new Date().toISOString() }), /本次回答执行引擎为 codex。$/);
+  assert.match(formatProgress(explicit, "agent", "读取文件"), /当前：读取文件\n\n本次回答执行引擎为 codex。$/);
+  assert.equal(withEngineFooter(explicit, formatJob(explicit)), formatJob(explicit));
 });
 
 test("signed download works without login while the normal Web route stays protected", async () => {

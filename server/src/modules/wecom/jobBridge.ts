@@ -12,7 +12,7 @@ import type { WecomSession } from "./types.js";
 import type { Command } from "./commands.js";
 import { bindJob, getBinding, listBindings, rememberMessage, resetSession, silenceJobNotices } from "./sessionStore.js";
 import { listTopics, selectTopic } from "./topicStore.js";
-import { formatJob, formatProgress, latestAgentActivity, questionChangeInstructions, HELP } from "./replies.js";
+import { formatJob, formatProgress, latestAgentActivity, questionChangeInstructions, withEngineFooter, HELP } from "./replies.js";
 import { isNonActionablePlanInput } from "../../services/agent/planInputGuard.js";
 import { getTopicTapd } from "./tapdStore.js";
 import { copyJobAttachments, deleteJobAttachments } from "../../services/uploadService.js";
@@ -81,6 +81,16 @@ export function parseAnswers(job: Job, text: string): { questionId: string; valu
 }
 
 export async function dispatchCommand(session: WecomSession, command: Command, messageKey: string, options: WecomConfig,
+  onJob?: (jobId: string) => void): Promise<string> {
+  const revertSource = getDialogue(session)?.sourceJobId;
+  const text = await dispatchCommandBody(session, command, messageKey, options, onJob);
+  if (!["execute", "cancel", "status", "merge", "discard", "revert"].includes(command.action)) return text;
+  const id = ("jobId" in command ? command.jobId : undefined) ?? revertSource ?? session.active_job_id;
+  const job = id ? getJob(id) : undefined;
+  return job?.ownerId === session.owner_id && getBinding(job.jobId, session.session_key) ? withEngineFooter(job, text) : text;
+}
+
+async function dispatchCommandBody(session: WecomSession, command: Command, messageKey: string, options: WecomConfig,
   onJob?: (jobId: string) => void): Promise<string> {
   requireCommandPermission(session, command, options);
   if (command.action === "plan" || command.action === "question") {
@@ -249,7 +259,7 @@ export async function dispatchCommand(session: WecomSession, command: Command, m
         throw error;
       }
       updateJob(created.jobId, { status: readOnly ? "running" : "planning", requiresConfirm: !readOnly, attachments,
-        previewHost: options.previewHost, wecomExplicitEngine: command.agentProvider === "codex" });
+        previewHost: options.previewHost });
       bindJob(session, created.jobId, !(readOnly && active && ["awaiting_input", "awaiting_confirm"].includes(active.status)));
       rememberMessage(messageKey);
       appendJobEvent(created.jobId, { type: "user", text: command.text });
@@ -275,7 +285,7 @@ export async function dispatchCommand(session: WecomSession, command: Command, m
     const events = getJobEvents(job.jobId);
     const phase = [...events].reverse().find(event => event.type === "stage" && event.phase)?.phase;
     const activity = latestAgentActivity(events);
-    return formatProgress(job, phase) + (activity ? `\n当前：${activity}` : "");
+    return formatProgress(job, phase, activity);
   }
   if (command.action === "execute") {
     if (job.status !== "awaiting_confirm") throw new Error("当前任务不可执行，请先完成计划确认。");

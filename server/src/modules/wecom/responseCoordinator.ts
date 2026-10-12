@@ -1,6 +1,6 @@
 import type { WSClient } from "@wecom/aibot-node-sdk";
 import { reply, type MessageFrame } from "./client.js";
-import { formatProgress, progressStage, milestoneSignature, latestAgentActivity } from "./replies.js";
+import { formatProgress, progressStage, milestoneSignature, latestAgentActivity, withEngineFooter } from "./replies.js";
 import { getJob } from "../../services/jobStore.js";
 import { getJobEvents } from "../../services/jobEvents.js";
 import { areJobNoticesSilent } from "./sessionStore.js";
@@ -41,7 +41,7 @@ export class ResponseCoordinator {
     this.live.delete(jobId);
     await live.tail;
     if (live.closed) return false;
-    await reply(this.client, live.frame, text, live.streamId);
+    await reply(this.client, live.frame, withEngineFooter(getJob(jobId), text), live.streamId);
     return true;
   }
   async refresh(): Promise<void> {
@@ -57,7 +57,7 @@ export class ResponseCoordinator {
       const now = this.now();
       const stage = progressStage(job, phase);
       const activity = latestAgentActivity(events);
-      const text = formatProgress(job, phase) + (activity ? `\n当前：${activity}` : "");
+      const text = formatProgress(job, phase, activity);
       if (live.closed) {
         // Long analysis phases also need feedback: coalesce actual activity and heartbeat once a minute.
         const changed = stage !== live.lastStage || activity !== live.lastActivity;
@@ -72,7 +72,7 @@ export class ResponseCoordinator {
         } else if (now - live.started >= this.lifetimeMs) {
           // Retain tracking for coarse later updates; the persisted outbox still owns final results.
           live.closed = true;
-          await reply(this.client, live.frame, `${text}\n结果稍后通知你。`, live.streamId);
+          await reply(this.client, live.frame, formatProgress(job, phase, [activity, "结果稍后通知你。"].filter(Boolean).join("\n")), live.streamId);
         } else await this.client.replyStream(live.frame, live.streamId, text, false);
         live.lastStage = stage;
         live.lastActivity = activity;

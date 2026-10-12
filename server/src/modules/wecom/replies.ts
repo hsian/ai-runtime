@@ -31,8 +31,14 @@ export function progressStage(job: Job | undefined, phase?: string): string {
   return "正在处理";
 }
 
-export function formatProgress(job: Job | undefined, phase?: string): string {
-  return progressStage(job, phase);
+export function withEngineFooter(job: Pick<Job, "agentProvider"> | undefined, text: string): string {
+  const footer = "本次回答执行引擎为 codex。";
+  if (job?.agentProvider !== "codex") return text;
+  return text.trimEnd().endsWith(footer) ? text.trimEnd() : `${text.trimEnd()}\n\n${footer}`;
+}
+
+export function formatProgress(job: Job | undefined, phase?: string, activity?: string): string {
+  return withEngineFooter(job, progressStage(job, phase) + (activity ? `\n当前：${activity}` : ""));
 }
 
 export function latestAgentActivity(events: JobEvent[]): string {
@@ -104,13 +110,15 @@ export function splitMessage(text: string, maxBytes = 3500): string[] {
 }
 
 export function formatJob(job: Job, details = false): string {
+  return withEngineFooter(job, formatJobBody(job, details));
+}
+
+function formatJobBody(job: Job, details: boolean): string {
   const header = details ? `**项目：${job.projectId}**\n任务：\`${job.jobId}\`\n` : "";
-  const engineFooter = job.wecomExplicitEngine && job.agentProvider === "codex"
-    ? "\n\n本次回答执行引擎为 codex。" : "";
-  if (job.status === "awaiting_confirm") return `${header}\n${job.planSummary ?? job.message}\n\n回复「执行」开始修改，回复「取消」取消任务。` + engineFooter;
+  if (job.status === "awaiting_confirm") return `${header}\n${job.planSummary ?? job.message}\n\n回复「执行」开始修改，回复「取消」取消任务。`;
   if (job.status === "awaiting_input") {
     const questions = job.clarificationQuestions?.map((q, i) => `${i + 1}. ${q.question}${q.options?.length ? `\n选项：${q.options.join(" / ")}` : ""}`).join("\n\n");
-    return `${header}\n${job.message ?? "请补充信息"}\n\n${questions}\n\n请按编号逐行回答。` + engineFooter;
+    return `${header}\n${job.message ?? "请补充信息"}\n\n${questions}\n\n请按编号逐行回答。`;
   }
   if (job.revertedFromDefaultAt) return `${header}已使用 Git revert 撤回这次修改。`
     + (job.previewUrl ? `\n预览：${job.previewUrl}` : "");
@@ -122,11 +130,11 @@ export function formatJob(job: Job, details = false): string {
     return `${header}已生成「${document.moduleName}」测试用例，共 ${document.cases.length} 条。\n`
       + (assessment ? `实现评估：${assessment.recommendedResult}\n${assessment.summary}\n\n` : "\n")
       + (url ? `[下载 Excel](${url})\n链接有效期 24 小时，过期后发送「状态 ${job.jobId}」获取新链接。`
-        : `任务：${job.jobId}`) + engineFooter;
+        : `任务：${job.jobId}`);
   }
   if (job.status === "completed") return uniqueLinks(`${header}\n${job.implementationSummary || job.message || "任务完成"}`
     + `${job.mergedToDefaultBranch ? `\n\n已合并到：${job.mergedToDefaultBranch}` : ""}`
-    + `${job.previewUrl ? `\n预览：${job.previewUrl}` : ""}${job.previewMessage ? `\n${job.previewMessage}` : ""}`).trim() + engineFooter;
+    + `${job.previewUrl ? `\n预览：${job.previewUrl}` : ""}${job.previewMessage ? `\n${job.previewMessage}` : ""}`).trim();
   if (job.status === "awaiting_merge") return `${header}\n${job.message ?? "等待合并处理"}\n${job.error ?? ""}\n`
     + (job.mergeRetryable ? "回复「重试合并」重试，或「放弃合并」。" : "回复「合并」再次尝试，或「放弃合并」。");
   if (["pending", "planning", "running"].includes(job.status)) return "仍在处理中，完成后会通知你。";
