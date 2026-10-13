@@ -128,7 +128,7 @@ interface TapdCommentRecord extends TapdComment {
   reply_id?: string;
 }
 
-async function tapdPost<T>(
+export async function tapdPost<T>(
   cfg: TapdConfig,
   path: string,
   params: Record<string, string | number | undefined>
@@ -148,6 +148,7 @@ async function tapdPost<T>(
       "Content-Type": "application/x-www-form-urlencoded",
     },
     body: bodyParams.toString(),
+    signal: AbortSignal.timeout(30_000),
   });
   const body = (await res.json()) as TapdApiEnvelope<T>;
   if (!res.ok || body.status !== 1) {

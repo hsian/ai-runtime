@@ -71,6 +71,18 @@ export interface ReleaseMergeRecord {
 }
 
 export interface JobStatus {
+  workbenchSession?: boolean;
+  workbenchReset?: boolean;
+  workbenchNeedsInput?: boolean;
+  workbenchHasCodeChanges?: boolean;
+  workbenchBaseCommitSha?: string;
+  tapdTask?: { workspaceId: string; taskId: string };
+  tapdSync?: { target: "open" | "progressing" | "done"; state: "pending" | "synced" | "failed"; error?: string };
+  workbenchTurnRunning?: boolean;
+  workbenchMessages?: Array<{ id: string; role: "user" | "assistant"; text: string; createdAt: string; attachmentIndexes?: number[] }>;
+  workbenchProcessedInputs?: number;
+  workbenchPauseRequested?: boolean;
+  implementationSummary?: string;
   jobId: string;
   projectId: string;
   status: JobStatusType;
@@ -160,6 +172,7 @@ export interface TapdContext {
 }
 
 export interface SubmitInput {
+  tapdTask?: { workspaceId: string; taskId: string };
   prompt: string;
   conversationId: string;
   projectId: string;

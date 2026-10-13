@@ -86,6 +86,7 @@ export interface TapdContext {
 }
 
 export interface JobRequest {
+  tapdTask?: { workspaceId: string; taskId: string };
   prompt: string;
   projectId?: string;
   agentProvider?: "claude" | "codex";
@@ -116,6 +117,22 @@ export type JobStatus =
   | "cancelled";
 
 export interface Job {
+  /** 独立工作台会话；原 Web 的 Job 流程不使用这些字段。 */
+  workbenchSession?: boolean;
+  workbenchReset?: boolean;
+  workbenchNeedsInput?: boolean;
+  workbenchHasCodeChanges?: boolean;
+  tapdTask?: { workspaceId: string; taskId: string };
+  tapdOperator?: string;
+  tapdOriginalTaskStatus?: string;
+  tapdSync?: { target: "open" | "progressing" | "done"; state: "pending" | "synced" | "failed"; error?: string };
+  workbenchTurnRunning?: boolean;
+  workbenchMessages?: Array<{ id: string; role: "user" | "assistant"; text: string; createdAt: string; attachmentIndexes?: number[] }>;
+  workbenchProcessedInputs?: number;
+  workbenchPauseRequested?: boolean;
+  workbenchRound?: number;
+  workbenchLatestPrompt?: string;
+  workbenchBaseCommitSha?: string;
   jobId: string;
   projectId: string;
   ownerId: string;

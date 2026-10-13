@@ -131,6 +131,15 @@ export function initJobStore(): void {
     }
   });
   markInterrupted();
+  // A merge may finish before the process exits during its TAPD writeback.
+  // Recover that durable state as retryable; never merge the code a second time.
+  const completedRows = getDatabase().prepare("SELECT data FROM jobs WHERE status = 'completed'").all() as JobRow[];
+  for (const row of completedRows) {
+    const job = parseJob(row)!;
+    if (job.workbenchSession && job.tapdSync?.state === "pending") {
+      persistJob({ ...job, tapdSync: { ...job.tapdSync, state: "failed", error: "同步期间服务重启，请重试同步" }, updatedAt: now });
+    }
+  }
   if (rows.length > 0) {
     console.warn(`[JobStore] 已将 ${rows.length} 个未结束任务标记为重启中断`);
   }

@@ -219,7 +219,7 @@ export default function App() {
 
   const refreshJobs = useCallback(async (keepSelection = true) => {
     try {
-      const jobs = await api.listJobs();
+      const jobs = (await api.listJobs()).filter(job => !job.workbenchSession);
       const visibleIds = new Set(jobs.map((job) => job.jobId));
       for (const jobId of knownJobStatuses.current.keys()) {
         if (!visibleIds.has(jobId)) knownJobStatuses.current.delete(jobId);

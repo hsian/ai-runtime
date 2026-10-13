@@ -28,6 +28,10 @@ import { getProject } from "../services/projectRegistry.js";
 import { getProjectGitService } from "../services/projectRuntime.js";
 import { deleteMiniProgramPreview, generateMiniProgramPreview, getMiniProgramPreviewPath, uploadMiniProgramCode } from "../services/miniProgramPreviewService.js";
 import { existsSync } from "fs";
+import { receiveWorkbenchMessage, pauseWorkbenchSession, assertWorkbenchCanReceive } from "../services/workbenchSession.js";
+import { getAuthUser } from "../services/auth.js";
+import { syncWorkbenchTask } from "../services/tapd/taskStatusSync.js";
+import { z } from "zod";
 
 
 function getRequestOwnerId(req: import("express").Request): string {
@@ -152,6 +156,43 @@ function emitUserSubmitEvents(jobId: string, data: JobRequest): void {
 }
 
 export const jobsRouter = Router();
+
+jobsRouter.post("/workbench", handleJobImagesUpload, (req, res) => {
+  const text = typeof req.body?.message === "string" ? req.body.message.trim() : "请开始处理这个需求。";
+  if (!text || text.length > 20000) { res.status(400).json({ error: "消息应为 1–20000 个字符" }); return; }
+  const parsed = parseJobSubmitBody(req);
+  if (parsed.error || !parsed.data) { res.status(400).json({ error: parsed.error }); return; }
+  const identity = getClientIdentity(req);
+  const existing = listJobs(identity.ownerId).find(job => job.workbenchSession && job.conversationId === parsed.data!.conversationId && job.projectId === parsed.data!.projectId);
+  if (existing) { res.status(409).json({ error: "该任务已有会话，请进入现有会话继续", jobId: existing.jobId }); return; }
+  const created = createJobFromSubmit(req);
+  if ("error" in created) { res.status(400).json({ error: created.error }); return; }
+  const { job } = created;
+  updateJob(job.jobId, { workbenchSession: true, tapdTask: parsed.data.tapdTask, tapdOperator: getAuthUser(req)?.tapdOwnerName, taskMode: parsed.data.taskMode || "code", status: "awaiting_input" });
+  receiveWorkbenchMessage(job.jobId, text);
+  res.status(202).json({ jobId: job.jobId, status: "planning", message: "已开始处理任务" });
+});
+
+jobsRouter.post("/:jobId/message", handleJobImagesUpload, (req, res) => {
+  const job = getAuthorizedJob(req, res);
+  if (!job) return;
+  const text = typeof req.body?.message === "string" ? req.body.message.trim() : "";
+  if (!text || text.length > 20000) { res.status(400).json({ error: "消息应为 1–20000 个字符" }); return; }
+  try {
+    assertWorkbenchCanReceive(job.jobId);
+    const files = isMultipartSubmit(req) ? req.files as Express.Multer.File[] | undefined : undefined;
+    const attachments = finalizeJobAttachments(job.jobId, files, job.attachments?.length ?? 0);
+    receiveWorkbenchMessage(job.jobId, text, attachments);
+    res.status(202).json({ jobId: job.jobId, status: getJob(job.jobId)?.status, message: "消息已收到" });
+  } catch (error) { res.status(409).json({ error: error instanceof Error ? error.message : String(error) }); }
+});
+
+jobsRouter.post("/:jobId/pause", (req, res) => {
+  const job = getAuthorizedJob(req, res);
+  if (!job) return;
+  try { pauseWorkbenchSession(job.jobId); res.json({ ok: true }); }
+  catch (error) { res.status(409).json({ error: error instanceof Error ? error.message : String(error) }); }
+});
 
 jobsRouter.post("/", handleJobImagesUpload, (req, res) => {
   const created = createJobFromSubmit(req);
@@ -294,6 +335,7 @@ jobsRouter.delete("/conversation/:conversationId", async (req, res) => {
     await deleteJobAttachments(job.jobId).catch(() => undefined);
     await deleteMiniProgramPreview(job.jobId).catch(() => undefined);
     await cleanupStagedAttachmentsForAgent(gitService.getRepoPath(), job.jobId).catch(() => undefined);
+    if (job.workbenchSession && job.worktreePath) await gitService.removeJobWorktree(job.worktreePath, job.branch);
     deleteJobEvents(job.jobId);
     deleteJob(job.jobId);
   }
@@ -307,6 +349,16 @@ jobsRouter.delete("/conversation/:conversationId", async (req, res) => {
   res.json({ ok: true, deleted: jobs.length });
 });
 
+jobsRouter.post("/:jobId/tapd-sync", async (req, res) => {
+  const job = getAuthorizedJob(req, res);
+  if (!job) return;
+  if (!job.workbenchSession || !job.tapdTask || !job.tapdSync || job.tapdSync.state !== "failed") { res.status(409).json({ error: "当前没有失败的 TAPD 同步" }); return; }
+  await syncWorkbenchTask(job.jobId, job.tapdSync.target);
+  const latest = getJob(job.jobId)!;
+  if (latest.tapdSync?.state === "failed") { res.status(502).json({ error: latest.tapdSync.error }); return; }
+  res.json({ ok: true });
+});
+
 jobsRouter.post("/:jobId/merge", (req, res) => {
   const jobId = req.params.jobId;
   const job = getAuthorizedJob(req, res);
@@ -317,7 +369,16 @@ jobsRouter.post("/:jobId/merge", (req, res) => {
     return;
   }
 
-  const body = req.body as { createMergeRequest?: unknown } | undefined;
+  if (job.workbenchSession && (!job.commitSha || job.workbenchHasCodeChanges === false || job.commitSha === job.workbenchBaseCommitSha)) {
+    res.status(409).json({ error: "还没有实际代码修改，不能完成或合并任务" }); return;
+  }
+
+  const body = req.body as { createMergeRequest?: unknown; tapdTask?: unknown } | undefined;
+  if (job.workbenchSession && !job.tapdTask && body?.tapdTask) {
+    const target = z.object({ workspaceId: z.string().regex(/^\d+$/), taskId: z.string().regex(/^\d+$/) }).safeParse(body.tapdTask);
+    if (!target.success) { res.status(400).json({ error: "TAPD 任务关联无效" }); return; }
+    updateJob(jobId, { tapdTask: target.data, tapdOperator: getAuthUser(req)?.tapdOwnerName });
+  }
   const retryingMerge = job.mergeRetryable === true;
   const createMergeRequest = !retryingMerge && body?.createMergeRequest === true;
 
@@ -567,7 +628,7 @@ jobsRouter.get("/:jobId/diff", async (req, res) => {
   const filePath = typeof req.query.file === "string" ? req.query.file.trim() : undefined;
   try {
     const gitService = getProjectGitService(job.projectId);
-    const diff = await gitService.getCommitDiff(commitSha, filePath || undefined);
+    const diff = await gitService.getCommitDiff(commitSha, filePath || undefined, job.workbenchSession && job.worktreePath ? job.workbenchBaseCommitSha : undefined);
     res.setHeader("Cache-Control", "private, no-store");
     res.json(diff);
   } catch (err) {

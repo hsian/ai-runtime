@@ -30,6 +30,7 @@ const tapdContextSchema = z.object({
 });
 
 const submitFieldsSchema = z.object({
+  tapdTask: z.object({ workspaceId: z.string().regex(/^\d+$/), taskId: z.string().regex(/^\d+$/) }).optional(),
   prompt: z.string().min(1, "prompt 不能为空"),
   projectId: z.string().regex(/^[a-z0-9-]+$/).optional(),
   agentProvider: z.enum(["claude", "codex"]).optional(),
@@ -73,6 +74,7 @@ export function parseJobSubmitBody(req: Request): { data?: JobRequest; error?: s
     agentProvider: req.body?.agentProvider,
     pageContext: pageContextRaw,
     tapdContext: tapdContextRaw,
+    tapdTask: parseJsonField(req.body?.tapdTask),
     submittedBy: req.body?.submittedBy,
     conversationId: req.body?.conversationId,
     taskMode: req.body?.taskMode,

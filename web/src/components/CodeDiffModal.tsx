@@ -137,6 +137,7 @@ export function CodeDiffModal(props: {
   job?: JobStatus;
   open: boolean;
   onClose: () => void;
+  initialPath?: string;
 }) {
   const { message } = AntApp.useApp();
   const [summary, setSummary] = useState<JobDiff>();
@@ -159,7 +160,7 @@ export function CodeDiffModal(props: {
       .then((result) => {
         if (!active) return;
         setSummary(result);
-        setSelectedPath(result.files[0]?.path);
+        setSelectedPath(result.files.some(file => file.path === props.initialPath) ? props.initialPath : result.files[0]?.path);
       })
       .catch((reason: unknown) => {
         if (active) setError(reason instanceof Error ? reason.message : "代码改动读取失败");
@@ -168,7 +169,7 @@ export function CodeDiffModal(props: {
         if (active) setLoadingSummary(false);
       });
     return () => { active = false; };
-  }, [jobId, props.open]);
+  }, [jobId, props.open, props.initialPath]);
 
   useEffect(() => {
     if (!props.open || !jobId || !selectedPath) return;

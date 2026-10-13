@@ -1,7 +1,7 @@
 import { config } from "../config.js";
 import { getJob, updateJob } from "./jobStore.js";
 import { GitMergeConflictError, GitRemoteUnavailableError, type GitService } from "./gitService.js";
-import { runAgent } from "./agent/index.js";
+import { runAgent, AgentAbortedError } from "./agent/index.js";
 import { looksLikeClarification } from "./agent/types.js";
 import { buildCommitMessage, formatGitError } from "./commitMessage.js";
 import { appendJobEvent } from "./jobEvents.js";
@@ -69,6 +69,7 @@ function buildCodexRetryPrompt(prompt: string): string {
 }
 
 async function abortIfCancelled(jobId: string, phase: string, gitService: GitService, repoPath?: string): Promise<boolean> {
+  if (getJob(jobId)?.workbenchPauseRequested) throw new AgentAbortedError();
   if (!isCancelled(jobId)) return false;
   appendJobEvent(jobId, { type: "stage", phase: "abort", text: `任务已取消，停止在阶段: ${phase}` });
   await gitService.discardUncommittedChanges(repoPath);
@@ -133,6 +134,7 @@ function finishJob(
 }
 
 export async function processJob(jobId: string): Promise<void> {
+  if (getJob(jobId)?.workbenchPauseRequested) return;
   if (isCancelled(jobId)) return;
 
   const job = updateJob(jobId, {
@@ -164,7 +166,7 @@ export async function processJob(jobId: string): Promise<void> {
     return;
   }
 
-  const branchName = `plugin-fix/${jobId.slice(0, 8)}`;
+  const branchName = job.workbenchSession && job.branch ? job.branch : `plugin-fix/${jobId.slice(0, 8)}`;
   const defaultBranch = project.defaultBranch;
   let repoPath: string | undefined;
   let taskCommitSha: string | undefined;
@@ -173,7 +175,7 @@ export async function processJob(jobId: string): Promise<void> {
 
   try {
     const initialWorkspaceDirtyPaths = await gitService.listUncommittedPaths();
-    if (initialWorkspaceDirtyPaths.length > 0) {
+    if (initialWorkspaceDirtyPaths.length > 0 && !job.workbenchSession) {
       finishJob(jobId, {
         status: "failed",
         error: `业务主仓库存在未提交改动，请先处理后再执行: ${initialWorkspaceDirtyPaths.join(", ")}`,
@@ -185,7 +187,7 @@ export async function processJob(jobId: string): Promise<void> {
     }
 
     emitStage(jobId, "pull", `正在基于 ${defaultBranch} 创建独立工作区...`);
-    repoPath = await gitService.createJobWorktree(jobId, branchName);
+    repoPath = job.workbenchSession && job.worktreePath ? job.worktreePath : await gitService.createJobWorktree(jobId, branchName);
     updateJob(jobId, { worktreePath: repoPath });
     if (await abortIfCancelled(jobId, "pull", gitService, repoPath)) return;
 
@@ -201,7 +203,7 @@ export async function processJob(jobId: string): Promise<void> {
 
     const result = await runAgent(
       repoPath,
-      await withApiDocContext(buildPromptWithTapdContext(job.prompt, job.tapdContext)),
+      await withApiDocContext(buildPromptWithTapdContext(job.workbenchLatestPrompt || job.prompt, job.tapdContext)),
       job.pageContext,
       (event) => emitAgentEvent(jobId, event),
       {
@@ -211,6 +213,7 @@ export async function processJob(jobId: string): Promise<void> {
         attachments: stagedAttachments,
         confirmedPlan: job.requiresConfirm ? job.planSummary : undefined,
         conversationHistory: job.conversationHistory,
+        systemPrompt: job.workbenchSession ? "你是持续会话中的编程助手。按照已形成的具体计划和最新用户补充，在当前任务工作区实际完成修改；主动读取代码、实现并执行适当验证。用户只要求当前任务范围内的工作。只有无法从代码与需求确定的业务决定才提问，在结果中使用【需要补充】说明具体问题，保留已有改动。完成后用中文说明改动、验证结果和未完成事项；没有执行过的检查不得声称通过。不要自行合并到默认分支，提交与合并由运行时处理。" : undefined,
       }
     );
     implementationSummary = result.summary;
@@ -225,9 +228,14 @@ export async function processJob(jobId: string): Promise<void> {
     });
     if (await abortIfCancelled(jobId, "agent", gitService, repoPath)) return;
 
+    if (job.workbenchSession && result.summary.includes("【需要补充】")) {
+      updateJob(jobId, { status: "awaiting_input", workbenchNeedsInput: true, message: "等待你的回复", implementationSummary: result.summary.replace("【需要补充】", "").trim() });
+      return;
+    }
+
     let hasChanges = await gitService.hasUncommittedChanges(repoPath);
 
-    if (!hasChanges && engine === "codex") {
+    if (!hasChanges && engine === "codex" && !job.workbenchSession) {
       emitStage(jobId, "agent_retry", "Codex 未产生代码变更，正在自动重试执行...");
       const retryResult = await runAgent(
         repoPath,
@@ -250,7 +258,7 @@ export async function processJob(jobId: string): Promise<void> {
       }
     }
 
-    if (!hasChanges) {
+    if (!hasChanges && !job.workbenchSession) {
       const workspaceDirtyPaths = await gitService.listUncommittedPaths();
       if (workspaceDirtyPaths.length > 0) {
         emitStage(jobId, "commit", "检测到改动落在业务主仓库，正在转移到任务工作区...");
@@ -263,6 +271,10 @@ export async function processJob(jobId: string): Promise<void> {
     }
 
     if (!hasChanges) {
+      if (job.workbenchSession) {
+        updateJob(jobId, { status: job.commitSha && job.commitSha !== job.workbenchBaseCommitSha && job.workbenchHasCodeChanges !== false ? "awaiting_merge" : "awaiting_input", workbenchNeedsInput: false, message: result.summary || "本轮没有新增代码变更，可以继续对话。", implementationSummary: result.summary });
+        return;
+      }
       if (looksLikeClarification(result.summary)) {
         finishJob(jobId, {
           status: "failed",
@@ -295,6 +307,10 @@ export async function processJob(jobId: string): Promise<void> {
     const commitMessage = buildCommitMessage(result.summary, jobId);
     const commitSha = await gitService.commitAndPush(branchName, commitMessage, repoPath);
     taskCommitSha = commitSha;
+    if (job.workbenchSession) {
+      updateJob(jobId, { commitSha, sourceCommitSha: commitSha, workbenchHasCodeChanges: true });
+      if (await abortIfCancelled(jobId, "commit_done", gitService, repoPath)) return;
+    }
     logOperation({
       action: "git_commit",
       status: "success",
@@ -329,7 +345,7 @@ export async function processJob(jobId: string): Promise<void> {
     let finalBranch = branchName;
     let mergeSha = commitSha;
 
-    if (!project.autoMerge) {
+    if (!project.autoMerge || job.workbenchSession) {
       const readyMessage = `代码修改已完成，等待确认是否合并到 ${defaultBranch}`;
       updateJob(jobId, { status: "awaiting_merge", message: readyMessage, sourceBranch: branchName, sourceCommitSha: commitSha, worktreePath: repoPath, branch: branchName, commitSha, previewUrl, previewFilter, previewMessage: previewNotice, mergeRetryable: false, implementationSummary: result.summary });
       appendJobEvent(jobId, { type: "stage", phase: "execute_ready", text: readyMessage, branch: branchName, commitSha, previewUrl, previewMessage: previewNotice });
@@ -375,6 +391,10 @@ export async function processJob(jobId: string): Promise<void> {
       phase: "default_merge_done",
     });
   } catch (err) {
+    if (getJob(jobId)?.workbenchPauseRequested) {
+      updateJob(jobId, { status: "awaiting_input", message: "已停止，工作区已保留。发送消息可以继续。" });
+      return;
+    }
     if (err instanceof GitRemoteUnavailableError && repoPath && taskCommitSha) {
       const retryMessage = `${err.message}。代码修改和任务分支已保留，请在仓库恢复后重试合并到 ${defaultBranch}`;
       updateJob(jobId, {
@@ -449,7 +469,7 @@ export async function processJob(jobId: string): Promise<void> {
   } finally {
     try {
       const latest = getJob(jobId);
-      if (repoPath && latest?.status !== "awaiting_merge") {
+      if (repoPath && latest?.status !== "awaiting_merge" && !latest?.workbenchSession) {
         await gitService.removeJobWorktree(repoPath, branchName);
         updateJob(jobId, { worktreePath: undefined });
       }

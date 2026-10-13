@@ -11,6 +11,7 @@ if (normalizedPath === "/docs") document.title = "接口文档";
 const AnalyticsPage = React.lazy(() => import("./components/AnalyticsPage"));
 const WorkHoursPage = React.lazy(() => import("./components/WorkHoursPage"));
 const ApiDocsPage = React.lazy(() => import("./components/ApiDocsPage"));
+const WorkbenchPage = React.lazy(() => import("./components/WorkbenchPage"));
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
@@ -30,7 +31,9 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
       }}
     >
       <AntApp>
-        {normalizedPath === "/docs" ? (
+        {normalizedPath === "/workbench" ? (
+          <React.Suspense fallback={null}><WorkbenchPage /></React.Suspense>
+        ) : normalizedPath === "/docs" ? (
           <React.Suspense fallback={null}><ApiDocsPage /></React.Suspense>
         ) : normalizedPath === "/stats" ? (
           <React.Suspense fallback={null}><AnalyticsPage /></React.Suspense>

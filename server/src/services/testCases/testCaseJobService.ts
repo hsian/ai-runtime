@@ -47,7 +47,7 @@ export async function runTestCaseJob(jobId: string): Promise<void> {
     const repoPath = gitService.getRepoPath();
     appendJobEvent(jobId, { type: "stage", phase: "test_case", text: "正在分析需求和项目代码并设计测试用例（不会修改代码）..." });
     const stagedAttachments = await stageAttachmentsForAgent(job.attachments, repoPath, jobId);
-    const requirement = await withApiDocContext(buildPromptWithTapdContext(job.prompt, job.tapdContext));
+    const requirement = await withApiDocContext(buildPromptWithTapdContext(job.workbenchLatestPrompt || job.prompt, job.tapdContext));
     const generationPrompt = buildTestCasePrompt({
       requirement,
       pageContext: job.pageContext,
@@ -95,7 +95,7 @@ export async function runTestCaseJob(jobId: string): Promise<void> {
     }
 
     const current = getJob(jobId);
-    if (!current || current.status === "cancelled") return;
+    if (!current || current.status === "cancelled" || current.workbenchPauseRequested) return;
     const recommendation = document.implementationAssessment?.recommendedResult;
     const message = `已生成 ${document.cases.length} 条测试用例${recommendation ? `，代码分析推荐：${recommendation}` : ""}`;
     updateJob(jobId, { status: "completed", message, testCaseDocument: document });
@@ -112,7 +112,7 @@ export async function runTestCaseJob(jobId: string): Promise<void> {
     });
   } catch (error) {
     const current = getJob(jobId);
-    if (current?.status === "cancelled" || error instanceof AgentAbortedError) return;
+    if (current?.status === "cancelled" || current?.workbenchPauseRequested || error instanceof AgentAbortedError) return;
     const detail = error instanceof Error ? error.message : String(error);
     updateJob(jobId, { status: "failed", error: detail, message: "测试用例生成失败" });
     appendJobEvent(jobId, { type: "error", text: "测试用例生成失败", message: detail });

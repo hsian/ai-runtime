@@ -61,6 +61,7 @@ function submitBody(input: SubmitInput): BodyInit {
     if (input.agentProvider) form.append("agentProvider", input.agentProvider);
     if (input.taskMode) form.append("taskMode", input.taskMode);
     if (input.tapdContext) form.append("tapdContext", JSON.stringify(input.tapdContext));
+    if (input.tapdTask) form.append("tapdTask", JSON.stringify(input.tapdTask));
     input.images.forEach((image, index) => {
       form.append("images", image, input.imageNames?.[index] || `screenshot-${index + 1}.webp`);
     });
@@ -73,6 +74,7 @@ function submitBody(input: SubmitInput): BodyInit {
     agentProvider: input.agentProvider,
     taskMode: input.taskMode,
     tapdContext: input.tapdContext,
+    tapdTask: input.tapdTask,
   });
 }
 
@@ -83,6 +85,23 @@ type ApiDocSearchResponse = {
 };
 
 export const api = {
+  async retryTapdSync(jobId: string): Promise<void> {
+    await request(`/api/jobs/${encodeURIComponent(jobId)}/tapd-sync`, { method: "POST", body: "{}" });
+  },
+  async startWorkbench(input: SubmitInput, message: string): Promise<SubmitResponse> {
+    const body = submitBody(input);
+    if (body instanceof FormData) body.append("message", message);
+    return request("/api/jobs/workbench", { method: "POST", body: body instanceof FormData ? body : JSON.stringify({ ...JSON.parse(body as string), message }) });
+  },
+  async sendWorkbenchMessage(jobId: string, message: string, images: Blob[] = [], names: string[] = []): Promise<SubmitResponse> {
+    const body = new FormData();
+    body.append("message", message);
+    images.forEach((image, index) => body.append("images", image, names[index] || `screenshot-${index + 1}.webp`));
+    return request(`/api/jobs/${encodeURIComponent(jobId)}/message`, { method: "POST", body: images.length ? body : JSON.stringify({ message }) });
+  },
+  async pauseWorkbench(jobId: string): Promise<void> {
+    await request(`/api/jobs/${encodeURIComponent(jobId)}/pause`, { method: "POST", body: "{}" });
+  },
   async searchApiDocs(query: string): Promise<ApiDocSearchResponse> {
     return request(`/api/api-docs/search?q=${encodeURIComponent(query)}`);
   },
@@ -192,10 +211,10 @@ export const api = {
     return request(`/api/jobs/conversation/${encodeURIComponent(conversationId)}?projectId=${encodeURIComponent(projectId)}`, { method: "DELETE" });
   },
 
-  async merge(jobId: string, createMergeRequest = false): Promise<SubmitResponse> {
+  async merge(jobId: string, createMergeRequest = false, tapdTask?: SubmitInput["tapdTask"]): Promise<SubmitResponse> {
     return request(`/api/jobs/${encodeURIComponent(jobId)}/merge`, {
       method: "POST",
-      body: JSON.stringify({ createMergeRequest }),
+      body: JSON.stringify({ createMergeRequest, tapdTask }),
     });
   },
 
@@ -278,6 +297,25 @@ export const api = {
 
   async tapdIterations(workspaceId: string): Promise<{ iterations: TapdIteration[] }> {
     return request(`/api/tapd/iterations?workspaceId=${encodeURIComponent(workspaceId)}`);
+  },
+
+  async tapdIterationItems(workspaceId: string, iterationId: string): Promise<{
+    stories: Array<{ id: string; name: string; owner?: string; status?: string; tasks: Array<{ id: string; name: string; owner?: string; status?: string }> }>;
+    orphanTasks: Array<{ id: string; name: string; owner?: string; status?: string }>;
+  }> {
+    return request(`/api/tapd/iterations/${encodeURIComponent(iterationId)}/items?workspaceId=${encodeURIComponent(workspaceId)}`);
+  },
+
+  async tapdTaskStoryId(workspaceId: string, taskId: string): Promise<string | undefined> {
+    const data = await request<{ task: { story_id?: string } }>(`/api/tapd/tasks/${encodeURIComponent(taskId)}?workspaceId=${encodeURIComponent(workspaceId)}`);
+    const storyId = data.task.story_id?.trim();
+    return storyId && storyId !== "0" ? storyId : undefined;
+  },
+
+  async tapdIterationBugs(workspaceId: string, iterationId: string): Promise<{
+    bugs: Array<{ id: string; name: string; owner?: string; status?: string }>;
+  }> {
+    return request(`/api/tapd/iterations/${encodeURIComponent(iterationId)}/bugs?workspaceId=${encodeURIComponent(workspaceId)}`);
   },
 
   async createTapdBug(input: { title: string; description: string; workspaceId: string; iterationId: string; images: File[] }): Promise<{ bug: { id: string }; uploadedImageCount: number; failedImages: string[] }> {

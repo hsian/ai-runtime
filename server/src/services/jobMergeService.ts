@@ -7,6 +7,7 @@ import { buildCommitMessage } from "./commitMessage.js";
 import { logOperation } from "./operationLog.js";
 import { getProject } from "./projectRegistry.js";
 import { getProjectGitService } from "./projectRuntime.js";
+import { syncWorkbenchTask } from "./tapd/taskStatusSync.js";
 
 export async function confirmJobMerge(jobId: string): Promise<void> {
   const job = getJob(jobId);
@@ -54,6 +55,7 @@ export async function confirmJobMerge(jobId: string): Promise<void> {
       error: undefined,
       mergeRetryable: false,
     });
+    await syncWorkbenchTask(jobId, "done");
     appendJobEvent(jobId, {
       type: "done",
       phase: "default_merge_done",
@@ -97,6 +99,11 @@ export async function confirmJobMerge(jobId: string): Promise<void> {
     }
 
     if (err instanceof GitMergeConflictError) {
+      if (job.workbenchSession) {
+        updateJob(jobId, { status: "awaiting_merge", error: err.message, message: "合并发生冲突，代码和工作区已保留，请补充处理意见后重试完成", mergeRetryable: true });
+        appendJobEvent(jobId, { type: "stage", phase: "merge_conflict", text: "合并发生冲突，仍待审查；TAPD 未标记完成" });
+        return;
+      }
       appendJobEvent(jobId, {
         type: "stage",
         phase: "merge_conflict",
@@ -177,7 +184,7 @@ export async function confirmJobMerge(jobId: string): Promise<void> {
       targetBranch: defaultBranch,
       error,
     });
-    updateJob(jobId, { status: "failed", error, message: "合并失败" });
+    updateJob(jobId, { status: job.workbenchSession ? "awaiting_merge" : "failed", error, message: "合并失败", mergeRetryable: Boolean(job.workbenchSession) });
     appendJobEvent(jobId, { type: "error", message: error, text: `合并失败: ${error}` });
     throw err;
   } finally {

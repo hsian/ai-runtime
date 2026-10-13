@@ -111,6 +111,7 @@ export function TaskSidebar(props: {
         )}
       </div>
       <Dropdown classNames={{ root: "sidebar-more-dropdown" }} menu={{ items: [
+        { key: "workbench", label: <a href="/workbench">任务工作台</a> },
         { key: "hours", label: <a href="/work-hours">填写工时</a> },
         { key: "stats", label: <a href="/stats">数据统计</a> },
         ...(props.canManageUsers ? [{ key: "users", label: <a href="/account-management">账号管理</a> }] : []),

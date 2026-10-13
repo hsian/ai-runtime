@@ -784,7 +784,12 @@ export class GitService {
       .filter(Boolean);
   }
 
-  async getCommitDiff(commitSha: string, filePath?: string): Promise<GitCommitDiff> {
+  async getBranchBaseCommit(repoPath: string): Promise<string> {
+    const git = await this.getGitAt(repoPath);
+    return (await git.raw(["merge-base", "HEAD", `origin/${this.project.defaultBranch}`])).trim();
+  }
+
+  async getCommitDiff(commitSha: string, filePath?: string, baseCommitSha?: string): Promise<GitCommitDiff> {
     if (!/^[0-9a-f]{7,64}$/i.test(commitSha)) {
       throw new Error("提交编号无效");
     }
@@ -792,7 +797,8 @@ export class GitService {
     const git = await this.getGit();
     const resolvedCommit = (await git.revparse([`${commitSha}^{commit}`])).trim();
     const parentsLine = (await git.raw(["rev-list", "--parents", "-n", "1", resolvedCommit])).trim();
-    const parentCommit = parentsLine.split(/\s+/)[1] || EMPTY_GIT_TREE_SHA;
+    if (baseCommitSha && !/^[0-9a-f]{7,64}$/i.test(baseCommitSha)) throw new Error("基线提交编号无效");
+    const parentCommit = baseCommitSha ? (await git.revparse([`${baseCommitSha}^{commit}`])).trim() : parentsLine.split(/\s+/)[1] || EMPTY_GIT_TREE_SHA;
     const diffRange = [parentCommit, resolvedCommit];
 
     const [nameStatusOutput, numstatOutput] = await Promise.all([

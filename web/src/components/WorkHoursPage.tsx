@@ -8,7 +8,7 @@ import { workHoursApi, type AuthUser, type ManagedUser, type WorkProposal, type 
 const now = new Date();
 const thisMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
 
-function Login({ onLogin }: { onLogin: (user: AuthUser) => void }) {
+export function Login({ onLogin }: { onLogin: (user: AuthUser) => void }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   return <div className="work-hours-auth"><Typography.Title level={3}>登录</Typography.Title>
@@ -26,7 +26,7 @@ function Login({ onLogin }: { onLogin: (user: AuthUser) => void }) {
   </div>;
 }
 
-function ChangePassword({ onChanged, initial = false }: { onChanged: (user: AuthUser) => void; initial?: boolean }) {
+export function ChangePassword({ onChanged, initial = false }: { onChanged: (user: AuthUser) => void; initial?: boolean }) {
   const { message } = App.useApp();
   return <div className="work-hours-auth"><Typography.Title level={3}>{initial ? "修改初始密码" : "修改密码"}</Typography.Title>
     <Form layout="vertical" onFinish={async (values: { currentPassword: string; newPassword: string }) => {
