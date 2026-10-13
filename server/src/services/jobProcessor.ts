@@ -229,7 +229,7 @@ export async function processJob(jobId: string): Promise<void> {
     if (await abortIfCancelled(jobId, "agent", gitService, repoPath)) return;
 
     if (job.workbenchSession && result.summary.includes("【需要补充】")) {
-      updateJob(jobId, { status: "awaiting_input", workbenchNeedsInput: true, message: "等待你的回复", implementationSummary: result.summary.replace("【需要补充】", "").trim() });
+      updateJob(jobId, { status: "awaiting_input", workbenchNeedsInput: true, workbenchInputSource: "implementation", workbenchQuestion: result.summary.replace("【需要补充】", "").trim(), message: "等待你的回复", implementationSummary: result.summary.replace("【需要补充】", "").trim() });
       return;
     }
 

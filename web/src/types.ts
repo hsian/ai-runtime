@@ -72,6 +72,9 @@ export interface ReleaseMergeRecord {
 
 export interface JobStatus {
   workbenchSession?: boolean;
+  workbenchUserId?: string;
+  workbenchQuestion?: string;
+  workbenchInputSource?: "analysis" | "implementation";
   workbenchReset?: boolean;
   workbenchNeedsInput?: boolean;
   workbenchHasCodeChanges?: boolean;

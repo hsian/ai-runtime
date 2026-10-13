@@ -13,14 +13,14 @@ import { runTestCaseJob } from "./testCases/testCaseJobService.js";
 import type { Job, JobAttachment } from "../types.js";
 
 const decisionSchema = z.object({
-  action: z.enum(["reply", "needs_input", "implement", "cancel"]),
+  action: z.enum(["reply", "needs_input", "implement", "test_cases", "cancel"]),
   message: z.string().min(1).max(20000),
   plan: z.string().max(20000),
 });
 export const WORKBENCH_DECISION_SCHEMA = {
   type: "object", additionalProperties: false, required: ["action", "message", "plan"],
   properties: {
-    action: { type: "string", enum: ["reply", "needs_input", "implement", "cancel"] },
+    action: { type: "string", enum: ["reply", "needs_input", "implement", "test_cases", "cancel"] },
     message: { type: "string" }, plan: { type: "string" },
   },
 };
@@ -82,8 +82,24 @@ export function createWorkbenchWorker(deps: WorkbenchWorkerDependencies) {
           if (pending(deps.get(id)!)) continue;
           if (decision.action === "cancel" && deps.cancel) {
             appendAssistant(id, await deps.cancel(id));
+          } else if (decision.action === "test_cases") {
+            const originalMode = current.taskMode;
+            deps.update(id, { workbenchNeedsInput: false, workbenchQuestion: undefined, workbenchLatestPrompt: buildWorkbenchRequest(deps.get(id)!) });
+            try {
+              await deps.testCases(id);
+            } finally {
+              deps.update(id, { taskMode: originalMode });
+            }
+            const latest = deps.get(id)!;
+            if (latest.workbenchPauseRequested) return;
+            if (latest.status !== "failed") {
+              const reviewable = latest.commitSha && latest.worktreePath && latest.workbenchHasCodeChanges !== false && latest.commitSha !== latest.workbenchBaseCommitSha;
+              const message = "测试用例已生成，可以查看或下载，也可以继续对话。";
+              deps.update(id, { status: latest.mergedToDefaultAt ? "completed" : reviewable ? "awaiting_merge" : "awaiting_input", message });
+              appendAssistant(id, message);
+            }
           } else if (decision.action === "implement" && current.taskMode !== "question") {
-            deps.update(id, { workbenchReset: false, workbenchNeedsInput: false, planSummary: decision.plan, requiresConfirm: true, status: "pending", workbenchLatestPrompt: buildWorkbenchRequest(deps.get(id)!) });
+            deps.update(id, { workbenchQuestion: undefined, workbenchReset: false, workbenchNeedsInput: false, planSummary: decision.plan, requiresConfirm: true, status: "pending", workbenchLatestPrompt: buildWorkbenchRequest(deps.get(id)!) });
             await deps.execute(id);
             const latest = deps.get(id)!;
             if (latest.workbenchPauseRequested) return;
@@ -91,7 +107,7 @@ export function createWorkbenchWorker(deps: WorkbenchWorkerDependencies) {
           } else {
             const latest = deps.get(id)!;
             const reviewable = latest.commitSha && latest.worktreePath && latest.workbenchHasCodeChanges !== false && latest.commitSha !== latest.workbenchBaseCommitSha;
-            deps.update(id, { status: decision.action !== "needs_input" && reviewable ? "awaiting_merge" : "awaiting_input", workbenchNeedsInput: decision.action === "needs_input", message: decision.action === "needs_input" ? "等待你的回复" : "可以继续对话", clarificationQuestions: undefined });
+            deps.update(id, { workbenchInputSource: decision.action === "needs_input" ? "analysis" : undefined, workbenchQuestion: decision.action === "needs_input" ? decision.message : undefined, status: decision.action !== "needs_input" && reviewable ? "awaiting_merge" : "awaiting_input", workbenchNeedsInput: decision.action === "needs_input", message: decision.action === "needs_input" ? "等待你的回复" : "可以继续对话", clarificationQuestions: undefined });
           }
         }
       } catch (error) {
@@ -175,8 +191,8 @@ const worker = createWorkbenchWorker({
     }, {
       jobId: job.jobId, mode: "question", agentProvider: job.agentProvider, attachments,
       conversationHistory: job.conversationHistory, jsonSchema: WORKBENCH_DECISION_SCHEMA,
-      systemPrompt: "你是与用户协作的编程助手。当前阶段只读取代码，不修改文件。理解最新一条用户消息，并结合持续对话、需求正文和评论决定下一步。回答、解释、讨论用 reply；确实缺少业务决定才用 needs_input，在 message 中自然提出问题，允许多轮回复；用户授权实现且信息足够时用 implement，输出具体 plan，message 简洁说明马上要做什么。不要每轮重复整份需求，不要机械要求确认计划。用户只问问题时不得执行修改；新补充覆盖旧约定。message 使用中文自然语言，不提 JSON 或内部阶段。严格返回指定 JSON 结构。",
-      questionChangeInstructions: "你在只读阶段为持续会话决定下一步，按指定结构返回 reply、needs_input、implement 或 cancel。用户要求取消/撤销当前任务时返回 cancel，不得反问下一步或执行代码修改。",
+      systemPrompt: "你是与用户协作的编程助手。当前阶段只读取代码，不修改文件。理解最新一条用户消息，并结合持续对话、需求正文和评论决定下一步。用户要求生成、补充或调整测试用例时用 test_cases，调用专用用例生成能力；仅讨论用例或要求编写自动化测试代码时分别使用 reply 或 implement。回答、解释、讨论用 reply；确实缺少业务决定才用 needs_input，在 message 中自然提出问题，允许多轮回复；用户授权实现且信息足够时用 implement，输出具体 plan，message 简洁说明马上要做什么。不要每轮重复整份需求，不要机械要求确认计划。用户只问问题时不得执行修改；新补充覆盖旧约定。message 使用中文自然语言，不提 JSON 或内部阶段。严格返回指定 JSON 结构。",
+      questionChangeInstructions: "你在只读阶段为持续会话决定下一步，按指定结构返回 reply、needs_input、implement、test_cases 或 cancel。用户要求取消/撤销当前任务时返回 cancel，不得反问下一步或执行代码修改。",
     });
     return parseWorkbenchDecision(result.summary);
   },
@@ -197,7 +213,7 @@ export function receiveWorkbenchMessage(jobId: string, text: string, attachments
   const messages = [...(job.workbenchMessages ?? []), { id: randomUUID(), role: "user" as const, text, createdAt: new Date().toISOString(), attachmentIndexes }];
   const cancelling = isWorkbenchCancellation(text);
   const deferredResume = (job.workbenchPauseRequested || cancelling) && worker.isRunning(jobId);
-  updateJob(jobId, { workbenchSession: true, workbenchMessages: messages, workbenchPauseRequested: Boolean(deferredResume), attachments: [...(job.attachments ?? []), ...attachments] });
+  updateJob(jobId, { workbenchSession: true, workbenchNeedsInput: false, workbenchInputSource: undefined, workbenchQuestion: undefined, workbenchMessages: messages, workbenchPauseRequested: Boolean(deferredResume), attachments: [...(job.attachments ?? []), ...attachments] });
   if (deferredResume) worker.resumeAfterPause(jobId);
   if (cancelling && worker.isRunning(jobId)) killAgentForJob(jobId);
   appendJobEvent(jobId, { type: "user", text, attachmentCount: attachments.length || undefined });

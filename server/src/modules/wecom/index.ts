@@ -11,13 +11,17 @@ import { getDialogue } from "./dialogueStore.js";
 import type { WecomSession } from "./types.js";
 import type { WecomConfig } from "./config.js";
 import { startTapdCompletionMonitor } from "./tapdCompletion.js";
+import { createWorkbenchBridge } from "./workbenchBridge.js";
 
 export function startWecomBot(options: WecomConfig | undefined = getWecomConfig(), clientFactory = createWecomClient): () => void {
   if (!options) return () => {};
   initWecomStore();
   const client = clientFactory(options);
   const responses = new ResponseCoordinator(client);
-  const handler = createMessageHandler(client, options, undefined, undefined, responses);
+  const workbench = createWorkbenchBridge(options,
+    (target, content) => client.sendMessage(target, { msgtype: "markdown", markdown: { content } }),
+    target => authenticated && !stopped && !responses.blocked(target));
+  const handler = createMessageHandler(client, options, undefined, undefined, responses, undefined, workbench);
   const subscriptions = new Map<string, () => void>();
   const retryAfter = new Map<string, number>();
   let authenticated = false;
@@ -104,20 +108,21 @@ export function startWecomBot(options: WecomConfig | undefined = getWecomConfig(
   client.on("authenticated", () => {
     authenticated = true;
     console.log(`[WeCom] 机器人已连接，默认项目：${options.projectId}`);
-    reconcile(); void flush();
+    reconcile(); workbench.reconcile(); void workbench.flush(); void flush();
   });
   client.on("disconnected", () => { authenticated = false; });
   client.on("error", () => { console.error("[WeCom] 连接异常，请检查网络和机器人配置"); });
   client.on("message", frame => handler.handle(frame));
   const timer = setInterval(() => {
     if (stopped) return;
-    try { reconcile(); void flush(); }
+    try { reconcile(); workbench.reconcile(); void workbench.flush(); void flush(); }
     catch { console.error("[WeCom] 同步任务状态失败"); }
   }, 3000);
   timer.unref();
   client.connect();
   return () => {
     stopped = true;
+    workbench.stop();
     stopCompletionMonitor();
     handler.stop();
     responses.stop();

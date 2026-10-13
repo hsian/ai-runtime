@@ -5,6 +5,7 @@ import { Router } from "express";
 import { config } from "../config.js";
 import { isMultipartSubmit, parseJobSubmitBody } from "../middleware/parseJobSubmit.js";
 import { getClientIdentity } from "../services/clientIdentity.js";
+import { getAuthUser } from "../services/auth.js";
 import { appendJobEvent } from "../services/jobEvents.js";
 import { createJob, getJob, updateJob } from "../services/jobStore.js";
 import { logOperation } from "../services/operationLog.js";
@@ -35,7 +36,7 @@ function handleImages(
 function authorizedJob(req: import("express").Request, res: import("express").Response) {
   const job = getJob(req.params.jobId);
   const ownerId = getClientIdentity(req).ownerId;
-  if (!job || (job.ownerId && job.ownerId !== ownerId)) {
+  if (!job || (job.workbenchUserId ? job.workbenchUserId !== getAuthUser(req)?.id : job.ownerId && job.ownerId !== ownerId)) {
     res.status(404).json({ error: "任务不存在" });
     return undefined;
   }
@@ -91,7 +92,7 @@ testCasesRouter.post("/", handleImages, (req, res) => {
 });
 
 async function sendWorkbook(job: Job, res: import("express").Response): Promise<void> {
-  if (job.taskMode !== "test-case" || !job.testCaseDocument) {
+  if (!job.testCaseDocument) {
     res.status(409).json({ error: "测试用例尚未生成" });
     return;
   }

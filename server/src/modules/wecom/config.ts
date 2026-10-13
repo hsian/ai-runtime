@@ -12,6 +12,8 @@ export function getWecomConfig() {
     QWECHAT_BOT_DEFAULT_PROJECT: z.string().default("b2b-composite"),
     QWECHAT_BOT_PREVIEW_HOST: z.string().trim().optional(),
     QWECHAT_CODE_ALLOWED_USER_IDS: z.string().default(""),
+    QWECHAT_WORKBENCH_RECIPIENTS: z.string().default("{}"),
+    QWECHAT_WORKBENCH_URL: z.preprocess(value => value === "" ? undefined : value, z.string().url().optional()),
     TAPD_COMPLETION_NOTIFY_ENABLED: z.enum(["true", "false"]).default("false"),
     TAPD_COMPLETION_NOTIFY_WORKSPACE_IDS: z.string().default(""),
     TAPD_COMPLETION_NOTIFY_RECIPIENTS: z.string().default("{}"),
@@ -27,6 +29,9 @@ export function getWecomConfig() {
   return { botId: values.QWECHAT_BOT_ID, secret: values.QWECHAT_BOT_SECRET,
     projectId: project.id, previewHost: values.QWECHAT_BOT_PREVIEW_HOST,
     codeAllowedUserIds: parseCodeAllowedUserIds(values.QWECHAT_CODE_ALLOWED_USER_IDS),
+    workbenchRecipients: parseWorkbenchRecipients(values.QWECHAT_WORKBENCH_RECIPIENTS),
+    workbenchNameRecipients: parseWorkbenchNameRecipients(values.TAPD_COMPLETION_NOTIFY_RECIPIENTS),
+    workbenchUrl: values.QWECHAT_WORKBENCH_URL,
     tapdCompletion: values.TAPD_COMPLETION_NOTIFY_ENABLED === "true" ? parseCompletionOptions(
       values.TAPD_COMPLETION_NOTIFY_WORKSPACE_IDS, values.TAPD_COMPLETION_NOTIFY_RECIPIENTS) : undefined };
 }
@@ -55,10 +60,26 @@ export function parseCodeAllowedUserIds(value: string): string[] {
 }
 
 export interface WecomConfig {
+  workbenchRecipients?: Record<string, string>;
+  workbenchNameRecipients?: Record<string, string>;
+  workbenchUrl?: string;
   botId: string;
   secret: string;
   projectId: string;
   previewHost?: string;
   codeAllowedUserIds?: readonly string[];
   tapdCompletion?: TapdCompletionOptions;
+}
+
+export function parseWorkbenchRecipients(value: string): Record<string, string> {
+  const mapping = z.record(z.string().trim().min(1).regex(/^[a-zA-Z0-9._@-]+$/)).parse(JSON.parse(value));
+  if (Object.keys(mapping).some(name => !name.trim() || name !== name.trim())) throw new Error("工作台推送映射必须填写准确的登录账号");
+  if (new Set(Object.values(mapping)).size !== Object.values(mapping).length) throw new Error("一个企微用户只能绑定一个工作台账号");
+  return mapping;
+}
+
+export function parseWorkbenchNameRecipients(value: string): Record<string, string> {
+  const mapping = z.record(z.string().trim().min(1).regex(/^[a-zA-Z0-9._@-]+$/)).parse(JSON.parse(value));
+  if (Object.keys(mapping).some(name => !name.trim() || name !== name.trim())) throw new Error("企微姓名映射必须填写准确的姓名");
+  return mapping;
 }

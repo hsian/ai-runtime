@@ -14,11 +14,12 @@ import { prepareTapdMessage, extractTapdLink } from "./tapdBridge.js";
 import type { ResponseCoordinator } from "./responseCoordinator.js";
 import { extractMessageContent, downloadMessageImages, WECOM_IMAGE_MAX_BYTES } from "./messageImages.js";
 import { saveImageBuffers, deleteJobAttachments } from "../../services/uploadService.js";
+import type { createWorkbenchBridge } from "./workbenchBridge.js";
 
 const VOICE_CONFIRMATION_REQUIRED = "为避免语音识别误操作，执行、取消、撤回和合并等操作请用文字发送。语音可以用于问答和描述修改需求。";
 
 export function createMessageHandler(client: WSClient, options: WecomConfig, routeIntent = resolveIntent, prepareMessage = prepareTapdMessage,
-  responses?: ResponseCoordinator, dispatch = dispatchCommand) {
+  responses?: ResponseCoordinator, dispatch = dispatchCommand, workbench?: ReturnType<typeof createWorkbenchBridge>) {
   const chains = new Map<string, Promise<void>>();
   let stopped = false;
   return {
@@ -53,6 +54,13 @@ export function createMessageHandler(client: WSClient, options: WecomConfig, rou
             if (!content.trim()) throw new Error(voice
               ? "这条语音没有可用的转写文本，请重发或改用文字。" : "请发送文字需求。");
             if (content.length > 50_000) throw new Error("消息不能超过 50000 字符。");
+            const workbenchReply = await workbench?.reply(body.from.userid, content, {
+              group: body.chattype === "group", voice, images: extracted.images.length > 0,
+            });
+            if (workbenchReply !== undefined) {
+              rememberMessage(messageKey);
+              text = workbenchReply;
+            } else {
             const parsed = parseCommand(content);
             let projectId = getProject(parsed.projectId ?? options.projectId).id;
             if ("jobId" in parsed && parsed.jobId && !parsed.projectId) {
@@ -104,6 +112,7 @@ export function createMessageHandler(client: WSClient, options: WecomConfig, rou
             if (prepared.prefix) text = `${prepared.prefix}\n\n${text}`;
             recordChatExchange(getSession(options.botId, target, body.from.userid, projectId), content, trackedJob ? undefined : text,
               command.action === "chat" && !command.historySource && !prepared.prefix ? "conversation" : "task");
+            }
           }
         } catch (error) {
           rememberMessage(messageKey);

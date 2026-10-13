@@ -1,4 +1,7 @@
 .wb-chat-workspace { display: grid; grid-template-columns: minmax(0, 1fr) 300px; flex: 1; min-height: 0; background: #fafafa; }
+.wb-chat-workspace.is-new-conversation { grid-template-columns: minmax(0, 1fr); }
+.wb-chat-workspace.is-new-conversation .wb-chat-inspector { display: none; }
+.wb-chat-workspace.is-new-conversation .wb-chat-welcome { padding-top: clamp(32px, 12vh, 120px); }
 .wb-chat-main { display: flex; flex-direction: column; position: relative; min-height: 0; min-width: 0; }
 .wb-chat-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 11px 22px; border-bottom: 1px solid #ededf0; color: #71717a; font-size: 12px; }
 .wb-chat-header .ant-tag { margin-left: 9px; border: 0; background: #eeeef0; color: #52525b; }

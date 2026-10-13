@@ -119,6 +119,9 @@ export type JobStatus =
 export interface Job {
   /** 独立工作台会话；原 Web 的 Job 流程不使用这些字段。 */
   workbenchSession?: boolean;
+  workbenchUserId?: string;
+  workbenchQuestion?: string;
+  workbenchInputSource?: "analysis" | "implementation";
   workbenchReset?: boolean;
   workbenchNeedsInput?: boolean;
   workbenchHasCodeChanges?: boolean;

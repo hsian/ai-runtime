@@ -71,9 +71,15 @@ function getPublicJob(jobId: string) {
 
 function isAuthorizedJob(
   job: NonNullable<ReturnType<typeof getJob>>,
-  ownerId: string
+  ownerId: string,
+  userId?: string
 ): boolean {
+  if (job.workbenchUserId) return job.workbenchUserId === userId;
   return !job.ownerId || job.ownerId === ownerId;
+}
+
+function authorizedJobs(req: import("express").Request) {
+  return listJobs().filter(job => isAuthorizedJob(job, getRequestOwnerId(req), getAuthUser(req)?.id));
 }
 
 function getAuthorizedJob(
@@ -81,7 +87,7 @@ function getAuthorizedJob(
   res: import("express").Response
 ): NonNullable<ReturnType<typeof getJob>> | undefined {
   const job = getJob(req.params.jobId);
-  if (!job || !isAuthorizedJob(job, getRequestOwnerId(req))) {
+  if (!job || !isAuthorizedJob(job, getRequestOwnerId(req), getAuthUser(req)?.id)) {
     res.status(404).json({ error: "任务不存在" });
     return undefined;
   }
@@ -158,17 +164,19 @@ function emitUserSubmitEvents(jobId: string, data: JobRequest): void {
 export const jobsRouter = Router();
 
 jobsRouter.post("/workbench", handleJobImagesUpload, (req, res) => {
+  const user = getAuthUser(req);
+  if (!user) { res.status(401).json({ error: "请先登录任务工作台" }); return; }
   const text = typeof req.body?.message === "string" ? req.body.message.trim() : "请开始处理这个需求。";
   if (!text || text.length > 20000) { res.status(400).json({ error: "消息应为 1–20000 个字符" }); return; }
   const parsed = parseJobSubmitBody(req);
   if (parsed.error || !parsed.data) { res.status(400).json({ error: parsed.error }); return; }
   const identity = getClientIdentity(req);
-  const existing = listJobs(identity.ownerId).find(job => job.workbenchSession && job.conversationId === parsed.data!.conversationId && job.projectId === parsed.data!.projectId);
+  const existing = authorizedJobs(req).find(job => job.workbenchSession && job.conversationId === parsed.data!.conversationId && job.projectId === parsed.data!.projectId);
   if (existing) { res.status(409).json({ error: "该任务已有会话，请进入现有会话继续", jobId: existing.jobId }); return; }
   const created = createJobFromSubmit(req);
   if ("error" in created) { res.status(400).json({ error: created.error }); return; }
   const { job } = created;
-  updateJob(job.jobId, { workbenchSession: true, tapdTask: parsed.data.tapdTask, tapdOperator: getAuthUser(req)?.tapdOwnerName, taskMode: parsed.data.taskMode || "code", status: "awaiting_input" });
+  updateJob(job.jobId, { workbenchSession: true, workbenchUserId: user.id, tapdTask: parsed.data.tapdTask, tapdOperator: user.tapdOwnerName, taskMode: parsed.data.taskMode || "code", status: "awaiting_input" });
   receiveWorkbenchMessage(job.jobId, text);
   res.status(202).json({ jobId: job.jobId, status: "planning", message: "已开始处理任务" });
 });
@@ -176,10 +184,18 @@ jobsRouter.post("/workbench", handleJobImagesUpload, (req, res) => {
 jobsRouter.post("/:jobId/message", handleJobImagesUpload, (req, res) => {
   const job = getAuthorizedJob(req, res);
   if (!job) return;
+  const user = getAuthUser(req);
+  if (!user) { res.status(401).json({ error: "请先登录任务工作台" }); return; }
+  if (!job.workbenchUserId && job.tapdOperator && job.tapdOperator !== user.tapdOwnerName) {
+    res.status(409).json({ error: "旧任务的 TAPD 操作人与当前账号不一致，请使用原账号继续" }); return;
+  }
   const text = typeof req.body?.message === "string" ? req.body.message.trim() : "";
   if (!text || text.length > 20000) { res.status(400).json({ error: "消息应为 1–20000 个字符" }); return; }
   try {
     assertWorkbenchCanReceive(job.jobId);
+    // An explicit authenticated reply claims a legacy browser-owned session.
+    // Merely listing/opening a job never guesses an account or enables a push.
+    if (!job.workbenchUserId) updateJob(job.jobId, { workbenchUserId: user.id, tapdOperator: user.tapdOwnerName });
     const files = isMultipartSubmit(req) ? req.files as Express.Multer.File[] | undefined : undefined;
     const attachments = finalizeJobAttachments(job.jobId, files, job.attachments?.length ?? 0);
     receiveWorkbenchMessage(job.jobId, text, attachments);
@@ -312,7 +328,7 @@ jobsRouter.delete("/conversation/:conversationId", async (req, res) => {
   let resolvedProjectId: string;
   try { resolvedProjectId = getProject(projectId).id; }
   catch (err) { res.status(400).json({ error: err instanceof Error ? err.message : "项目无效" }); return; }
-  const jobs = listJobs(ownerId).filter(
+  const jobs = authorizedJobs(req).filter(
     (job) => job.projectId === resolvedProjectId && (job.conversationId || job.jobId) === conversationId
   );
   if (jobs.length === 0) {
@@ -697,5 +713,5 @@ jobsRouter.get("/:jobId", (req, res) => {
 });
 
 jobsRouter.get("/", (req, res) => {
-  res.json({ jobs: listJobs(getRequestOwnerId(req)).map(toPublicJob) });
+  res.json({ jobs: authorizedJobs(req).map(toPublicJob) });
 });

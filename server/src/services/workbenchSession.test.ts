@@ -18,6 +18,41 @@ const setup = () => {
   return { deps, executions, job: () => job, addMessage };
 };
 
+test("对话内生成用例保留原代码模式和 Review，随后仍可修改代码", async () => {
+  const state = setup(); let generations = 0;
+  state.deps.update("session-1", { commitSha: "code-commit", workbenchHasCodeChanges: true });
+  state.deps.analyze = async () => ({ action: "test_cases", message: "我会生成当前需求的测试用例。", plan: "" });
+  state.deps.testCases = async id => { generations++; state.deps.update(id, { taskMode: "test-case", status: "completed" }); };
+  const worker = createWorkbenchWorker(state.deps);
+  await worker.start("session-1");
+  assert.equal(generations, 1);
+  assert.equal(state.job().taskMode, "code");
+  assert.equal(state.job().status, "awaiting_merge");
+  assert.equal(state.job().commitSha, "code-commit");
+  assert.equal(state.job().worktreePath, "/isolated/task-1");
+  state.addMessage("再调整按钮文案");
+  state.deps.analyze = async () => ({ action: "implement", message: "开始调整。", plan: "修改按钮文案" });
+  await worker.start("session-1");
+  assert.equal(generations, 1);
+  assert.deepEqual(state.executions, ["session-1"]);
+});
+
+test("生成用例不把未合并的任务标为完成，失败时仍恢复原任务模式", async () => {
+  const state = setup();
+  state.deps.analyze = async () => ({ action: "test_cases", message: "生成测试用例。", plan: "" });
+  state.deps.testCases = async id => { state.deps.update(id, { taskMode: "test-case", status: "completed" }); };
+  const worker = createWorkbenchWorker(state.deps);
+  await worker.start("session-1");
+  assert.equal(state.job().status, "awaiting_input");
+  assert.equal(state.job().workbenchNeedsInput, false);
+  state.addMessage("补充异常用例");
+  state.deps.testCases = async id => { state.deps.update(id, { taskMode: "test-case" }); throw new Error("模拟生成失败"); };
+  await worker.start("session-1");
+  assert.equal(state.job().status, "failed");
+  assert.equal(state.job().taskMode, "code");
+  assert.equal(state.job().worktreePath, "/isolated/task-1");
+});
+
 test("明确需求自动执行并等待审查，保留同一任务和工作区", async () => {
   const state = setup(); const worker = createWorkbenchWorker(state.deps);
   await worker.start("session-1");

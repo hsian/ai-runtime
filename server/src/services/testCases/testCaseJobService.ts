@@ -43,8 +43,8 @@ export async function runTestCaseJob(jobId: string): Promise<void> {
 
   try {
     appendJobEvent(jobId, { type: "stage", phase: "pull", text: `测试用例模式：正在拉取 ${project.defaultBranch} 分支最新代码...` });
-    await gitService.prepareBaseBranch();
-    const repoPath = gitService.getRepoPath();
+    if (!job.workbenchSession || !job.worktreePath) await gitService.prepareBaseBranch();
+    const repoPath = job.workbenchSession && job.worktreePath ? job.worktreePath : gitService.getRepoPath();
     appendJobEvent(jobId, { type: "stage", phase: "test_case", text: "正在分析需求和项目代码并设计测试用例（不会修改代码）..." });
     const stagedAttachments = await stageAttachmentsForAgent(job.attachments, repoPath, jobId);
     const requirement = await withApiDocContext(buildPromptWithTapdContext(job.workbenchLatestPrompt || job.prompt, job.tapdContext));

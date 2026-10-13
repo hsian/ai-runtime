@@ -31,6 +31,8 @@
 .wb-page-title { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .wb-page-title h1 { font-size: 13px; font-weight: 500; color: #27272a; margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .wb-page-title .ant-btn { color: #92929b; }
+.wb-title-tapd-link { flex-shrink: 0; display: grid; place-items: center; width: 26px; height: 26px; border-radius: 5px; color: #92929b; font-size: 15px; }
+.wb-title-tapd-link:hover { background: #eeeef0; color: #27272a; }
 .wb-content.wb-sessions { padding: 0; overflow: hidden; display: flex; flex-direction: column; }
 .wb-session-toolbar { display: flex; gap: 10px; align-items: center; padding: 11px 16px 8px; flex-shrink: 0; }
 .wb-layout-switch { display: flex; align-items: center; background: #eeeef0; border-radius: 6px; padding: 2px; }
@@ -41,6 +43,7 @@
 .wb-session-toolbar > .ant-btn { height: 28px; font-size: 12px; color: #71717a; }
 .wb-session-filters { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 6px 16px 12px; border-bottom: 1px solid #e5e5e8; flex-shrink: 0; }
 .wb-session-filters .ant-select { min-width: 96px; max-width: 190px; height: 29px; font-size: 12px; }
+.wb-session-filters .ant-select.wb-iteration-select { width: 270px; min-width: 0; max-width: 100%; }
 .wb-session-filters .ant-select-selector { border-radius: 20px !important; border-color: #e5e5e8 !important; background: #fcfcfc !important; }
 .wb-session-filters .wb-work-types { max-width: none; margin: 0; display: flex; padding: 2px; gap: 0; background: #eeeef0; border-radius: 6px; }
 .wb-session-filters .wb-work-types button { border: 0; background: none; border-radius: 4px; padding: 4px 9px; font-size: 11px; color: #92929b; cursor: pointer; }

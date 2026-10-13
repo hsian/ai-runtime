@@ -1,5 +1,52 @@
 # Enterprise WeChat integration
 
+## Workbench clarification inbox (小迪)
+
+Workbench notices reuse `TAPD_COMPLETION_NOTIFY_RECIPIENTS`: match the logged-in
+account's display name or TAPD owner name to the configured real WeCom sender ID.
+This works even when TAPD completion notifications are disabled. Conflicting name
+matches, or multiple enabled accounts resolving to the same WeCom ID, block both
+notifications and replies. Disabled or unmatched accounts cannot receive or submit
+clarifications. Use private-chat `我的ID` to obtain the ID.
+
+```dotenv
+TAPD_COMPLETION_NOTIFY_RECIPIENTS={"姓名":"wecom-userid"}
+# Optional explicit username override, taking precedence over name matching:
+QWECHAT_WORKBENCH_RECIPIENTS={}
+QWECHAT_WORKBENCH_URL=https://ai.example.com/workbench
+QWECHAT_CODE_ALLOWED_USER_IDS=wecom-userid
+```
+
+The URL and explicit username mapping are optional. Workbench jobs
+record the authenticated Web account ID on creation; legacy jobs without an
+account ID are never inferred from browser cookies, nicknames or TAPD names.
+They acquire an account ID only when the logged-in owner explicitly sends a
+reply/continuation from the workbench; a recorded different TAPD operator blocks
+this adoption. Merely viewing a legacy job never binds it or sends a notice.
+This integration does not change the original bot's job ownership or dialogue.
+
+When requirement analysis needs information, 小迪 sends a private notice with the
+question and full job ID. Send `待补充` to list your pending workbench questions,
+or `补充 完整任务编号：答案` to answer a specific question. A plain text answer is
+accepted when exactly one workbench question is pending and its notice has
+been delivered. Multiple pending questions require an explicit job ID.
+Replies enter the original durable workbench conversation and continue the
+same workspace. Review and completion stay in the workbench. Voice and image
+supplements currently require text or uploading the image in the workbench.
+
+Questions raised while modifying code stay in the workbench and do not trigger
+小迪 notices. When real code changes are ready for Review, 小迪 sends the owner
+a private reminder to view the Diff and complete the task in the workbench.
+Review reminders are deduplicated by task and commit; a later revised commit
+can produce another reminder. Plans without code changes never trigger Review
+notices, and queued reminders are discarded if the task resumes or is completed.
+
+Notices persist in SQLite and resume by message chunk after reconnect/restart.
+Every send revalidates the account binding and the current question. Once the
+question is answered in the Web UI, pending obsolete notices are discarded;
+repeated explicit replies report that the question has already been handled.
+No production WeCom messages are sent by the automated tests.
+
 ## TAPD backend completion notifications
 
 The optional monitor polls TAPD every ten minutes during 09:00–19:00 in
