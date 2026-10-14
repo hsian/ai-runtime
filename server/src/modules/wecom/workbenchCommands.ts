@@ -81,7 +81,7 @@ export function createWorkbenchCommands(options: WecomConfig, accountFor: (sende
   const rememberPage = (user: string, state: PageState) => db.prepare("INSERT INTO workbench_command_pages VALUES (?,?,?) ON CONFLICT(bot_id,user_id) DO UPDATE SET data=excluded.data")
     .run(options.botId, user, JSON.stringify(state));
   const link = (job: Job) => {
-    if (!options.workbenchUrl) return "\n工作台地址尚未配置，请登录工作台查看同名任务。";
+    if (!options.workbenchUrl) return "\n可登录任务工作台查看进度。";
     const url = new URL(options.workbenchUrl); url.searchParams.set("jobId", job.jobId);
     return `\n[打开任务 / 查看完整 Diff](${url.href})`;
   };
@@ -226,7 +226,7 @@ export function createWorkbenchCommands(options: WecomConfig, accountFor: (sende
       }
       if (command === "analyze" || command === "start") updateJob(job.jobId, { workbenchAnalysisOnly: command === "analyze" });
       receive(job.jobId, command === "reply" ? `补充信息：${match[2]!.trim()}` : command === "analyze" ? "请仅分析这个需求，检查代码和接口文档，不修改代码。" : "请开始修改代码，按需求和最新补充实现。后端状态由我判断，无需重复确认开始。");
-      return `已${command === "analyze" ? "开始只读分析，不修改代码" : command === "reply" ? "补充到原会话，继续原阶段" : "开始处理，分析充分后修改代码"}。${link(job)}`;
+      return `已${command === "analyze" ? "开始分析，不修改代码" : command === "reply" ? "补充到原会话，继续原阶段" : "开始处理，分析充分后修改代码"}。${link(job)}`;
     } catch (error) { return `命令未完成：${error instanceof Error ? error.message : "请稍后重试"}`; }
   };
 }
