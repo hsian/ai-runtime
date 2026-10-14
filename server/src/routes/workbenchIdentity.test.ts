@@ -52,6 +52,14 @@ test("anonymous workbench creation cannot spoof the logged in account", async ()
   assert.equal(response.status, 401);
 });
 
+test("conversation deletion blocks a workbench actor still winding down and denies another account", async () => {
+  const job = createJob({ prompt: "deletion fixture", ownerId: "account-owned", projectId: "b2b-composite", conversationId: "delete-fixture" });
+  updateJob(job.jobId, { workbenchSession: true, workbenchUserId: alice.id, status: "awaiting_input", workbenchTurnRunning: true });
+  const path = `${base}/api/jobs/conversation/delete-fixture?projectId=b2b-composite`;
+  assert.equal((await fetch(path, { method: "DELETE", headers: { Cookie: await login("alice") } })).status, 409);
+  assert.equal((await fetch(path, { method: "DELETE", headers: { Cookie: await login("bobby") } })).status, 404);
+});
+
 test("shared workbench scope is persisted per authenticated account and rejects cross-site writes", async () => {
   const ownCookie = await login("alice"); const otherCookie = await login("bobby");
   const saved = await fetch(`${base}/api/auth/workbench`, { method: "PUT", headers: { Cookie: ownCookie, Origin: base, "Content-Type": "application/json" }, body: JSON.stringify({ workspaceId: "123", iterationId: "200" }) });
@@ -60,4 +68,25 @@ test("shared workbench scope is persisted per authenticated account and rejects 
   assert.deepEqual(await (await fetch(`${base}/api/auth/workbench`, { headers: { Cookie: otherCookie } })).json(), {});
   assert.equal((await fetch(`${base}/api/auth/workbench`, { method: "PUT", headers: { Cookie: ownCookie, Origin: "https://other.invalid", "Content-Type": "application/json" }, body: JSON.stringify({ workspaceId: "456" }) })).status, 403);
   assert.equal((await fetch(`${base}/api/auth/workbench`)).status, 401);
+});
+
+test("engine switching is account-scoped, validates the provider, blocks running turns and preserves task workspace/history", async () => {
+  const job = createJob({ prompt: "engine fixture", ownerId: "account-owned", projectId: "b2b-composite", agentProvider: "codex", conversationId: "engine-fixture" });
+  updateJob(job.jobId, { workbenchSession: true, workbenchUserId: alice.id, status: "awaiting_input", worktreePath: "/test-worktree-not-real", branch: "engine-branch", workbenchPauseRequested: true,
+    workbenchMessages: [{ id: "u1", role: "user", text: "上下文保留", createdAt: new Date().toISOString() }] });
+  const ownCookie = await login("alice"); const otherCookie = await login("bobby");
+  const patch = (cookie: string, provider: string) => fetch(`${base}/api/jobs/${job.jobId}/engine`, { method: "PATCH", headers: { Cookie: cookie, Origin: base, "Content-Type": "application/json" }, body: JSON.stringify({ agentProvider: provider }) });
+  assert.equal((await patch(otherCookie, "claude")).status, 404);
+  assert.equal((await patch(ownCookie, "invalid")).status, 400);
+  updateJob(job.jobId, { workbenchTurnRunning: true });
+  assert.equal((await patch(ownCookie, "claude")).status, 409);
+  updateJob(job.jobId, { workbenchTurnRunning: false });
+  assert.equal((await patch(ownCookie, "claude")).status, 200);
+  const { getJob } = await import("../services/jobStore.js");
+  const latest = getJob(job.jobId)!;
+  assert.equal(latest.agentProvider, "claude");
+  assert.equal(latest.worktreePath, "/test-worktree-not-real");
+  assert.equal(latest.branch, "engine-branch");
+  assert.equal(latest.conversationId, "engine-fixture");
+  assert.equal(latest.workbenchMessages?.[0].text, "上下文保留");
 });

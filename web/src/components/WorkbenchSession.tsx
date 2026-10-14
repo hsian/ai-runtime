@@ -1,4 +1,5 @@
 import { hasWorkbenchExecutionStarted } from "../utils/workbenchExecution";
+import { conversationStatus } from "../utils/workbenchConversation";
 import { ArrowDownOutlined, CheckOutlined, CodeOutlined, FileTextOutlined, PaperClipOutlined, SendOutlined, StopOutlined, ToolOutlined } from "@ant-design/icons";
 import { Alert, App as AntApp, Button, Image, Input, Modal, Select, Spin, Tag } from "antd";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -39,6 +40,7 @@ export function WorkbenchSession({ task, onChanged, onStarted, projects = [], on
   const [files, setFiles] = useState<File[]>([]);
   const [previews, setPreviews] = useState<Array<{ name: string; url: string }>>([]);
   const [provider, setProvider] = useState<AgentProvider>("codex");
+  const [changingProvider, setChangingProvider] = useState(false);
   const [sending, setSending] = useState(false);
   const [acting, setActing] = useState(false);
   const [panel, setPanel] = useState<"changes" | "activity">("changes");
@@ -54,6 +56,7 @@ export function WorkbenchSession({ task, onChanged, onStarted, projects = [], on
   const fetchVersion = useRef(0);
   const mounted = useRef(true);
   const job = jobs.at(-1);
+  useEffect(() => { if (job) setProvider(job.agentProvider || "codex"); }, [job?.jobId, job?.agentProvider]);
   const projectName = projects.find(project => project.id === task.projectId)?.name || task.projectId;
   const projectUnavailable = Boolean(task.freeConversation && !job && !projects.some(project => project.id === task.projectId));
   const notStarted = statusText(job) === "未开始";
@@ -117,7 +120,7 @@ export function WorkbenchSession({ task, onChanged, onStarted, projects = [], on
     else setNewMessages(true);
   }, [messages.length, messages.at(-1)?.text, liveText, job?.status]);
   const submit = async () => {
-    if (sending || loading || projectUnavailable || ((task.freeConversation || (job && !notStarted)) && !draft.trim())) return;
+    if (sending || loading || changingProvider || projectUnavailable || ((task.freeConversation || (job && !notStarted)) && !draft.trim())) return;
     setSending(true); setError("");
     const text = draft.trim() || "请开始处理这个需求。";
     let tapdImages: Awaited<ReturnType<typeof api.tapdDescriptionImages>> = [];
@@ -149,9 +152,21 @@ export function WorkbenchSession({ task, onChanged, onStarted, projects = [], on
     if (images.length) { event.preventDefault(); addFiles(images); }
   };
   const mergeBusy = Boolean(job?.workbenchSession && active && !job.workbenchTurnRunning);
+  const changeProvider = async (value: AgentProvider) => {
+    if (changingProvider) return;
+    if (!job) { setProvider(value); return; }
+    setChangingProvider(true);
+    try {
+      await api.setWorkbenchEngine(job.jobId, value);
+      fetchVersion.current++;
+      setProvider(value); setJobs(current => current.map(item => item.jobId === job.jobId ? { ...item, agentProvider: value } : item));
+      message.success("引擎已切换，下一轮使用新引擎");
+    } catch (error) { message.error(error instanceof Error ? error.message : "切换失败"); }
+    finally { setChangingProvider(false); }
+  };
   return <div className={`wb-chat-workspace${task.freeConversation && !job ? " is-new-conversation" : ""}`}>
     <section className="wb-chat-main">
-      <header className="wb-chat-header"><span>对话 <Tag>{statusText(job)}</Tag></span><span>{task.freeConversation ? projectName : task.businessProject}</span></header>
+      <header className="wb-chat-header"><span>对话 <Tag>{task.freeConversation ? conversationStatus(job) : statusText(job)}</Tag></span><span>{task.freeConversation ? projectName : task.businessProject}</span></header>
       <div className="wb-chat-scroll" ref={scrollRef} onScroll={() => { const element = scrollRef.current; if (element) follow.current = element.scrollHeight - element.scrollTop - element.clientHeight < 70; }}>
         <div className="wb-chat-thread">
           {loading ? <Spin /> : !messages.length ? <div className="wb-chat-welcome"><div className="wb-chat-agent-icon">ai</div><h2>{task.freeConversation ? "有什么想法，直接聊聊" : "一起完成这个任务"}</h2><p>{task.freeConversation ? "可以提问、分析代码，也可以直接描述要做的修改。我会结合项目代码处理，需要补充时再问你。" : "需求和评论已放入上下文。开始后，我会检查代码并推进实现；需要你决定的地方，会在这里提问。"}</p>{!task.freeConversation && <details className="wb-chat-context"><summary><FileTextOutlined /> {context?.title || task.title || "需求背景"}</summary><p>{context?.description || task.prompt}</p></details>}{!task.freeConversation && <p className="wb-chat-muted">你可以先补充要求，或直接开始处理。</p>}</div> : messages.map(item => <article className={`wb-chat-message is-${item.role}`} key={item.id}><div className="wb-chat-message-label">{item.role === "user" ? "你" : "ai-runtime"}{pendingMessageIds.has(item.id) && <span className="wb-chat-pending">待接续</span>}</div><WorkbenchMessageBody text={item.text} />{Boolean(item.attachmentIndexes?.length) && <div className="wb-chat-message-images">{item.attachmentIndexes!.map(index => job?.attachments?.[index]).filter(attachment => attachment && !/^tapd-description-\d+\./i.test(attachment.name)).map(attachment => attachment && <Image key={attachment.index} src={attachment.url} alt={attachment.name} />)}</div>}</article>)}
@@ -168,7 +183,7 @@ export function WorkbenchSession({ task, onChanged, onStarted, projects = [], on
         <div className="wb-chat-input-card">
           {previews.length > 0 && <div className="wb-chat-attachments">{previews.map((item, index) => <div key={item.url}><Image src={item.url} alt={item.name} /><Button type="text" size="small" aria-label={`移除图片${index + 1}`} onClick={() => setFiles(current => current.filter((_, position) => index !== position))}>移除</Button></div>)}</div>}
           <Input.TextArea aria-label="任务对话" value={draft} onChange={event => setDraft(event.target.value)} onPaste={paste} autoSize={{ minRows: 2, maxRows: 7 }} placeholder={active ? "补充要求或纠正方向，消息将在当前轮结束后处理…" : "和我说说你的想法、补充要求，或回复刚才的问题…"} onKeyDown={event => { if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); void submit(); } }} />
-          <div className="wb-chat-input-tools"><div><input type="file" hidden multiple accept="image/*" ref={fileRef} onChange={event => { addFiles(Array.from(event.target.files || [])); event.target.value = ""; }} /><Button type="text" icon={<PaperClipOutlined />} aria-label="添加图片" onClick={() => fileRef.current?.click()} />{!job && task.freeConversation && onProjectChange && <Select aria-label="代码项目" placeholder="选择代码项目" value={projects.some(project => project.id === task.projectId) ? task.projectId : undefined} onChange={onProjectChange} options={projects.map(project => ({ value: project.id, label: project.name }))} />}{!job && <Select aria-label="执行模型" value={provider} onChange={setProvider} options={[{ value: "codex", label: "智能模式" }, { value: "claude", label: "默认模式" }]} />}<span className="wb-chat-key-hint">Enter 发送 · Shift+Enter 换行</span></div><div>{active && job?.workbenchSession && <Button aria-label="停止执行" icon={<StopOutlined />} loading={acting} onClick={() => void perform(() => api.pauseWorkbench(job.jobId))}>停止</Button>}{job?.workbenchSession && !active && !job.workbenchReset && !job.mergedToDefaultAt && <Button aria-label="退回未开始" disabled={sending || mergeBusy} loading={acting} onClick={() => void perform(() => api.sendWorkbenchMessage(job.jobId, "取消处理，任务回到未开始"))}>退回未开始</Button>}<Button type="primary" aria-label={!task.freeConversation && notStarted && !draft.trim() ? "开始处理" : "发送消息"} icon={<SendOutlined />} loading={sending} disabled={loading || projectUnavailable || mergeBusy || ((task.freeConversation || (Boolean(job) && !notStarted)) && !draft.trim())} onClick={() => void submit()}>{!task.freeConversation && notStarted && !draft.trim() ? "开始处理" : "发送"}</Button></div></div>
+          <div className="wb-chat-input-tools"><div><input type="file" hidden multiple accept="image/*" ref={fileRef} onChange={event => { addFiles(Array.from(event.target.files || [])); event.target.value = ""; }} /><Button type="text" icon={<PaperClipOutlined />} aria-label="添加图片" onClick={() => fileRef.current?.click()} />{!job && task.freeConversation && onProjectChange && <Select aria-label="代码项目" placeholder="选择代码项目" value={projects.some(project => project.id === task.projectId) ? task.projectId : undefined} onChange={onProjectChange} options={projects.map(project => ({ value: project.id, label: project.name }))} />}{<Select aria-label="执行模型" value={provider} onChange={value => void changeProvider(value)} loading={changingProvider} disabled={loading || sending || changingProvider || active || Boolean(job?.workbenchTurnRunning)} options={[{ value: "codex", label: "智能模式" }, { value: "claude", label: "默认模式" }]} />}<span className="wb-chat-key-hint">Enter 发送 · Shift+Enter 换行</span></div><div>{active && job?.workbenchSession && <Button aria-label="停止执行" icon={<StopOutlined />} loading={acting} onClick={() => void perform(() => api.pauseWorkbench(job.jobId))}>停止</Button>}{!task.freeConversation && job?.workbenchSession && !active && !job.workbenchReset && !job.mergedToDefaultAt && <Button aria-label="退回未开始" disabled={sending || mergeBusy} loading={acting} onClick={() => void perform(() => api.sendWorkbenchMessage(job.jobId, "取消处理，任务回到未开始"))}>退回未开始</Button>}<Button type="primary" aria-label={!task.freeConversation && notStarted && !draft.trim() ? "开始处理" : "发送消息"} icon={<SendOutlined />} loading={sending} disabled={loading || changingProvider || projectUnavailable || mergeBusy || ((task.freeConversation || (Boolean(job) && !notStarted)) && !draft.trim())} onClick={() => void submit()}>{!task.freeConversation && notStarted && !draft.trim() ? "开始处理" : "发送"}</Button></div></div>
         </div>
         <p className="wb-chat-composer-note">{active ? "补充消息会保存在当前任务中；停止后可带着现有工作区继续。" : "可以继续提问、调整要求或推进实现。合并代码需要你确认。"}</p>
       </footer>

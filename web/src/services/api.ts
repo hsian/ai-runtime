@@ -85,6 +85,9 @@ type ApiDocSearchResponse = {
 };
 
 export const api = {
+  async setWorkbenchEngine(jobId: string, agentProvider: AgentProvider): Promise<void> {
+    await request(`/api/jobs/${encodeURIComponent(jobId)}/engine`, { method: "PATCH", body: JSON.stringify({ agentProvider }) });
+  },
   async workbenchPreferences(): Promise<{ workspaceId?: string; iterationId?: string }> {
     return request("/api/auth/workbench");
   },

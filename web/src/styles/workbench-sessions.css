@@ -20,6 +20,10 @@
 .wb-project-toggle[aria-expanded=false] { padding-bottom: 9px; }
 .wb-sidebar-session { display: flex; flex-direction: column; gap: 7px; width: 100%; text-align: left; padding: 10px; border: none; background: none; cursor: pointer; color: #27272a; }
 .wb-sidebar-session:hover, .wb-sidebar-session.is-current { background: #f3f3f5; }
+.wb-sidebar-history-row { display: flex; align-items: center; min-width: 0; }
+.wb-sidebar-history-row > .wb-sidebar-session { flex: 1; min-width: 0; width: auto; }
+.wb-sidebar-history-row > .ant-btn { flex-shrink: 0; margin-right: 5px; color: #92929b; }
+.wb-sidebar-history-row:hover { background: #f3f3f5; }
 .wb-sidebar-session > span { font-size: 12px; line-height: 1.6; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 .wb-sidebar-session small { display: flex; align-items: center; gap: 5px; font-size: 11px; color: #92929b; }
 .wb-sidebar-empty { color: #a1a1aa; font-size: 11px; padding: 12px; }

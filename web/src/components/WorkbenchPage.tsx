@@ -1,5 +1,6 @@
 import { hasWorkbenchExecutionStarted } from "../utils/workbenchExecution";
-import { ArrowLeftOutlined, ArrowRightOutlined, BugOutlined, CheckOutlined, CodeOutlined, DownOutlined, ExperimentOutlined, InboxOutlined, LogoutOutlined, PlusOutlined, ReloadOutlined, SearchOutlined, UnorderedListOutlined } from "@ant-design/icons";
+import { conversationStatus } from "../utils/workbenchConversation";
+import { ArrowLeftOutlined, ArrowRightOutlined, BugOutlined, CheckOutlined, CodeOutlined, DeleteOutlined, DownOutlined, ExperimentOutlined, InboxOutlined, LogoutOutlined, PlusOutlined, ReloadOutlined, SearchOutlined, UnorderedListOutlined } from "@ant-design/icons";
 import { Alert, App as AntApp, Button, Checkbox, ConfigProvider, Empty, Input, Modal, Select, Spin, Tag } from "antd";
 import { useEffect, useMemo, useRef, useState } from "react";
 
@@ -59,7 +60,7 @@ function rememberIteration(workspaceId: string, iterationId?: string) {
 }
 
 function MyWorkbench({ user, onLogout }: { user: AuthUser; onLogout: () => void }) {
-  const { message } = AntApp.useApp();
+  const { message, modal } = AntApp.useApp();
   const storageKey = `ai-runtime:workbench:${user.id}`;
   const dependencyKey = `ai-runtime:workbench-dependencies:${user.id}`;
   const [dependencyOverrides, setDependencyOverrides] = useState<Record<string, string[]>>(() => {
@@ -101,12 +102,36 @@ function MyWorkbench({ user, onLogout }: { user: AuthUser; onLogout: () => void 
   const [launch, setLaunch] = useState<WorkbenchTaskLaunch>();
   const [conversationDraft, setConversationDraft] = useState<WorkbenchTaskLaunch>(() => ({ title: "新对话", conversationId: createUniqueId(), projectId: monorepoProjectId, prompt: "", taskMode: "code", freeConversation: true }));
   const [opening, setOpening] = useState<string>();
+  const [deletingConversation, setDeletingConversation] = useState<string>();
   const openingRef = useRef(false);
   const linkedTaskOpened = useRef(false);
 
   const persist = (items: WorkItem[]) => {
     try { localStorage.setItem(storageKey, JSON.stringify(items)); setSaved(items); return true; }
     catch { message.error("任务保存失败，请检查浏览器存储空间"); return false; }
+  };
+
+  const deleteHistory = (item: WorkItem) => {
+    if (deletingConversation) return;
+    modal.confirm({
+      title: "删除这段对话？", content: `“${item.title}”的聊天记录和当前任务工作区将被删除，未合并的改动也会清理。已合并的代码不受影响。`,
+      okText: "删除", cancelText: "取消", okButtonProps: { danger: true },
+      onOk: async () => {
+        setDeletingConversation(item.conversationId);
+        try {
+          try { await api.deleteConversation(item.conversationId, item.projectId); }
+          catch (error) { if (!(error instanceof Error) || error.message !== "任务不存在") throw error; }
+          const sameConversation = (entry: { conversationId?: string; projectId: string }) => entry.conversationId === item.conversationId && entry.projectId === item.projectId;
+          if (!persist(saved.filter(entry => !sameConversation(entry)))) throw new Error("本地记录清理失败，请重试删除");
+          setJobs(current => current.filter(job => !sameConversation(job)));
+          if (launch && sameConversation(launch)) {
+            setLaunch(undefined); setConversationDraft(current => ({ ...current, conversationId: createUniqueId() }));
+          }
+          setRevision(value => value + 1); message.success("对话已删除");
+        } catch (error) { message.error(errorText(error)); }
+        finally { setDeletingConversation(undefined); }
+      },
+    });
   };
 
   useEffect(() => {
@@ -301,7 +326,7 @@ function MyWorkbench({ user, onLogout }: { user: AuthUser; onLogout: () => void 
       if (!persist([...saved.filter((entry) => entry.id !== item.id), workItem])) return;
       const prompt = `${item.description || `请分析并实现：${item.title}${item.parentTitle ? `\n所属需求：${item.parentTitle}` : ""}`}\n\n所属业务项目：${selectedBusinessProject}。该业务项目位于 B2B 管理后台共享 monorepo，请定位对应业务模块后开展工作。`;
       const taskId = item.itemType === "task" ? item.tapdUrl?.split("/").pop() : undefined;
-      setLaunch({ title: item.title, businessProject: selectedBusinessProject, conversationId: workItem.conversationId, projectId, prompt, taskMode: item.taskMode, tapdContext: context, tapdTask: taskId && item.workspaceId ? { workspaceId: item.workspaceId, taskId } : undefined, jobId: job?.jobId, tapdUrl: currentTapdUrl(item.tapdUrl), freeConversation: item.source === "manual" && item.taskMode !== "test-case" });
+      setLaunch({ title: item.title, businessProject: selectedBusinessProject, conversationId: workItem.conversationId, projectId, prompt, taskMode: item.taskMode, tapdContext: context, tapdTask: taskId && item.workspaceId ? { workspaceId: item.workspaceId, taskId } : undefined, jobId: job?.jobId, tapdUrl: currentTapdUrl(item.tapdUrl), freeConversation: item.source === "manual" });
     } catch (error) { message.error(errorText(error)); }
     finally { openingRef.current = false; setOpening(undefined); }
   };
@@ -313,7 +338,7 @@ function MyWorkbench({ user, onLogout }: { user: AuthUser; onLogout: () => void 
     linkedTaskOpened.current = true;
     if (!job?.workbenchSession || !job.conversationId) { message.error("该任务不存在或不属于当前登录账号"); return; }
     const local = saved.find(item => item.conversationId === job.conversationId);
-    const freeConversation = !job.tapdTask && !job.tapdContext && job.taskMode !== "test-case";
+    const freeConversation = !job.tapdTask && !job.tapdContext;
     if (freeConversation) setView("manual");
     setLaunch({ title: local?.title || job.tapdContext?.title || job.prompt?.split("\n")[0] || "工作台任务", businessProject: local?.businessProject,
       conversationId: job.conversationId, projectId: job.projectId, prompt: job.prompt || job.tapdContext?.description || "", taskMode: job.taskMode || "code",
@@ -332,7 +357,10 @@ function MyWorkbench({ user, onLogout }: { user: AuthUser; onLogout: () => void 
       </nav>
       <div className="wb-project-heading">{view === "manual" ? "历史对话" : "项目"} <span>{view === "manual" ? visibleItems.length : sidebarProjects.length}</span></div>
       <div className="wb-sidebar-sessions">
-        {view === "manual" ? visibleItems.slice().sort((a, b) => b.createdAt.localeCompare(a.createdAt)).map(item => <button className={`wb-sidebar-session${launch?.conversationId === item.conversationId ? " is-current" : ""}`} key={item.id} aria-label={`打开对话：${item.title}`} onClick={() => void openItem(item)}><span>{item.title}</span><small>{projects.find(project => project.id === item.projectId)?.name || item.projectId} · {workStatus(item)}</small></button>) : sidebarProjects.map((name) => <section className="wb-sidebar-project" key={name}>
+        {view === "manual" ? visibleItems.slice().sort((a, b) => b.createdAt.localeCompare(a.createdAt)).map(item => <div className="wb-sidebar-history-row" key={item.id}>
+          <button className={`wb-sidebar-session${launch?.conversationId === item.conversationId ? " is-current" : ""}`} aria-label={`打开对话：${item.title}`} onClick={() => void openItem(item)} disabled={Boolean(deletingConversation)}><span>{item.title}</span><small>{projects.find(project => project.id === item.projectId)?.name || item.projectId} · {conversationStatus(jobFor(item))}</small></button>
+          <Button type="text" size="small" danger icon={<DeleteOutlined />} aria-label={`删除对话：${item.title}`} title="删除对话" loading={deletingConversation === item.conversationId} disabled={Boolean(deletingConversation)} onClick={() => deleteHistory(item)} />
+        </div>) : sidebarProjects.map((name) => <section className="wb-sidebar-project" key={name}>
           <button className="wb-project-toggle" aria-expanded={expandedProjects.includes(name)} onClick={() => setExpandedProjects((current) => current.includes(name) ? current.filter((entry) => entry !== name) : [...current, name])}>{name}<DownOutlined /></button>
           {expandedProjects.includes(name) && visibleItems.filter((item) => (item.businessProject || businessProject) === name).map((item) => <button className={`wb-sidebar-session${launch?.conversationId && launch.conversationId === item.conversationId ? " is-current" : ""}`} key={item.id} aria-label={`打开任务：${item.title}`} onClick={() => void openItem(item)} disabled={Boolean(opening)}><span>{item.title}</span><small>{item.itemType === "bug" ? <BugOutlined /> : <CodeOutlined />}{workStatus(item)}</small></button>)}
         </section>)}

@@ -29,7 +29,7 @@ import { getProjectGitService } from "../services/projectRuntime.js";
 import { deleteMiniProgramPreview, generateMiniProgramPreview, getMiniProgramPreviewPath, uploadMiniProgramCode } from "../services/miniProgramPreviewService.js";
 import { existsSync } from "fs";
 import { receiveWorkbenchMessage, pauseWorkbenchSession, assertWorkbenchCanReceive } from "../services/workbenchSession.js";
-import { getAuthUser } from "../services/auth.js";
+import { getAuthUser, requireSameOrigin } from "../services/auth.js";
 import { syncWorkbenchTask } from "../services/tapd/taskStatusSync.js";
 import { z } from "zod";
 
@@ -54,6 +54,7 @@ function toPublicJob(job: NonNullable<ReturnType<typeof getJob>>) {
   } = job;
   return {
     ...publicJob,
+    agentProvider: getJobAgentProvider(job),
     attachments: attachments?.map((attachment, index) => ({
       index,
       name: attachment.name,
@@ -210,6 +211,20 @@ jobsRouter.post("/:jobId/pause", (req, res) => {
   catch (error) { res.status(409).json({ error: error instanceof Error ? error.message : String(error) }); }
 });
 
+jobsRouter.patch("/:jobId/engine", requireSameOrigin, (req, res) => {
+  const job = getAuthorizedJob(req, res);
+  if (!job) return;
+  const user = getAuthUser(req);
+  if (!user) { res.status(401).json({ error: "请先登录任务工作台" }); return; }
+  if (!job.workbenchSession || (job.workbenchUserId && job.workbenchUserId !== user.id)) { res.status(409).json({ error: "只能切换自己的工作台会话引擎" }); return; }
+  if (!job.workbenchUserId && job.tapdOperator && job.tapdOperator !== user.tapdOwnerName) { res.status(409).json({ error: "旧任务的操作人与当前账号不一致" }); return; }
+  const input = z.object({ agentProvider: z.enum(["codex", "claude"]) }).safeParse(req.body);
+  if (!input.success) { res.status(400).json({ error: "请选择有效的模型引擎" }); return; }
+  if (job.workbenchTurnRunning || ["planning", "pending", "running"].includes(job.status)) { res.status(409).json({ error: "当前轮仍在处理，请停止并等待结束后切换引擎" }); return; }
+  updateJob(job.jobId, { agentProvider: input.data.agentProvider, workbenchUserId: user.id, tapdOperator: job.tapdOperator || user.tapdOwnerName });
+  res.json({ agentProvider: input.data.agentProvider });
+});
+
 jobsRouter.post("/", handleJobImagesUpload, (req, res) => {
   const created = createJobFromSubmit(req);
   if ("error" in created) {
@@ -337,10 +352,10 @@ jobsRouter.delete("/conversation/:conversationId", async (req, res) => {
   }
 
   const deletableStatuses = new Set(["completed", "failed", "cancelled", "awaiting_confirm", "awaiting_input"]);
-  const blocked = jobs.find((job) => !deletableStatuses.has(job.status));
+  const blocked = jobs.find((job) => job.workbenchTurnRunning || !deletableStatuses.has(job.status));
   if (blocked) {
     const message = blocked.status === "awaiting_merge"
-      ? "任务正在等待合并处理，请先合并或放弃合并"
+      ? blocked.workbenchSession ? "对话还有待审查的改动，请先完成或退回未开始再删除" : "任务正在等待合并处理，请先合并或放弃合并"
       : "任务仍在执行，请先取消后再删除";
     res.status(409).json({ error: message });
     return;
