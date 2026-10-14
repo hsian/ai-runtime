@@ -142,10 +142,11 @@ export function createWorkbenchCommands(options: WecomConfig, accountFor: (sende
         const previous = pageState(account.id), next = argument === "next";
         if (next && (previous.kind !== "T" || previous.workspaceId !== scope.workspaceId)) return "请先发送 -list 查看任务。";
         const search = next ? previous.search || "" : argument;
-        const filtered = rows.filter(item => !search || item.title.includes(search));
+        const filtered = rows.filter(item => !(item.type === "task" ? /^(done|completed|已完成)$/i : /^(done|completed|closed|verified|已完成|已关闭|已验证)$/i).test(item.status || "")
+          && (!search || item.title.includes(search)));
         const page = next ? (previous.page || 0) + 1 : 0;
         const visible = filtered.slice(page * 15, page * 15 + 15);
-        if (!visible.length) return next ? "已经是最后一页。" : "当前范围没有匹配的个人任务。";
+        if (!visible.length) return next ? "已经是最后一页。" : "当前范围没有匹配的未完成任务。";
         rememberPage(account.id, { kind: "T", workspaceId: scope.workspaceId, search, page });
         return visible.map(item => {
           const label = register(account.id, "T", `${item.workspaceId}/${item.type}/${item.itemId}`, item);
@@ -161,8 +162,9 @@ export function createWorkbenchCommands(options: WecomConfig, accountFor: (sende
       if (!item || !cfg.workspaces.some(workspace => workspace.id === item.workspaceId)) return "任务编号无效，请发送 -list 查看自己的任务。";
       const current = item.type === "task" ? await getTask(item.itemId, item.workspaceId) : await getBug(item.itemId, item.workspaceId);
       const currentOwner = current && "current_owner" in current ? current.current_owner || current.owner : current?.owner;
-      if (!current || !owns(currentOwner, account.tapd_owner_name)) return "该任务已删除或负责人已变化，不能操作，请刷新 -list。";
       let job = findJob(account, item);
+      const completedBugRetry = command === "done" && item.type === "bug" && job?.mergedToDefaultAt && job.tapdSync?.target === "resolved";
+      if (!current || (!owns(currentOwner, account.tapd_owner_name) && !completedBugRetry)) return "该任务已删除或负责人已变化，不能操作，请刷新 -list。";
       if (command === "review") {
         if (!job) return "这个任务还没有工作台执行记录，可先 -analyze 或 -start。";
         if (!ready(job)) return `该任务尚未准备好 Review。${job.message || ""}${link(job)}`;
@@ -173,7 +175,11 @@ export function createWorkbenchCommands(options: WecomConfig, accountFor: (sende
       if ((command === "start" || command === "done" || (command === "reply" && !job?.workbenchAnalysisOnly)) && !canModifyCode(options, sender)) return "该企微账号尚未开通代码执行权限，请到工作台处理或联系管理员配置。";
       if (command === "done") {
         if (!job) return "还没有执行记录，不能完成。";
-        if (job.mergedToDefaultAt) { await syncWorkbenchTask(job.jobId, "done"); return "代码已经合并，已重试 TAPD 状态同步。"; }
+        if (job.mergedToDefaultAt) {
+          await syncWorkbenchTask(job.jobId, "done");
+          const sync = getJob(job.jobId)?.tapdSync;
+          return sync?.state === "failed" ? `代码已合并，TAPD 同步失败：${sync.error || "请到工作台重试"}${link(job)}` : item.type === "bug" ? "代码已合并，Bug 已解决并转回创建人，等待测试回归。" : "代码已合并，TAPD 状态已同步。";
+        }
         if (!ready(job)) return "当前没有可合并的实际代码版本，请先 -review 查看进度。";
         const confirmation = db.prepare("SELECT commit_sha,code,expires_at FROM workbench_merge_confirmations WHERE bot_id=? AND user_id=? AND job_id=?")
           .get(options.botId, account.id, job.jobId) as { commit_sha: string; code: string; expires_at: number } | undefined;
@@ -181,14 +187,14 @@ export function createWorkbenchCommands(options: WecomConfig, accountFor: (sende
           const code = randomBytes(3).toString("hex");
           db.prepare("INSERT INTO workbench_merge_confirmations VALUES (?,?,?,?,?,?) ON CONFLICT(bot_id,user_id,job_id) DO UPDATE SET commit_sha=excluded.commit_sha,code=excluded.code,expires_at=excluded.expires_at")
             .run(options.botId, account.id, job.jobId, job.commitSha!, code, Date.now() + 600_000);
-          return `将合并「${item.title}」\n版本：${job.commitSha!.slice(0, 12)}\n合并成功后同步 TAPD 已完成。\n确认请发送：-done ${match[1].toUpperCase()} ${code}\n确认码 10 分钟有效，代码变更后需重新确认。`;
+          return `将合并「${item.title}」\n版本：${job.commitSha!.slice(0, 12)}\n${item.type === "bug" ? "合并成功后将 Bug 改为已解决，并转回创建人回归。" : "合并成功后同步 TAPD 已完成。"}\n确认请发送：-done ${match[1].toUpperCase()} ${code}\n确认码 10 分钟有效，代码变更后需重新确认。`;
         }
         if (!confirmation || confirmation.code !== match[2].trim() || confirmation.expires_at < Date.now() || confirmation.commit_sha !== job.commitSha) return "确认码无效、已过期或代码已更新。请重新 -review，再发送 -done 获取确认码。";
         db.prepare("DELETE FROM workbench_merge_confirmations WHERE bot_id=? AND user_id=? AND job_id=?").run(options.botId, account.id, job.jobId);
         updateJob(job.jobId, { status: "pending", message: "已从小迪确认合并，等待排队…", mergeRetryable: false });
         if (operations?.enqueueMerge) operations.enqueueMerge(job.jobId);
         else jobQueue.enqueue(job.jobId, async id => { await confirmJobMerge(id); });
-        return `已确认当前版本，开始合并。TAPD 会在合并成功后同步已完成。${link(job)}`;
+        return `已确认当前版本，开始合并。${item.type === "bug" ? "合并成功后将 Bug 改为已解决，并转回创建人回归。" : "TAPD 会在合并成功后同步已完成。"}${link(job)}`;
       }
       if (job?.workbenchTurnRunning || (job && ["running", "pending"].includes(job.status) && !job.workbenchPauseRequested)) return "该任务正在处理，请等本轮结束；需要停止可到工作台操作。";
       if (command === "reply" && !job) return "还没有原会话，请先 -analyze 或 -start。";

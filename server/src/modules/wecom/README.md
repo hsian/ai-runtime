@@ -7,6 +7,8 @@ for the complete command list. Main workflow: `-use`, `-use P1`, `-use I2`,
 `-list`, `-analyze T1`, `-start T1`, `-reply T1 补充内容`, `-review T1`, `-done T1`.
 `-use iter` lists iterations, `-use next` pages them, and `-use 前端` searches
 names. `-list next` pages tasks; `-list 关键词` searches assigned tasks.
+`-list` excludes completed tasks and closed/verified Bugs before pagination;
+resolved Bugs remain listed until acceptance/closure.
 Number mappings persist per bot/account and never retarget after reordering.
 Task ownership is read back from TAPD for every operation.
 

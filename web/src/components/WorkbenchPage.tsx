@@ -279,7 +279,7 @@ function MyWorkbench({ user, onLogout }: { user: AuthUser; onLogout: () => void 
     if (!job) return workStatus(item);
     if (job.workbenchReset) return "未开始";
     if (job.workbenchPauseRequested) return hasWorkbenchExecutionStarted(job) ? "已停止" : "未开始";
-    if (job.status === "completed" && job.tapdSync?.target === "done" && job.tapdSync.state !== "synced") return "待同步";
+    if (job.status === "completed" && (job.tapdSync?.target === "done" || job.tapdSync?.target === "resolved") && job.tapdSync.state !== "synced") return "待同步";
     if (job.status === "awaiting_merge" && job.commitSha && job.commitSha !== job.workbenchBaseCommitSha && job.workbenchHasCodeChanges !== false) return "待审查";
     if (["awaiting_confirm", "awaiting_merge"].includes(job.status)) return "未开始";
     if (["planning", "pending", "running"].includes(job.status)) return hasWorkbenchExecutionStarted(job) ? "执行中" : "未开始";

@@ -39,6 +39,7 @@ export interface TapdTask {
 
 export interface TapdBug {
   id: string;
+  reporter?: string;
   title?: string;
   name?: string;
   description?: string;
@@ -101,7 +102,7 @@ function unwrapRecords<T>(data: unknown, key: string): T[] {
   return items;
 }
 
-async function tapdRequest<T>(
+export async function tapdRequest<T>(
   cfg: TapdConfig,
   path: string,
   params: Record<string, string | number | undefined> = {}

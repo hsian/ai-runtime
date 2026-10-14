@@ -48,7 +48,7 @@ process.stdin.on('end', () => {
     fs.writeFileSync('partial.txt', 'preserved work\n');
     setInterval(() => {}, 1000); return;
   }
-  const target = !fs.existsSync('first.txt') ? 'first.txt' : !fs.existsSync('second.txt') ? 'second.txt' : 'continued.txt';
+  const target = latest.includes('修复Bug验证') ? 'bug-fix.txt' : !fs.existsSync('first.txt') ? 'first.txt' : !fs.existsSync('second.txt') ? 'second.txt' : 'continued.txt';
   fs.writeFileSync(target, 'task change\n');
   process.stdout.write(JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: '过程更新：正在检查接口。' } }) + '\n');
   if (outputIndex >= 0) fs.writeFileSync(args[outputIndex + 1], '已完成当前修改，验证通过。');
@@ -64,10 +64,27 @@ const originalFetch = globalThis.fetch;
 let tapdStatus = "open";
 let failCompletion = true;
 let completionWrites = 0;
+let bugStatus = "in_progress";
+let bugOwner = "alice;";
+let bugWrites = 0;
+let failBugCompletion = true;
 globalThis.fetch = async (input, init) => {
   const url = new URL(String(input));
   assert.equal(url.hostname, "tapd.invalid", "isolated mock must never contact real TAPD");
   if (url.pathname === "/tokens/request_token") return Response.json({ status: 1, data: { access_token: "test", expires_in: 3600 } });
+  if (url.pathname === "/bugs/get_fields_info") return Response.json({ status: 1, data: { status: { options: { custom_resolved: "已解决" } } } });
+  if (url.pathname === "/bugs") {
+    if (init?.method === "POST") {
+      const body = new URLSearchParams(String(init.body));
+      assert.equal(body.get("id"), "789");
+      assert.equal(body.get("status"), "custom_resolved");
+      assert.equal(body.get("current_owner"), "tester;");
+      bugWrites++;
+      if (failBugCompletion) return Response.json({ status: 0, info: "test bug sync unavailable" });
+      bugStatus = body.get("status"); bugOwner = body.get("current_owner");
+    }
+    return Response.json({ status: 1, data: [{ Bug: { id: "789", status: bugStatus, current_owner: bugOwner, reporter: "tester" } }] });
+  }
   assert.equal(url.pathname, "/tasks");
   if (init?.method === "POST") {
     const body = new URLSearchParams(String(init.body));
@@ -185,5 +202,27 @@ try {
   await waitFor(() => getJob(resetJob.jobId)?.workbenchNeedsInput && !getJob(resetJob.jobId)?.workbenchTurnRunning, "fresh analysis after reset");
   assert.notEqual(getJob(resetJob.jobId).worktreePath, oldWorktree);
   await assert.rejects(readFile(join(getJob(resetJob.jobId).worktreePath, "reset-only.txt"), "utf8"), /ENOENT/);
+  // Publish only to this isolated local remote before validating a second merge.
+  git(workspace, "push", "origin", "main");
+  const bugJob = createJob({ prompt: "修复Bug验证", ownerId: "alice", conversationId: "bug-1", projectId: "b2b-composite", agentProvider: "codex", taskMode: "code", tapdContext: { workspaceId: "123", itemType: "bug", itemId: "789", title: "Bug verification", description: "Fix defect", url: "https://tapd.invalid/bug/789", fetchedAt: new Date().toISOString() } });
+  updateJob(bugJob.jobId, { workbenchSession: true, status: "awaiting_input", tapdOperator: "alice" });
+  await assert.rejects(syncWorkbenchTask(bugJob.jobId, "done"), /尚未合并/);
+  receiveWorkbenchMessage(bugJob.jobId, "修复Bug验证");
+  await waitFor(() => getJob(bugJob.jobId)?.status === "awaiting_merge" && !getJob(bugJob.jobId)?.workbenchTurnRunning, "bug fix ready for Review");
+  assert.equal(bugWrites, 0, "must not resolve Bug before user reviews and completes");
+  await confirmJobMerge(bugJob.jobId);
+  assert.equal(getJob(bugJob.jobId).status, "completed");
+  assert.equal(getJob(bugJob.jobId).tapdSync.target, "resolved");
+  assert.equal(getJob(bugJob.jobId).tapdSync.state, "failed");
+  const bugCommit = getJob(bugJob.jobId).commitSha;
+  failBugCompletion = false;
+  await syncWorkbenchTask(bugJob.jobId, "resolved");
+  await syncWorkbenchTask(bugJob.jobId, "done");
+  assert.equal(bugWrites, 2);
+  assert.equal(bugStatus, "custom_resolved");
+  assert.equal(bugOwner, "tester;");
+  assert.equal(getJob(bugJob.jobId).tapdSync.state, "synced");
+  assert.equal(getJob(bugJob.jobId).commitSha, bugCommit, "Bug retry must not merge again");
+  assert.equal(git(workspace, "show", "HEAD:bug-fix.txt"), "task change");
   console.log("PASS: real local Git/SQLite with fake CLI; natural clarification, automatic execution, same worktree across turns, accumulated Diff, pause preserves partial edits, resume, explicit merge, durable history, untouched user files.");
 } finally { globalThis.fetch = originalFetch; closeDatabase(); process.chdir(originalDirectory); }

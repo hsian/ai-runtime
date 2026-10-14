@@ -383,7 +383,7 @@ jobsRouter.delete("/conversation/:conversationId", async (req, res) => {
 jobsRouter.post("/:jobId/tapd-sync", async (req, res) => {
   const job = getAuthorizedJob(req, res);
   if (!job) return;
-  if (!job.workbenchSession || !job.tapdTask || !job.tapdSync || job.tapdSync.state !== "failed") { res.status(409).json({ error: "当前没有失败的 TAPD 同步" }); return; }
+  if (!job.workbenchSession || (!job.tapdTask && job.tapdContext?.itemType !== "bug") || !job.tapdSync || job.tapdSync.state !== "failed") { res.status(409).json({ error: "当前没有失败的 TAPD 同步" }); return; }
   await syncWorkbenchTask(job.jobId, job.tapdSync.target);
   const latest = getJob(job.jobId)!;
   if (latest.tapdSync?.state === "failed") { res.status(502).json({ error: latest.tapdSync.error }); return; }

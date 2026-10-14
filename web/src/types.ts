@@ -81,7 +81,7 @@ export interface JobStatus {
   workbenchHasCodeChanges?: boolean;
   workbenchBaseCommitSha?: string;
   tapdTask?: { workspaceId: string; taskId: string };
-  tapdSync?: { target: "open" | "progressing" | "done"; state: "pending" | "synced" | "failed"; error?: string };
+  tapdSync?: { target: "open" | "progressing" | "done" | "resolved"; state: "pending" | "synced" | "failed"; error?: string };
   workbenchTurnRunning?: boolean;
   workbenchMessages?: Array<{ id: string; role: "user" | "assistant"; text: string; createdAt: string; attachmentIndexes?: number[] }>;
   workbenchProcessedInputs?: number;

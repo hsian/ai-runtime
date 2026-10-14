@@ -10,7 +10,7 @@ Object.assign(process.env, { DATABASE_PATH: join(directory, "test.sqlite"), UPLO
   TAPD_CLIENT_ID: "test", TAPD_CLIENT_SECRET: "test", TAPD_WORKSPACE_ID: "123", TAPD_WORKSPACES: "123:村财项目,456:产权项目", TAPD_API_BASE: "https://tapd.invalid" });
 const { createUser } = await import("../../services/auth.js");
 const { getDatabase, closeDatabase } = await import("../../services/database.js");
-const { getJob, listJobs, updateJob } = await import("../../services/jobStore.js");
+const { createJob, getJob, listJobs, updateJob } = await import("../../services/jobStore.js");
 const { getWorkbenchPreferences } = await import("../../services/workbenchPreferences.js");
 const { createWorkbenchCommands, WORKBENCH_COMMAND_HELP } = await import("./workbenchCommands.js");
 const { loadTapdSnapshot } = await import("./tapdBridge.js");
@@ -18,16 +18,21 @@ const alice = createUser({ username: "alice", displayName: "前端甲", tapdOwne
 const bob = createUser({ username: "bob", displayName: "前端乙", tapdOwnerName: "前端乙", password: "test-only", role: "member" });
 const originalFetch = globalThis.fetch;
 let owner = "前端甲;";
+let bugOwner = "前端甲";
 globalThis.fetch = async input => {
   const url = new URL(String(input));
   assert.equal(url.hostname, "tapd.invalid");
   if (url.pathname === "/tokens/request_token") return Response.json({ status: 1, data: { access_token: "test", expires_in: 3600 } });
   if (url.pathname === "/iterations") return Response.json({ status: 1, data: Array.from({ length: 12 }, (_, i) => ({ Iteration: { id: String(200 + i), name: i === 2 ? "[前端]九月研发" : `迭代-${i}`, status: "open" } })) });
   if (url.pathname === "/stories") return Response.json({ status: 1, data: [{ Story: { id: "41", name: "登录需求" } }] });
-  if (url.pathname === "/bugs") return Response.json({ status: 1, data: [] });
+  if (url.pathname === "/bugs") return Response.json({ status: 1, data: [
+    { Bug: { id: "21", name: "已关闭的 Bug", current_owner: "前端甲", status: "closed" } },
+    { Bug: { id: "22", name: "待验收的 Bug", current_owner: bugOwner, reporter: "测试甲", status: "resolved" } },
+  ].filter(record => !url.searchParams.get("id") || record.Bug.id === url.searchParams.get("id")) });
   if (url.pathname === "/tasks") {
     const front = { id: "11", name: "前端 - 登录需求", owner, status: "open", story_id: "41" };
     return Response.json({ status: 1, data: url.searchParams.get("id") ? [{ Task: front }] : [
+      { Task: { id: "14", name: "前端 - 已完成任务", owner: "前端甲", status: "done", story_id: "41" } },
       { Task: front }, { Task: { id: "12", name: "后端 - 登录接口", owner: "后端甲", status: "done", story_id: "41" } },
       { Task: { id: "13", name: "前端 - 别人的任务", owner: "其他人", status: "open", story_id: "41" } },
     ] });
@@ -69,6 +74,8 @@ test("list only includes assigned tasks; analyze/start/reply use one account-own
   assert.match(list, /T1.*前端 - 登录需求/);
   assert.match(list, /后端已就绪 1\/1/);
   assert.doesNotMatch(list, /别人的任务/);
+  assert.doesNotMatch(list, /已完成任务|已关闭的 Bug/);
+  assert.match(list, /待验收的 Bug/);
   assert.match((await commands("alice-wecom", "-analyze T1"))!, /只读分析/);
   const job = listJobs().find(item => item.workbenchUserId === alice.id)!;
   assert.equal(job.workbenchAnalysisOnly, true);
@@ -106,4 +113,22 @@ test("Review and completion bind confirmation to exact commit; changed/stale/wro
   assert.equal(merged.length, 1);
   assert.equal((getDatabase().prepare("SELECT COUNT(*) AS count FROM workbench_merge_confirmations").get() as { count: number }).count, 0);
   assert.equal(getJob(job.jobId)?.status, "pending");
+});
+
+test("Bug completion confirmation describes reporter handoff, and repeated completion after handoff does not merge again", async () => {
+  const list = (await commands("alice-wecom", "-list"))!;
+  const label = /(T\d+)\s+待验收的 Bug/.exec(list)![1];
+  const job = createJob({ prompt: "Bug fix", ownerId: `workbench:${alice.id}`, projectId: "b2b-composite", conversationId: "bug-test", taskMode: "code", tapdContext: { workspaceId: "123", itemType: "bug", itemId: "22", title: "待验收的 Bug", description: "Fix", url: "https://tapd.invalid/bug/22", fetchedAt: new Date().toISOString() } });
+  updateJob(job.jobId, { workbenchSession: true, workbenchUserId: alice.id, tapdOperator: "前端甲", status: "awaiting_merge", commitSha: "bug-v1", branch: "bug-branch", worktreePath: "/test-only", workbenchHasCodeChanges: true });
+  const confirmation = (await commands("alice-wecom", `-done ${label}`))!;
+  assert.match(confirmation, /已解决.*创建人回归/);
+  assert.doesNotMatch(confirmation, /同步 TAPD 已完成/);
+  const code = /-done T\d+ ([a-f0-9]+)/.exec(confirmation)![1];
+  assert.match((await commands("alice-wecom", `-done ${label} ${code}`))!, /已解决.*创建人回归/);
+  assert.equal(merged.filter(id => id === job.jobId).length, 1);
+  updateJob(job.jobId, { status: "completed", mergedToDefaultAt: new Date().toISOString(), tapdSync: { target: "resolved", state: "synced" } });
+  bugOwner = "测试甲";
+  assert.match((await commands("alice-wecom", `-done ${label}`))!, /已解决并转回创建人/);
+  assert.equal(merged.filter(id => id === job.jobId).length, 1);
+  assert.match((await commands("alice-wecom", `-start ${label}`))!, /负责人已变化/);
 });
