@@ -5,6 +5,7 @@ export function commandActivity(input: unknown): string {
     const value = record.command ?? record.cmd;
     command = typeof value === "string" ? value : Array.isArray(value) ? value.join(" ") : "";
   }
+  if (/api-doc-query\.cjs/i.test(command)) return "查询接口字段文档";
   if (/\b(npm|pnpm|yarn|bun)\s+(install|ci|add)\b|\bpip\s+install\b/i.test(command)) return "安装项目依赖";
   if (/\b(vitest|jest|pytest)\b|--test\b|\b(npm|pnpm|yarn|bun)\s+(run\s+)?test\b/i.test(command)) return "运行回归测试";
   if (/\b(tsc|eslint)\b|\b(npm|pnpm|yarn|bun)\s+(run\s+)?(build|lint|typecheck)\b/i.test(command)) return "检查编译和代码规范";

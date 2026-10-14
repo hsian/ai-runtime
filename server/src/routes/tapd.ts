@@ -6,6 +6,7 @@ import {
   uploadBugAttachment,
   getBug,
   getIterationWorkItems,
+  loadBackendDependencies,
   getStory,
   getTask,
   listIterationBugs,
@@ -244,6 +245,10 @@ tapdRouter.get("/iterations/:iterationId/items", async (req, res) => {
     const workspaceId =
       typeof req.query.workspaceId === "string" ? req.query.workspaceId : getTapdConfig().workspaceId;
     const items = await getIterationWorkItems(req.params.iterationId, workspaceId);
+    if (req.query.includeBackendDependencies === "true") {
+      try { items.backendDependencies = await loadBackendDependencies(items); }
+      catch { items.backendDependencyError = "后端任务读取失败，请手动刷新重试"; }
+    }
     res.json(items);
   } catch (err) {
     res.status(502).json({ error: err instanceof Error ? err.message : "获取迭代工作项失败" });

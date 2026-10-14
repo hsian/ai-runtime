@@ -311,14 +311,15 @@ export async function runCodexAgent(
       "--disable", "apps", "--disable", "browser_use", "--disable", "computer_use");
   }
 
-  let structuredOutputDir: string | undefined;
-  let structuredOutputPath: string | undefined;
+  // Capture the final answer for every mode. JSON event output also contains
+  // progress messages and must not be saved as the user's final reply.
+  const structuredOutputDir = await mkdtemp(join(tmpdir(), "ai-runtime-codex-output-"));
+  const structuredOutputPath = join(structuredOutputDir, "last-message.txt");
+  args.push("--output-last-message", structuredOutputPath);
   if (options?.jsonSchema) {
-    structuredOutputDir = await mkdtemp(join(tmpdir(), "ai-runtime-codex-schema-"));
     const schemaPath = join(structuredOutputDir, "schema.json");
-    structuredOutputPath = join(structuredOutputDir, "last-message.json");
     await writeFile(schemaPath, JSON.stringify(options.jsonSchema), "utf8");
-    args.push("--output-schema", schemaPath, "--output-last-message", structuredOutputPath);
+    args.push("--output-schema", schemaPath);
   }
 
   if (config.CODEX_BYPASS_SANDBOX && !isReadOnly) {

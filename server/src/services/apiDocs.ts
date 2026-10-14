@@ -11,7 +11,7 @@ export interface ApiDocEndpoint {
 }
 
 interface Source { name: string; url: string }
-interface SourceResult { name: string; count: number; error?: string }
+export interface SourceResult { name: string; count: number; error?: string }
 
 const CACHE_MS = 10 * 60_000;
 let cache: { expiresAt: number; endpoints: ApiDocEndpoint[]; sources: SourceResult[]; documents: Map<string, Record<string, unknown>> } | undefined;
@@ -190,6 +190,12 @@ export async function refreshApiDocs(query: string) {
   pending ??= refresh().finally(() => { pending = undefined; });
   await pending;
   return searchApiDocs(query);
+}
+
+export async function freshApiDocSnapshot() {
+  await refreshApiDocs("");
+  return { capturedAt: new Date().toISOString(), endpoints: cache!.endpoints, sources: cache!.sources,
+    documents: Object.fromEntries(cache!.documents) };
 }
 
 export async function withApiDocContext(prompt: string): Promise<string> {

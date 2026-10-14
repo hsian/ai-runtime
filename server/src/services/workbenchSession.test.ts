@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createWorkbenchWorker, parseWorkbenchDecision, isWorkbenchCancellation, type WorkbenchWorkerDependencies } from "./workbenchSession.js";
+import { createWorkbenchWorker, parseWorkbenchDecision, isWorkbenchCancellation, isWorkbenchResetRequest, type WorkbenchWorkerDependencies } from "./workbenchSession.js";
 import type { Job } from "../types.js";
 
 const setup = () => {
@@ -156,4 +156,25 @@ test("取消任务识别不会误取消包含业务取消按钮的需求", () =>
   assert.equal(isWorkbenchCancellation("请取消本次执行。"), true);
   assert.equal(isWorkbenchCancellation("添加取消任务按钮"), false);
   assert.equal(isWorkbenchCancellation("不要取消这次任务"), false);
+});
+
+test("明确退回未开始作为控制指令执行，不让模型先承诺错误结果", async () => {
+  const state = setup();
+  state.addMessage("取消处理，改任务回到未开始");
+  state.deps.analyze = async () => { throw new Error("不能调用模型"); };
+  state.deps.cancel = async (id, reset) => {
+    assert.equal(reset, true);
+    state.deps.update(id, { workbenchReset: true, workbenchPauseRequested: false, status: "awaiting_input" });
+    return "已回到未开始。";
+  };
+  await createWorkbenchWorker(state.deps).start("session-1");
+  assert.equal(state.job().workbenchReset, true);
+  assert.equal(state.job().workbenchPauseRequested, false);
+  assert.deepEqual(state.executions, []);
+  assert.equal(state.job().workbenchMessages?.at(-1)?.text, "已回到未开始。");
+});
+
+test("退回未开始识别不会误处理页面功能需求或否定语句", () => {
+  for (const text of ["取消处理，改任务回到未开始", "请把这个任务退回未开始", "任务恢复为未开始状态", "回到未开始"]) assert.equal(isWorkbenchResetRequest(text), true, text);
+  for (const text of ["不要回到未开始", "添加退回未开始按钮", "未开始列表的按钮需要修改", "停止执行并保留改动"]) assert.equal(isWorkbenchResetRequest(text), false, text);
 });

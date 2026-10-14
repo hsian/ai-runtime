@@ -1,5 +1,6 @@
+import { hasWorkbenchExecutionStarted } from "../utils/workbenchExecution";
 import { ArrowLeftOutlined, ArrowRightOutlined, BugOutlined, CheckOutlined, CodeOutlined, DownOutlined, ExperimentOutlined, InboxOutlined, LogoutOutlined, PlusOutlined, ReloadOutlined, SearchOutlined, UnorderedListOutlined } from "@ant-design/icons";
-import { Alert, App as AntApp, Button, ConfigProvider, Empty, Input, Select, Spin, Tag } from "antd";
+import { Alert, App as AntApp, Button, Checkbox, ConfigProvider, Empty, Input, Modal, Select, Spin, Tag } from "antd";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { WorkbenchSession, type WorkbenchTaskLaunch } from "./WorkbenchSession";
@@ -32,6 +33,8 @@ interface WorkItem {
   tapdContext?: TapdContext;
   itemType?: "task" | "bug";
   businessProject?: string;
+  backendTasks?: Array<{ id: string; name: string; owner?: string; status?: string }>;
+  backendDependencyError?: string;
 }
 
 const businessProjects = ["村财项目", "产权项目", "支付中台"];
@@ -47,9 +50,27 @@ const needsAttention = (job?: JobStatus) => Boolean(job && ["awaiting_input", "a
 const isOwner = (owner: string | undefined, name: string) => Boolean(name.trim() && owner?.split(/[;,，；|]/).some((part) => part.trim() === name.trim()));
 const errorText = (error: unknown) => error instanceof Error ? error.message : "读取失败，请重试";
 
+function rememberIteration(workspaceId: string, iterationId?: string) {
+  const url = new URL(window.location.href);
+  url.searchParams.set("workspaceId", workspaceId);
+  if (iterationId) url.searchParams.set("iterationId", iterationId);
+  else url.searchParams.delete("iterationId");
+  window.history.replaceState(window.history.state, "", url);
+}
+
 function MyWorkbench({ user, onLogout }: { user: AuthUser; onLogout: () => void }) {
   const { message } = AntApp.useApp();
   const storageKey = `ai-runtime:workbench:${user.id}`;
+  const dependencyKey = `ai-runtime:workbench-dependencies:${user.id}`;
+  const [dependencyOverrides, setDependencyOverrides] = useState<Record<string, string[]>>(() => {
+    try {
+      const value = JSON.parse(localStorage.getItem(dependencyKey) || "{}");
+      return value && typeof value === "object" && !Array.isArray(value)
+        ? Object.fromEntries(Object.entries(value).filter((entry): entry is [string, string[]] => Array.isArray(entry[1]) && entry[1].every(id => typeof id === "string"))) : {};
+    } catch { return {}; }
+  });
+  const [dependencyItemId, setDependencyItemId] = useState<string>();
+  const [dependencyDraft, setDependencyDraft] = useState<string[]>([]);
   const [saved, setSaved] = useState<WorkItem[]>(() => {
     try {
       const value: unknown = JSON.parse(localStorage.getItem(storageKey) || "[]");
@@ -96,7 +117,12 @@ function MyWorkbench({ user, onLogout }: { user: AuthUser; onLogout: () => void 
     let current = true;
     api.listProjects().then((items) => { if (current) { setProjects(items); setProjectError(""); } }).catch((error) => { if (current) setProjectError(errorText(error)); });
     api.tapdWorkspaces().then((result) => {
-      if (current) { setWorkspaces(result.workspaces); setWorkspaceId(result.defaultWorkspaceId || result.workspaces[0]?.id); }
+      if (current) {
+        setWorkspaces(result.workspaces);
+        const requested = new URLSearchParams(window.location.search).get("workspaceId");
+        setWorkspaceId(previous => [requested, previous, result.defaultWorkspaceId, result.workspaces[0]?.id]
+          .find(id => result.workspaces.some(workspace => workspace.id === id)) || undefined);
+      }
     }).catch((error) => { if (current) setTapdError(errorText(error)); });
     return () => { current = false; };
   }, [revision]);
@@ -118,7 +144,12 @@ function MyWorkbench({ user, onLogout }: { user: AuthUser; onLogout: () => void 
       api.tapdIterations(workspaceId).then((result) => {
         if (!current) return;
         setIterations(result.iterations);
-        setIterationId(result.iterations.find((item) => /^(open|running|active|进行中)$/i.test(item.status || ""))?.id || result.iterations[0]?.id);
+        const params = new URLSearchParams(window.location.search);
+        const requested = !params.get("workspaceId") || params.get("workspaceId") === workspaceId ? params.get("iterationId") : undefined;
+        const selected = result.iterations.find(item => item.id === requested)?.id
+          || result.iterations.find((item) => /^(open|running|active|进行中)$/i.test(item.status || ""))?.id || result.iterations[0]?.id;
+        setIterationId(selected);
+        rememberIteration(workspaceId, selected);
         setTapdError("");
       }).catch((error) => { if (current) setTapdError(errorText(error)); }).finally(() => { if (current) setTapdLoading(false); });
     }
@@ -134,14 +165,13 @@ function MyWorkbench({ user, onLogout }: { user: AuthUser; onLogout: () => void 
 
   useEffect(() => {
     let current = true;
-    setRemoteItems([]);
     if (workspaceId && iterationId && user.tapdOwnerName.trim()) {
-      setTapdLoading(true);
+      if (!remoteItems.length) setTapdLoading(true);
       Promise.allSettled([api.tapdIterationItems(workspaceId, iterationId), api.tapdIterationBugs(workspaceId, iterationId)]).then(([taskResult, bugResult]) => {
         if (!current) return;
         const items: WorkItem[] = [];
         const append = (item: { id: string; name: string; status?: string }, type: "task" | "bug", parentTitle?: string, parentId?: string) => {
-          items.push({ id: `${workspaceId}:${type}:${item.id}`, title: item.name, description: "", source: "tapd", itemType: type, projectId: "", taskMode: "code", conversationId: "", createdAt: "", workspaceId, iterationId, parentTitle, parentUrl: parentId ? tapdDetailUrl(workspaceId, "story", parentId) : undefined, tapdStatus: item.status, tapdUrl: tapdDetailUrl(workspaceId, type, item.id) });
+          items.push({ id: `${workspaceId}:${type}:${item.id}`, title: item.name, description: "", source: "tapd", itemType: type, projectId: "", taskMode: "code", conversationId: "", createdAt: "", workspaceId, iterationId, parentTitle, parentUrl: parentId ? tapdDetailUrl(workspaceId, "story", parentId) : undefined, tapdStatus: item.status, tapdUrl: tapdDetailUrl(workspaceId, type, item.id), backendTasks: type === "task" && taskResult.status === "fulfilled" ? taskResult.value.backendDependencies?.[item.id] || taskResult.value.stories.find(story => story.id === parentId)?.tasks.filter(task => task.name.trim().startsWith("后端") && task.id !== item.id) : undefined, backendDependencyError: taskResult.status === "fulfilled" ? taskResult.value.backendDependencyError : undefined });
         };
         if (taskResult.status === "fulfilled") {
           taskResult.value.stories.forEach((story) => {
@@ -155,9 +185,11 @@ function MyWorkbench({ user, onLogout }: { user: AuthUser; onLogout: () => void 
         setRemoteItems(items);
         setTapdError([taskResult.status === "rejected" ? `任务读取失败：${errorText(taskResult.reason)}` : "", bugResult.status === "rejected" ? `Bug 读取失败：${errorText(bugResult.reason)}` : ""].filter(Boolean).join("；"));
       }).catch((error) => { if (current) setTapdError(errorText(error)); }).finally(() => { if (current) setTapdLoading(false); });
-    }
+    } else setRemoteItems([]);
     return () => { current = false; };
   }, [workspaceId, iterationId, user.tapdOwnerName, revision]);
+
+
 
   const items = useMemo(() => {
     const merged = new Map(saved.filter((item) => item.source === "manual").map((item) => [item.id, item]));
@@ -166,7 +198,7 @@ function MyWorkbench({ user, onLogout }: { user: AuthUser; onLogout: () => void 
     });
     remoteItems.forEach((item) => {
       const existing = saved.find((entry) => entry.id === item.id);
-      merged.set(item.id, existing ? { ...existing, title: item.title, itemType: item.itemType, tapdStatus: item.tapdStatus, parentTitle: item.parentTitle, parentUrl: item.parentUrl, tapdUrl: item.tapdUrl } : item);
+      merged.set(item.id, existing ? { ...existing, title: item.title, itemType: item.itemType, tapdStatus: item.tapdStatus, parentTitle: item.parentTitle, parentUrl: item.parentUrl, tapdUrl: item.tapdUrl, backendTasks: item.backendTasks, backendDependencyError: item.backendDependencyError } : item);
     });
     return [...merged.values()];
   }, [saved, remoteItems, workspaceId, iterationId, jobs]);
@@ -176,30 +208,52 @@ function MyWorkbench({ user, onLogout }: { user: AuthUser; onLogout: () => void 
       : job.tapdContext?.itemType === "bug" && job.tapdContext.workspaceId === item.workspaceId && job.tapdContext.itemId === item.tapdUrl?.split("/").pop())))
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
   const visibleItems = items.filter((item) => view === "work" ? item.source === "tapd" : item.source === "manual");
+  const completedInTapd = (item: WorkItem) => item.source === "tapd" && item.itemType !== "bug" && /^(done|completed|已完成)$/i.test(item.tapdStatus || "");
+  const dependencyIds = (item: WorkItem) => Object.hasOwn(dependencyOverrides, item.id) ? dependencyOverrides[item.id] : (item.backendTasks || []).map(task => task.id);
+  const dependencyInfo = (item: WorkItem) => {
+    const ids = dependencyIds(item);
+    const tasks = item.backendTasks || [];
+    const done = tasks.filter(task => ids.includes(task.id) && /^(done|completed|已完成)$/i.test(task.status || "")).length;
+    if (item.backendDependencyError) return { text: "依赖读取失败 · 待确认", state: "unknown" };
+    if (ids.some(id => !tasks.some(task => task.id === id))) return { text: "依赖待确认 · 部分任务未读取", state: "unknown" };
+    if (!ids.length) return { text: Object.hasOwn(dependencyOverrides, item.id) ? "无需后端配合" : "无后端任务 · 依赖待确认", state: "unknown" };
+    return { text: `${done === ids.length ? "后端已就绪" : "等待后端"} · ${done}/${ids.length} 已完成`, state: done === ids.length ? "ready" : "waiting" };
+  };
+  const dependencyButton = (item: WorkItem) => {
+    if (item.source !== "tapd" || item.itemType !== "task" || completedInTapd(item)) return null;
+    const info = dependencyInfo(item);
+    return <button className={`wb-dependency-button is-${info.state}`} aria-label={`后端依赖：${item.title}`} onClick={event => {
+      event.stopPropagation(); setDependencyItemId(item.id); setDependencyDraft(dependencyIds(item));
+    }}>{info.text}</button>;
+  };
+  const dependencyItem = items.find(item => item.id === dependencyItemId);
   const workStatus = (item: WorkItem) => {
     if (item.source === "tapd") {
       const sync = jobFor(item)?.tapdSync;
-      return sync?.state === "synced" ? tapdStatusLabel(sync.target) : tapdStatusLabel(item.tapdStatus);
+      return item.tapdStatus ? tapdStatusLabel(item.tapdStatus) : sync?.state === "synced" ? tapdStatusLabel(sync.target) : tapdStatusLabel(item.tapdStatus);
     }
-    const status = jobFor(item)?.status;
+    const job = jobFor(item);
+    const status = job?.status;
     if (!status) return "未开始";
-    if (["planning", "pending", "running"].includes(status)) return "执行中";
-    if (["awaiting_input", "awaiting_confirm", "awaiting_merge"].includes(status)) return "待处理";
+    if (["planning", "pending", "running"].includes(status)) return hasWorkbenchExecutionStarted(job) ? "执行中" : "未开始";
+    if (status === "awaiting_input") return hasWorkbenchExecutionStarted(job) ? "执行中" : "未开始";
+    if (["awaiting_confirm", "awaiting_merge"].includes(status)) return "待处理";
     return status === "completed" ? "已完成" : status === "failed" ? "失败" : "已取消";
   };
   const needsSupplement = (job?: JobStatus) => Boolean(job && !job.workbenchReset && !job.workbenchPauseRequested && job.status === "awaiting_input" && (job.workbenchNeedsInput === true || (job.workbenchNeedsInput === undefined && (Boolean(job.clarificationQuestions?.length) || /等待.*(?:回复|补充|澄清)/.test(job.message || "")))));
   const boardStatus = (item: WorkItem) => {
+    if (completedInTapd(item)) return "已完成";
     const job = jobFor(item);
     if (!job) return workStatus(item);
     if (job.workbenchReset) return "未开始";
-    if (job.workbenchPauseRequested) return "已停止";
+    if (job.workbenchPauseRequested) return hasWorkbenchExecutionStarted(job) ? "已停止" : "未开始";
     if (job.status === "completed" && job.tapdSync?.target === "done" && job.tapdSync.state !== "synced") return "待同步";
     if (job.status === "awaiting_merge" && job.commitSha && job.commitSha !== job.workbenchBaseCommitSha && job.workbenchHasCodeChanges !== false) return "待审查";
     if (["awaiting_confirm", "awaiting_merge"].includes(job.status)) return "未开始";
-    if (["planning", "pending", "running"].includes(job.status)) return "执行中";
-    if (job.status === "awaiting_input") return needsSupplement(job) ? "执行中" : "未开始";
+    if (["planning", "pending", "running"].includes(job.status)) return hasWorkbenchExecutionStarted(job) ? "执行中" : "未开始";
+    if (job.status === "awaiting_input") return hasWorkbenchExecutionStarted(job) ? "执行中" : "未开始";
     if (job.status === "completed") return "已完成";
-    return job.status === "failed" ? "执行中断" : "已停止";
+    return hasWorkbenchExecutionStarted(job) ? job.status === "failed" ? "执行中断" : "已停止" : "未开始";
   };
   const availableStatuses = [...new Set(visibleItems.map(boardStatus))];
   const filtered = visibleItems.filter((item) => (!search || `${item.title} ${item.parentTitle || ""}`.toLowerCase().includes(search.toLowerCase())) &&
@@ -303,8 +357,8 @@ function MyWorkbench({ user, onLogout }: { user: AuthUser; onLogout: () => void 
         </div>
         <div className="wb-session-filters">
           <Select aria-label="状态筛选" placeholder="状态" value={statusFilter} onChange={setStatusFilter} allowClear options={availableStatuses.map((name) => ({ value: name, label: name }))} />
-          {view === "work" && <><Select aria-label="TAPD 项目" placeholder="TAPD 项目" value={workspaceId} onChange={setWorkspaceId} options={workspaces.map((item) => ({ value: item.id, label: item.pretty_name || item.name || item.id }))} />
-          <Select className="wb-iteration-select" aria-label="迭代" placeholder="选择迭代" value={iterationId} onChange={setIterationId} loading={tapdLoading} options={iterations.map((item) => ({ value: item.id, label: item.name }))} /></>}
+          {view === "work" && <><Select aria-label="TAPD 项目" placeholder="TAPD 项目" value={workspaceId} onChange={id => { rememberIteration(id); setIterationId(undefined); setIterations([]); setWorkspaceId(id); }} options={workspaces.map((item) => ({ value: item.id, label: item.pretty_name || item.name || item.id }))} />
+          <Select className="wb-iteration-select" aria-label="迭代" placeholder="选择迭代" value={iterationId} onChange={id => { setIterationId(id); if (workspaceId) rememberIteration(workspaceId, id); }} loading={tapdLoading} options={iterations.map((item) => ({ value: item.id, label: item.name }))} /></>}
           {view !== "work" && <Select aria-label="业务项目" placeholder="业务项目" value={businessProject} onChange={setBusinessProject} options={businessProjects.map((name) => ({ value: name, label: name }))} />}
           {view === "work" && <div className="wb-work-types" role="group" aria-label="工作类型">{([["all", "全部"], ["task", "任务"], ["bug", "Bug"]] as const).map(([value, label]) => <button key={value} aria-label={label} aria-pressed={workType === value} onClick={() => setWorkType(value)}>{label}</button>)}</div>}
           <Button type="text" className="wb-clear-filters" onClick={() => { setSearch(""); setStatusFilter(undefined); setWorkType("all"); }}>清除筛选</Button>
@@ -321,17 +375,18 @@ function MyWorkbench({ user, onLogout }: { user: AuthUser; onLogout: () => void 
                 {laneItems.map((item) => {
                   const job = jobFor(item);
                   return <article className="wb-board-card" key={item.id} onClick={() => void openItem(item)} aria-busy={opening === item.id}>
-                    <div className="wb-card-project">{item.businessProject || businessProject}{needsSupplement(job) && <Tag className="wb-supplement-tag" color="orange">待补充</Tag>}</div>
+                    <div className="wb-card-project">{item.businessProject || businessProject}{!completedInTapd(item) && needsSupplement(job) && <Tag className="wb-supplement-tag" color="orange">待补充</Tag>}</div>
                     <button className="wb-task-title" disabled={Boolean(opening)}>{item.title}</button>
-                    {job && ["planning", "pending", "running"].includes(job.status) && <i className="wb-card-live" aria-label="AI 正在执行" />}
-                    <div className="wb-card-footer">{item.itemType === "bug" ? <BugOutlined /> : item.taskMode === "test-case" ? <ExperimentOutlined /> : <CodeOutlined />}<span>{opening === item.id ? "正在读取需求…" : job ? `${item.source === "tapd" ? "TAPD · " + workStatus(item) + " · " : ""}${job.message || (needsAttention(job) ? "等待你处理" : "查看执行进展")}` : item.source === "tapd" ? "TAPD · " + workStatus(item) : "尚未开始执行"}</span>{item.tapdUrl && <a href={currentTapdUrl(item.tapdUrl)} aria-label="在 TAPD 查看" target="_blank" rel="noreferrer" onClick={(event) => event.stopPropagation()}>↗</a>}</div>
+                    {dependencyButton(item)}
+                    {!completedInTapd(item) && job && ["planning", "pending", "running"].includes(job.status) && <i className="wb-card-live" aria-label="AI 正在执行" />}
+                    <div className="wb-card-footer">{item.itemType === "bug" ? <BugOutlined /> : item.taskMode === "test-case" ? <ExperimentOutlined /> : <CodeOutlined />}<span>{opening === item.id ? "正在读取需求…" : completedInTapd(item) ? "TAPD · 已完成" : job ? `${item.source === "tapd" ? "TAPD · " + workStatus(item) + " · " : ""}${job.message || (needsAttention(job) ? "等待你处理" : "查看执行进展")}` : item.source === "tapd" ? "TAPD · " + workStatus(item) : "尚未开始执行"}</span>{item.tapdUrl && <a href={currentTapdUrl(item.tapdUrl)} aria-label="在 TAPD 查看" target="_blank" rel="noreferrer" onClick={(event) => event.stopPropagation()}>↗</a>}</div>
                   </article>;
                 })}
               </section>;
             })}</div>
           ) : <div className="wb-task-list">{filtered.map((item) => {
             const job = jobFor(item);
-          return <article className="wb-task-row" key={item.id}><span className={`wb-task-icon ${item.source}`}>{item.itemType === "bug" ? <BugOutlined /> : item.source === "tapd" ? <UnorderedListOutlined /> : item.taskMode === "test-case" ? <ExperimentOutlined /> : <CodeOutlined />}</span><div className="wb-task-text"><button className="wb-task-title" disabled={Boolean(opening)} onClick={() => void openItem(item)}>{item.title}</button><div className="wb-task-meta">{needsSupplement(job) && <Tag className="wb-supplement-tag" color="orange">执行中 · 待补充</Tag>}<span>{item.source === "tapd" ? item.itemType === "bug" ? "TAPD · Bug" : "TAPD · 任务" : "手动创建"}</span><span>{item.businessProject || (item.source === "tapd" ? businessProject : "未选择业务项目")}</span>{item.tapdUrl && <a href={currentTapdUrl(item.tapdUrl)} target="_blank" rel="noreferrer">查看 TAPD ↗</a>}</div>{item.source === "tapd" && job && <div className="wb-task-progress">AI 执行：<StatusBadge status={job.status} /></div>}{job?.message && <p className="wb-task-progress">{job.message}</p>}</div><div className="wb-task-actions">{item.source === "tapd" ? <Tag>{tapdStatusLabel(item.tapdStatus)}</Tag> : job ? <StatusBadge status={job.status} /> : <Tag>待开始</Tag>}<Button size="small" loading={opening === item.id} disabled={Boolean(opening) && opening !== item.id} onClick={() => void openItem(item)}>{job ? needsAttention(job) ? "去处理" : "查看执行" : "开始任务"}<ArrowRightOutlined /></Button></div></article>;
+          return <article className="wb-task-row" key={item.id}><span className={`wb-task-icon ${item.source}`}>{item.itemType === "bug" ? <BugOutlined /> : item.source === "tapd" ? <UnorderedListOutlined /> : item.taskMode === "test-case" ? <ExperimentOutlined /> : <CodeOutlined />}</span><div className="wb-task-text"><button className="wb-task-title" disabled={Boolean(opening)} onClick={() => void openItem(item)}>{item.title}</button><div className="wb-task-meta">{dependencyButton(item)}{!completedInTapd(item) && needsSupplement(job) && <Tag className="wb-supplement-tag" color="orange">{hasWorkbenchExecutionStarted(job) ? "执行中 · 待补充" : "未开始 · 待补充"}</Tag>}<span>{item.source === "tapd" ? item.itemType === "bug" ? "TAPD · Bug" : "TAPD · 任务" : "手动创建"}</span><span>{item.businessProject || (item.source === "tapd" ? businessProject : "未选择业务项目")}</span>{item.tapdUrl && <a href={currentTapdUrl(item.tapdUrl)} target="_blank" rel="noreferrer">查看 TAPD ↗</a>}</div>{item.source === "tapd" && !completedInTapd(item) && job && <div className="wb-task-progress">AI 执行：<StatusBadge status={job.status} /></div>}{!completedInTapd(item) && job?.message && <p className="wb-task-progress">{job.message}</p>}</div><div className="wb-task-actions">{item.source === "tapd" ? <Tag>{tapdStatusLabel(item.tapdStatus)}</Tag> : job ? <StatusBadge status={job.status} /> : <Tag>待开始</Tag>}<Button size="small" loading={opening === item.id} disabled={Boolean(opening) && opening !== item.id} onClick={() => void openItem(item)}>{completedInTapd(item) ? "查看记录" : job ? needsAttention(job) ? "去处理" : "查看执行" : "开始任务"}<ArrowRightOutlined /></Button></div></article>;
           })}</div>}
         </div>
         <div className="wb-session-footnote">{filtered.length} 项 · {view === "work" ? "工作状态来自 TAPD" : "手动任务保存在当前浏览器"}</div>
@@ -339,6 +394,28 @@ function MyWorkbench({ user, onLogout }: { user: AuthUser; onLogout: () => void 
     </section>
 
 
+    <Modal title="后端依赖" open={Boolean(dependencyItem)} onCancel={() => setDependencyItemId(undefined)} footer={[
+      <Button key="auto" onClick={() => { if (dependencyItem) setDependencyDraft((dependencyItem.backendTasks || []).map(task => task.id)); }}>选择全部</Button>,
+      <Button key="cancel" onClick={() => setDependencyItemId(undefined)}>关闭</Button>,
+      <Button key="save" type="primary" onClick={() => {
+        if (!dependencyItem) return;
+        const next = { ...dependencyOverrides, [dependencyItem.id]: dependencyDraft };
+        try { localStorage.setItem(dependencyKey, JSON.stringify(next)); setDependencyOverrides(next); setDependencyItemId(undefined); }
+        catch { message.error("依赖设置保存失败，请检查浏览器存储空间"); }
+      }}>保存依赖</Button>,
+    ]}>
+      <p>{dependencyItem?.title}</p>
+      <p>默认关联同一需求下名称以“后端”开头的任务，包括其他迭代。取消勾选不影响你的任务，全部取消表示无需后端配合。</p>
+      {dependencyItem?.backendDependencyError && <Alert type="warning" showIcon message={dependencyItem.backendDependencyError} />}
+      {!dependencyItem?.backendTasks?.length && <p>没有读取到同需求的后端任务，请确认是否需要后端配合。</p>}
+      <div className="wb-dependency-list">{dependencyItem?.backendTasks?.map(task => <div className="wb-dependency-row" key={task.id}>
+        <Checkbox checked={dependencyDraft.includes(task.id)} onChange={event => setDependencyDraft(current => event.target.checked ? [...current, task.id] : current.filter(id => id !== task.id))}>{task.name}</Checkbox>
+        <span>{task.owner || "未分配负责人"} · {tapdStatusLabel(task.status)}</span>
+        <a href={tapdDetailUrl(dependencyItem.workspaceId!, "task", task.id)} target="_blank" rel="noreferrer">查看 TAPD ↗</a>
+      </div>)}</div>
+      {dependencyDraft.filter(id => !dependencyItem?.backendTasks?.some(task => task.id === id)).map(id => <p key={id}>任务 {id} 未读取到最新状态，请核对 TAPD 后再调整依赖。<Button size="small" type="link" onClick={() => setDependencyDraft(current => current.filter(value => value !== id))}>移除关联</Button></p>)}
+      <p className="wb-chat-muted">依赖选择保存在当前账号的浏览器中。手动刷新看板时更新状态；后端标记完成后，仍需核对接口文档。</p>
+    </Modal>
   </div>;
 }
 

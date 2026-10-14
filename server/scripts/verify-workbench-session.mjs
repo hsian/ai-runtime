@@ -39,7 +39,7 @@ process.stdin.on('end', () => {
   const args = process.argv.slice(2);
   const outputIndex = args.indexOf('--output-last-message');
   const latest = [...prompt.matchAll(/用户：([^\n]+)/g)].at(-1)?.[1] || '';
-  if (outputIndex >= 0) {
+  if (args.includes('--output-schema')) {
     const result = latest.includes('开始处理') ? { action: 'needs_input', message: '验证码有效期希望设为多久？', plan: '' } : { action: 'implement', message: '我会结合最新补充继续修改并验证。', plan: '按最新要求修改当前工作区中的登录功能，执行适当验证。' };
     fs.writeFileSync(args[outputIndex + 1], JSON.stringify(result));
     return;
@@ -50,6 +50,8 @@ process.stdin.on('end', () => {
   }
   const target = !fs.existsSync('first.txt') ? 'first.txt' : !fs.existsSync('second.txt') ? 'second.txt' : 'continued.txt';
   fs.writeFileSync(target, 'task change\n');
+  process.stdout.write(JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: '过程更新：正在检查接口。' } }) + '\n');
+  if (outputIndex >= 0) fs.writeFileSync(args[outputIndex + 1], '已完成当前修改，验证通过。');
   process.stdout.write(JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: '已完成当前修改，验证通过。' } }) + '\n');
 });
 `);
@@ -92,7 +94,7 @@ try {
   receiveWorkbenchMessage(job.jobId, "请开始处理这个需求。");
   await waitFor(() => getJob(job.jobId)?.status === "awaiting_input" && !getJob(job.jobId)?.workbenchTurnRunning, "natural clarification");
   const worktree = getJob(job.jobId).worktreePath;
-  assert.equal(tapdStatus, "progressing");
+  assert.equal(tapdStatus, "open");
   await assert.rejects(syncWorkbenchTask(job.jobId, "done"), /尚未合并/);
   assert.ok(worktree); assert.equal(getJob(job.jobId).workbenchMessages.at(-1).role, "assistant");
   updateJob(job.jobId, { status: "awaiting_confirm", planSummary: "旧版仅生成的计划" });
@@ -106,11 +108,15 @@ try {
   receiveWorkbenchMessage(job.jobId, "请开始处理这个需求。");
   await waitFor(() => getJob(job.jobId)?.workbenchNeedsInput && !getJob(job.jobId)?.workbenchTurnRunning, "restart cancelled task");
   assert.equal(getJob(job.jobId).workbenchReset, false);
-  assert.equal(tapdStatus, "progressing");
+  assert.equal(tapdStatus, "open");
   await writeFile(join(workspace, "user-uncommitted.txt"), "user work\n");
   receiveWorkbenchMessage(job.jobId, "三分钟，继续实现");
   await waitFor(() => getJob(job.jobId)?.status === "awaiting_merge" && !getJob(job.jobId)?.workbenchTurnRunning, "first implementation");
+  assert.equal(getJob(job.jobId)?.implementationSummary, "已完成当前修改，验证通过。");
+  assert.doesNotMatch(getJob(job.jobId)?.workbenchMessages?.at(-1)?.text || "", /过程更新/);
   const firstCommit = getJob(job.jobId).commitSha;
+  assert.equal(tapdStatus, "progressing");
+  assert.equal(getJob(job.jobId).workbenchExecutionStarted, true);
   assert.equal(getJob(job.jobId).worktreePath, worktree);
   assert.equal(git(workspace, "show", "HEAD:base.txt"), "base");
   assert.equal(await readFile(join(workspace, "user-uncommitted.txt"), "utf8"), "user work\n");
@@ -162,5 +168,22 @@ try {
   await syncWorkbenchTask(job.jobId, "done");
   assert.equal(getJob(job.jobId).tapdSync.state, "synced");
   assert.equal(completionWrites, 2, "already completed TAPD task needs no further POST");
+  const resetJob = createJob({ prompt: "重置流程验证", ownerId: "alice", conversationId: "reset-task", projectId: "b2b-composite", agentProvider: "codex", taskMode: "code" });
+  updateJob(resetJob.jobId, { workbenchSession: true, status: "awaiting_input" });
+  receiveWorkbenchMessage(resetJob.jobId, "直接实现");
+  await waitFor(() => getJob(resetJob.jobId)?.status === "awaiting_merge" && !getJob(resetJob.jobId)?.workbenchTurnRunning, "reset fixture implementation");
+  const oldWorktree = getJob(resetJob.jobId).worktreePath;
+  await writeFile(join(oldWorktree, "reset-only.txt"), "preserve cancelled changes\n");
+  receiveWorkbenchMessage(resetJob.jobId, "取消处理，改任务回到未开始");
+  await waitFor(() => getJob(resetJob.jobId)?.workbenchReset && !getJob(resetJob.jobId)?.workbenchTurnRunning, "explicit return to not started");
+  assert.equal(getJob(resetJob.jobId).workbenchPauseRequested, false);
+  assert.equal(getJob(resetJob.jobId).commitSha, undefined);
+  assert.equal(getJob(resetJob.jobId).worktreePath, undefined);
+  assert.equal(getJob(resetJob.jobId).workbenchArchivedWorktrees[0].path, oldWorktree);
+  assert.equal(await readFile(join(oldWorktree, "reset-only.txt"), "utf8"), "preserve cancelled changes\n");
+  receiveWorkbenchMessage(resetJob.jobId, "请开始处理这个需求。");
+  await waitFor(() => getJob(resetJob.jobId)?.workbenchNeedsInput && !getJob(resetJob.jobId)?.workbenchTurnRunning, "fresh analysis after reset");
+  assert.notEqual(getJob(resetJob.jobId).worktreePath, oldWorktree);
+  await assert.rejects(readFile(join(getJob(resetJob.jobId).worktreePath, "reset-only.txt"), "utf8"), /ENOENT/);
   console.log("PASS: real local Git/SQLite with fake CLI; natural clarification, automatic execution, same worktree across turns, accumulated Diff, pause preserves partial edits, resume, explicit merge, durable history, untouched user files.");
 } finally { globalThis.fetch = originalFetch; closeDatabase(); process.chdir(originalDirectory); }

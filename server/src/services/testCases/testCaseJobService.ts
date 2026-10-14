@@ -75,6 +75,7 @@ export async function runTestCaseJob(jobId: string): Promise<void> {
         jsonSchema: TEST_CASE_JSON_SCHEMA,
         jobId,
         agentProvider: job.agentProvider ?? config.AGENT_PROVIDER,
+        apiDocAccess: Boolean(job.workbenchSession && !options?.rewrite),
         attachments: options?.rewrite ? [] : stagedAttachments,
         disableTools: options?.rewrite,
       });

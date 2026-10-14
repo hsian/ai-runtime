@@ -74,6 +74,7 @@ export interface JobStatus {
   workbenchSession?: boolean;
   workbenchUserId?: string;
   workbenchQuestion?: string;
+  workbenchExecutionStarted?: boolean;
   workbenchInputSource?: "analysis" | "implementation";
   workbenchReset?: boolean;
   workbenchNeedsInput?: boolean;

@@ -74,6 +74,18 @@ export interface TapdIterationWorkItems {
   iterationId: string;
   stories: TapdStoryWithTasks[];
   orphanTasks: TapdTask[];
+  backendDependencies?: Record<string, TapdTask[]>;
+  backendDependencyError?: string;
+}
+
+/** Include same-story backend tasks from any iteration, without changing the personal list. */
+export async function loadBackendDependencies(items: TapdIterationWorkItems, cfg: TapdConfig = getTapdConfig()): Promise<Record<string, TapdTask[]>> {
+  const fronts = [...items.stories.flatMap(story => story.tasks.map(task => ({ ...task, story_id: task.story_id || story.id }))), ...items.orphanTasks];
+  const stories = new Set(fronts.map(task => task.story_id).filter(id => id && id !== "0"));
+  if (!stories.size) return {};
+  const all = await fetchAllPages<TapdTask>(cfg, "/tasks", { workspace_id: items.workspaceId }, "Task");
+  const backend = all.filter(task => task.name.trim().startsWith("后端") && stories.has(task.story_id));
+  return Object.fromEntries(fronts.map(task => [task.id, backend.filter(candidate => candidate.story_id === task.story_id && candidate.id !== task.id)]));
 }
 
 let cachedToken: { value: string; expiresAt: number } | null = null;

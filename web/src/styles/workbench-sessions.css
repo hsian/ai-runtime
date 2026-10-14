@@ -33,6 +33,13 @@
 .wb-page-title .ant-btn { color: #92929b; }
 .wb-title-tapd-link { flex-shrink: 0; display: grid; place-items: center; width: 26px; height: 26px; border-radius: 5px; color: #92929b; font-size: 15px; }
 .wb-title-tapd-link:hover { background: #eeeef0; color: #27272a; }
+.wb-dependency-button { display: inline-flex; align-self: flex-start; border: 0; border-radius: 5px; padding: 3px 6px; margin-top: 7px; background: #f1f1f4; color: #71717a; font-size: 11px; cursor: pointer; max-width: 100%; text-align: left; }
+.wb-dependency-button.is-waiting { background: #fff5e8; color: #a86316; }
+.wb-dependency-button.is-ready { background: #eaf7ef; color: #29804c; }
+.wb-dependency-button:hover { filter: brightness(.96); }
+.wb-dependency-list { display: flex; flex-direction: column; gap: 10px; margin: 18px 0; }
+.wb-dependency-row { display: flex; flex-direction: column; align-items: flex-start; gap: 5px; padding: 12px; border: 1px solid #e5e5e8; border-radius: 8px; overflow-wrap: anywhere; }
+.wb-dependency-row > span, .wb-dependency-row > a { font-size: 12px; }
 .wb-content.wb-sessions { padding: 0; overflow: hidden; display: flex; flex-direction: column; }
 .wb-session-toolbar { display: flex; gap: 10px; align-items: center; padding: 11px 16px 8px; flex-shrink: 0; }
 .wb-layout-switch { display: flex; align-items: center; background: #eeeef0; border-radius: 6px; padding: 2px; }

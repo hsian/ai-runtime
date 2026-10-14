@@ -302,8 +302,10 @@ export const api = {
   async tapdIterationItems(workspaceId: string, iterationId: string): Promise<{
     stories: Array<{ id: string; name: string; owner?: string; status?: string; tasks: Array<{ id: string; name: string; owner?: string; status?: string }> }>;
     orphanTasks: Array<{ id: string; name: string; owner?: string; status?: string }>;
+    backendDependencies?: Record<string, Array<{ id: string; name: string; owner?: string; status?: string }>>;
+    backendDependencyError?: string;
   }> {
-    return request(`/api/tapd/iterations/${encodeURIComponent(iterationId)}/items?workspaceId=${encodeURIComponent(workspaceId)}`);
+    return request(`/api/tapd/iterations/${encodeURIComponent(iterationId)}/items?workspaceId=${encodeURIComponent(workspaceId)}&includeBackendDependencies=true`);
   },
 
   async tapdTaskStoryId(workspaceId: string, taskId: string): Promise<string | undefined> {
