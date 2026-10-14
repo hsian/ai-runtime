@@ -2,21 +2,25 @@
 
 ## Workbench clarification inbox (小迪)
 
-Private workbench commands bypass model intent routing. Send `-help`
-for the complete command list. Main workflow: `-use`, `-use P1`, `-use I2`,
-`-list`, `-analyze T1`, `-start T1`, `-reply T1 补充内容`, `-review T1`, `-done T1`.
-`-use iter` lists iterations, `-use next` pages them, and `-use 前端` searches
-names. `-list next` pages tasks; `-list 关键词` searches assigned tasks.
-`-list` excludes completed tasks and closed/verified Bugs before pagination;
+Private workbench commands bypass model intent routing. Send `/help`
+for the complete command list. Main workflow: `/use`, `/use P1`, `/use I2`,
+`/list`, `/analyze T1`, `/start T1`, `/reply T1 补充内容`, `/review T1`, `/done T1`.
+`/use iter` lists iterations, `/use next` pages them, and `/use 前端` searches
+names. `/list next` pages tasks; `/list 关键词` searches assigned tasks.
+`/use P1 I17` selects a registered project and iteration together; IDs are
+case-insensitive. The iteration must belong to that project and still exist in
+TAPD. Invalid combinations preserve the previous selection. Old hyphen commands
+return a migration hint without invoking the model or changing task state.
+`/list` excludes completed tasks and closed/verified Bugs before pagination;
 resolved Bugs remain listed until acceptance/closure.
 Number mappings persist per bot/account and never retarget after reordering.
 Task ownership is read back from TAPD for every operation.
 
-`-analyze` and its follow-up replies cannot execute code, even if the model
-returns an implementation decision. `-start` explicitly enables code changes;
+`/analyze` and its follow-up replies cannot execute code, even if the model
+returns an implementation decision. `/start` explicitly enables code changes;
 existing tasks keep their engine, conversation and worktree. Review provides a
 summary and workbench link (configure `QWECHAT_WORKBENCH_URL` for the full Diff).
-`-done` returns a ten-minute confirmation code tied to the exact commit; the
+`/done` returns a ten-minute confirmation code tied to the exact commit; the
 confirmation is consumed before merging, and changed commits require a new one.
 Code execution and completion require the existing code allowlist. Backend
 readiness is informational, not an execution gate.
