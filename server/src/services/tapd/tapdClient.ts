@@ -1,4 +1,5 @@
 import { getTapdConfig, type TapdConfig } from "../../config.js";
+import { queueTapdRequest } from "./requestQueue.js";
 
 interface TapdApiEnvelope<T> {
   status: number;
@@ -84,12 +85,29 @@ export async function loadBackendDependencies(items: TapdIterationWorkItems, cfg
   const fronts = [...items.stories.flatMap(story => story.tasks.map(task => ({ ...task, story_id: task.story_id || story.id }))), ...items.orphanTasks];
   const stories = new Set(fronts.map(task => task.story_id).filter(id => id && id !== "0"));
   if (!stories.size) return {};
-  const all = await fetchAllPages<TapdTask>(cfg, "/tasks", { workspace_id: items.workspaceId }, "Task");
+  const all: TapdTask[] = [];
+  const storyIds = [...stories] as string[];
+  for (let index = 0; index < storyIds.length; index += 50) {
+    all.push(...await fetchAllPages<TapdTask>(cfg, "/tasks", { workspace_id: items.workspaceId, story_id: storyIds.slice(index, index + 50).join(","), name: "后端" }, "Task"));
+  }
   const backend = all.filter(task => task.name.trim().startsWith("后端") && stories.has(task.story_id));
   return Object.fromEntries(fronts.map(task => [task.id, backend.filter(candidate => candidate.story_id === task.story_id && candidate.id !== task.id)]));
 }
 
-let cachedToken: { value: string; expiresAt: number } | null = null;
+const cachedTokens = new Map<string, { value: string; expiresAt: number }>();
+const pendingTokens = new Map<string, Promise<string>>();
+const pendingReads = new Map<string, Promise<TapdApiEnvelope<unknown>>>();
+const credentialsKey = (cfg: TapdConfig) => JSON.stringify([cfg.apiBase, cfg.clientId, cfg.clientSecret]);
+
+async function readResponse<T>(res: Response): Promise<TapdApiEnvelope<T>> {
+  if (res.status === 429) {
+    await res.body?.cancel();
+    throw new Error("TAPD 请求过于频繁，自动重试后仍被限流，请稍后再手动刷新");
+  }
+  const body = await res.json() as TapdApiEnvelope<T>;
+  if (!res.ok || body.status !== 1) throw new Error(body.info || `TAPD API 请求失败: ${res.status}`);
+  return body;
+}
 
 function unwrapRecords<T>(data: unknown, key: string): T[] {
   if (!Array.isArray(data)) return [];
@@ -107,7 +125,6 @@ export async function tapdRequest<T>(
   path: string,
   params: Record<string, string | number | undefined> = {}
 ): Promise<TapdApiEnvelope<T>> {
-  const token = await getAccessToken(cfg);
   const url = new URL(path, cfg.apiBase);
   for (const [key, value] of Object.entries(params)) {
     if (value !== undefined && value !== "") {
@@ -115,15 +132,20 @@ export async function tapdRequest<T>(
     }
   }
 
-  const res = await fetch(url, {
-    headers: { Authorization: `Bearer ${token}` },
-    signal: AbortSignal.timeout(30_000),
-  });
-  const body = (await res.json()) as TapdApiEnvelope<T>;
-  if (!res.ok || body.status !== 1) {
-    throw new Error(body.info || `TAPD API 请求失败: ${res.status}`);
-  }
-  return body;
+  url.searchParams.sort();
+  const key = `${credentialsKey(cfg)}:${url.href}`;
+  const existing = pendingReads.get(key);
+  if (existing) return existing as Promise<TapdApiEnvelope<T>>;
+  const request = (async () => {
+    const token = await getAccessToken(cfg);
+    const res = await queueTapdRequest(() => fetch(url, {
+      headers: { Authorization: `Bearer ${token}` },
+      signal: AbortSignal.timeout(30_000),
+    }));
+    return readResponse<T>(res);
+  })().finally(() => pendingReads.delete(key));
+  pendingReads.set(key, request);
+  return request;
 }
 
 export interface TapdComment {
@@ -154,7 +176,7 @@ export async function tapdPost<T>(
     }
   }
 
-  const res = await fetch(new URL(path, cfg.apiBase), {
+  const res = await queueTapdRequest(() => fetch(new URL(path, cfg.apiBase), {
     method: "POST",
     headers: {
       Authorization: `Bearer ${token}`,
@@ -162,12 +184,8 @@ export async function tapdPost<T>(
     },
     body: bodyParams.toString(),
     signal: AbortSignal.timeout(30_000),
-  });
-  const body = (await res.json()) as TapdApiEnvelope<T>;
-  if (!res.ok || body.status !== 1) {
-    throw new Error(body.info || `TAPD API 请求失败: ${res.status}`);
-  }
-  return body;
+  }));
+  return readResponse<T>(res);
 }
 
 async function fetchAllPages<T>(
@@ -193,30 +211,30 @@ async function fetchAllPages<T>(
 
 export async function getAccessToken(cfg: TapdConfig = getTapdConfig()): Promise<string> {
   const now = Date.now();
+  const key = credentialsKey(cfg);
+  const cachedToken = cachedTokens.get(key);
   if (cachedToken && cachedToken.expiresAt > now + 60_000) {
     return cachedToken.value;
   }
-
-  const res = await fetch(new URL("/tokens/request_token", cfg.apiBase), {
-    method: "POST",
-    signal: AbortSignal.timeout(30_000),
-    headers: {
-      Authorization: `Basic ${Buffer.from(`${cfg.clientId}:${cfg.clientSecret}`).toString("base64")}`,
-      "Content-Type": "application/x-www-form-urlencoded",
-    },
-    body: "grant_type=client_credentials",
-  });
-
-  const body = (await res.json()) as TapdApiEnvelope<TapdTokenData>;
-  if (!res.ok || body.status !== 1 || !body.data?.access_token) {
-    throw new Error(body.info || "TAPD 换取 access_token 失败");
-  }
-
-  cachedToken = {
-    value: body.data.access_token,
-    expiresAt: now + body.data.expires_in * 1000,
-  };
-  return body.data.access_token;
+  const pending = pendingTokens.get(key);
+  if (pending) return pending;
+  const request = (async () => {
+    const res = await queueTapdRequest(() => fetch(new URL("/tokens/request_token", cfg.apiBase), {
+      method: "POST",
+      signal: AbortSignal.timeout(30_000),
+      headers: {
+        Authorization: `Basic ${Buffer.from(`${cfg.clientId}:${cfg.clientSecret}`).toString("base64")}`,
+        "Content-Type": "application/x-www-form-urlencoded",
+      },
+      body: "grant_type=client_credentials",
+    }));
+    const body = await readResponse<TapdTokenData>(res);
+    if (!body.data?.access_token) throw new Error("TAPD 换取 access_token 失败");
+    cachedTokens.set(key, { value: body.data.access_token, expiresAt: Date.now() + body.data.expires_in * 1000 });
+    return body.data.access_token;
+  })().finally(() => pendingTokens.delete(key));
+  pendingTokens.set(key, request);
+  return request;
 }
 
 export async function listIterations(
@@ -298,12 +316,12 @@ export async function uploadBugAttachment(
   form.set("type", "bug");
   form.set("entry_id", input.bugId);
   form.set("file", new Blob([new Uint8Array(input.data)], { type: input.mimeType }), input.filename);
-  const response = await fetch(new URL("/files/upload_attachment", cfg.apiBase), {
+  const response = await queueTapdRequest(() => fetch(new URL("/files/upload_attachment", cfg.apiBase), {
     method: "POST",
     headers: { Authorization: `Bearer ${token}` },
     body: form,
-  });
-  const body = (await response.json()) as TapdApiEnvelope<{ Attachment?: { id?: string } }>;
+  }));
+  const body = await readResponse<{ Attachment?: { id?: string } }>(response);
   if (!response.ok || body.status !== 1 || !body.data?.Attachment?.id) {
     throw new Error(body.info || `TAPD 附件上传失败: ${response.status}`);
   }

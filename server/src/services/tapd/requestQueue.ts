@@ -30,4 +30,5 @@ export function createTapdRequestQueue({
   };
 }
 
-export const queueWorkHoursRequest = createTapdRequestQueue();
+export const queueTapdRequest = createTapdRequestQueue({ intervalMs: 1500 });
+export const queueWorkHoursRequest = queueTapdRequest;

@@ -13,6 +13,8 @@ test("associate only same-story backend tasks, including other iterations and or
     assert.equal(url.pathname, "/tasks");
     assert.equal(url.searchParams.get("workspace_id"), "123");
     assert.equal(url.searchParams.has("iteration_id"), false);
+    assert.equal(url.searchParams.get("story_id"), "s1,s2");
+    assert.equal(url.searchParams.get("name"), "后端");
     return Response.json({ status: 1, data: [
       { Task: { id: "b1", name: "后端 - 字段扩展", story_id: "s1", iteration_id: "earlier", status: "done", owner: "backend-a" } },
       { Task: { id: "b2", name: "后端 - 导出接口", story_id: "s1", iteration_id: "current", status: "progressing" } },
