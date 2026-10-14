@@ -2,7 +2,7 @@
 
 ## Workbench clarification inbox (小迪)
 
-Private workbench commands bypass model intent routing. Send `-help` (or `-heip`)
+Private workbench commands bypass model intent routing. Send `-help`
 for the complete command list. Main workflow: `-use`, `-use P1`, `-use I2`,
 `-list`, `-analyze T1`, `-start T1`, `-reply T1 补充内容`, `-review T1`, `-done T1`.
 `-use iter` lists iterations, `-use next` pages them, and `-use 前端` searches

@@ -44,9 +44,9 @@ const commands = createWorkbenchCommands({ botId: "test", secret: "test", projec
   (async url => ({ snapshotId: randomUUID(), context: { workspaceId: "123", storyId: "41", itemId: "41", itemType: "story", title: "登录需求", description: "增加登录入口", url, commentCount: 0, fetchedAt: new Date().toISOString() }, attachments: [], warnings: [] })) as typeof loadTapdSnapshot,
   { diff: async job => ({ commitSha: job.commitSha!, files: [], additions: 2, deletions: 1, patch: "" }), enqueueMerge: id => { merged.push(id); } });
 
-test("help/heip print every command; unknown syntax and groups never invoke the model or expose tasks", async () => {
+test("help prints every command; unknown syntax and groups never invoke the model or expose tasks", async () => {
   assert.equal(await commands("unknown", "-help"), WORKBENCH_COMMAND_HELP);
-  assert.equal(await commands("unknown", "-heip"), WORKBENCH_COMMAND_HELP);
+  assert.match((await commands("unknown", "-heip"))!, /未知工作台命令/);
   for (const command of ["use", "list", "analyze", "start", "reply", "review", "done"]) assert.ok(WORKBENCH_COMMAND_HELP.includes(`-${command}`));
   assert.match((await commands("alice-wecom", "-install T1"))!, /未知/);
   assert.match((await commands("alice-wecom", "-list", { group: true }))!, /私聊/);

@@ -32,7 +32,7 @@ export const WORKBENCH_COMMAND_HELP = `工作台固定命令（私聊使用）�
 -review T1           查看修改摘要、验证结果和 Diff 链接
 -done T1             获取当前版本的合并确认码
 -done T1 确认码      合并该版本并同步 TAPD 已完成
--help / -heip        打印本帮助
+-help                打印本帮助
 
 P/I/T 编号绑定真实条目，不会因翻页变成其他任务。项目和迭代与工作台按账号共用。
 后端状态仅供参考，由你判断何时 start。参数错误不猜测执行；同一任务沿用原引擎和工作区。`;
@@ -90,10 +90,10 @@ export function createWorkbenchCommands(options: WecomConfig, accountFor: (sende
 
   return async (sender: string, text: string, context: { group?: boolean; voice?: boolean; images?: boolean } = {}): Promise<string | undefined> => {
     if (!/^-[a-z]/i.test(text.trim())) return;
-    const parsed = /^-(help|heip|use|list|analyze|start|reply|review|done)(?:\s+([\s\S]*))?$/i.exec(text.trim());
+    const parsed = /^-(help|use|list|analyze|start|reply|review|done)(?:\s+([\s\S]*))?$/i.exec(text.trim());
     if (!parsed) return "未知工作台命令，请发送 -help 查看全部命令。";
     const command = parsed[1].toLowerCase(), argument = (parsed[2] || "").trim();
-    if (command === "help" || command === "heip") return argument ? "帮助命令不需要参数。\n" + WORKBENCH_COMMAND_HELP : WORKBENCH_COMMAND_HELP;
+    if (command === "help") return argument ? "帮助命令不需要参数。\n" + WORKBENCH_COMMAND_HELP : WORKBENCH_COMMAND_HELP;
     if (context.group) return "请私聊小迪使用工作台命令，避免在群里展示个人任务。";
     if (context.voice || context.images) return "固定命令请用文字发送；图片请在工作台补充。";
     const account = accountFor(sender);
