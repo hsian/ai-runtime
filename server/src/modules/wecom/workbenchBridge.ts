@@ -8,6 +8,7 @@ import { canModifyCode } from "./permissions.js";
 import { splitMessage } from "./replies.js";
 import { parseCommand } from "./commands.js";
 import { quickReply } from "./intentRouter.js";
+import { createWorkbenchCommands } from "./workbenchCommands.js";
 
 interface Account { id: string; username: string; display_name: string; tapd_owner_name: string }
 interface Notice { id: number; job_id: string; signature: string; target_id: string; chunks: string; sent_chunks: number }
@@ -83,6 +84,7 @@ export function createWorkbenchBridge(options: WecomConfig, send: (target: strin
   const pendingFor = (account: Account) => listJobs().filter(job => job.workbenchUserId === account.id && workbenchNeedsSupplement(job));
   const list = (jobs: Job[]) => "工作台待补充任务：\n\n" + jobs.map(job => `**${title(job)}**\n编号：\`${job.jobId}\`\n${question(job)}${link(job)}`).join("\n\n")
     + "\n\n请发送「补充 完整任务编号：答案」。";
+  const fixedCommands = createWorkbenchCommands(options, sender => accountForSender(options, sender), receive);
   return {
     stop() { stopped = true; },
     reconcile() {
@@ -138,6 +140,8 @@ export function createWorkbenchBridge(options: WecomConfig, send: (target: strin
     },
     async reply(sender: string, content: string, context: { group?: boolean; voice?: boolean; images?: boolean } = {}): Promise<string | undefined> {
       if (stopped) return;
+      const fixed = await fixedCommands(sender, content, context);
+      if (fixed !== undefined) return fixed;
       const command = parseCommand(content);
       const listRequested = /^(?:工作台)?待补充(?:任务)?$/.test(content.trim());
       const explicit = command.action === "clarify";

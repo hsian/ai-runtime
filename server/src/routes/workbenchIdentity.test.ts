@@ -51,3 +51,13 @@ test("anonymous workbench creation cannot spoof the logged in account", async ()
   const response = await fetch(`${base}/api/jobs/workbench`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ prompt: "spoof", workbenchUserId: alice.id }) });
   assert.equal(response.status, 401);
 });
+
+test("shared workbench scope is persisted per authenticated account and rejects cross-site writes", async () => {
+  const ownCookie = await login("alice"); const otherCookie = await login("bobby");
+  const saved = await fetch(`${base}/api/auth/workbench`, { method: "PUT", headers: { Cookie: ownCookie, Origin: base, "Content-Type": "application/json" }, body: JSON.stringify({ workspaceId: "123", iterationId: "200" }) });
+  assert.equal(saved.status, 200);
+  assert.deepEqual(await (await fetch(`${base}/api/auth/workbench`, { headers: { Cookie: ownCookie } })).json(), { workspaceId: "123", iterationId: "200" });
+  assert.deepEqual(await (await fetch(`${base}/api/auth/workbench`, { headers: { Cookie: otherCookie } })).json(), {});
+  assert.equal((await fetch(`${base}/api/auth/workbench`, { method: "PUT", headers: { Cookie: ownCookie, Origin: "https://other.invalid", "Content-Type": "application/json" }, body: JSON.stringify({ workspaceId: "456" }) })).status, 403);
+  assert.equal((await fetch(`${base}/api/auth/workbench`)).status, 401);
+});

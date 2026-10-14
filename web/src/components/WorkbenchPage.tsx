@@ -87,6 +87,7 @@ function MyWorkbench({ user, onLogout }: { user: AuthUser; onLogout: () => void 
   const [businessProject, setBusinessProject] = useState<string>(businessProjects[0]);
   const [workspaces, setWorkspaces] = useState<TapdWorkspace[]>([]);
   const [workspaceId, setWorkspaceId] = useState<string>();
+  const sharedScope = useRef<{ workspaceId?: string; iterationId?: string }>({});
   const [iterations, setIterations] = useState<TapdIteration[]>([]);
   const [iterationId, setIterationId] = useState<string>();
   const [remoteItems, setRemoteItems] = useState<WorkItem[]>([]);
@@ -116,11 +117,12 @@ function MyWorkbench({ user, onLogout }: { user: AuthUser; onLogout: () => void 
   useEffect(() => {
     let current = true;
     api.listProjects().then((items) => { if (current) { setProjects(items); setProjectError(""); } }).catch((error) => { if (current) setProjectError(errorText(error)); });
-    api.tapdWorkspaces().then((result) => {
+    Promise.all([api.tapdWorkspaces(), api.workbenchPreferences()]).then(([result, preferences]) => {
       if (current) {
+        sharedScope.current = preferences;
         setWorkspaces(result.workspaces);
         const requested = new URLSearchParams(window.location.search).get("workspaceId");
-        setWorkspaceId(previous => [requested, previous, result.defaultWorkspaceId, result.workspaces[0]?.id]
+        setWorkspaceId(previous => [requested, previous, preferences.workspaceId, result.defaultWorkspaceId, result.workspaces[0]?.id]
           .find(id => result.workspaces.some(workspace => workspace.id === id)) || undefined);
       }
     }).catch((error) => { if (current) setTapdError(errorText(error)); });
@@ -145,11 +147,16 @@ function MyWorkbench({ user, onLogout }: { user: AuthUser; onLogout: () => void 
         if (!current) return;
         setIterations(result.iterations);
         const params = new URLSearchParams(window.location.search);
-        const requested = !params.get("workspaceId") || params.get("workspaceId") === workspaceId ? params.get("iterationId") : undefined;
+        const requested = !params.get("workspaceId") || params.get("workspaceId") === workspaceId
+          ? params.get("iterationId") || (sharedScope.current.workspaceId === workspaceId ? sharedScope.current.iterationId : undefined) : undefined;
         const selected = result.iterations.find(item => item.id === requested)?.id
           || result.iterations.find((item) => /^(open|running|active|进行中)$/i.test(item.status || ""))?.id || result.iterations[0]?.id;
         setIterationId(selected);
         rememberIteration(workspaceId, selected);
+        if (sharedScope.current.workspaceId !== workspaceId || sharedScope.current.iterationId !== selected) {
+          sharedScope.current = { workspaceId, iterationId: selected };
+          void api.saveWorkbenchPreferences(sharedScope.current).catch(error => message.error(`项目和迭代同步失败：${errorText(error)}`));
+        }
         setTapdError("");
       }).catch((error) => { if (current) setTapdError(errorText(error)); }).finally(() => { if (current) setTapdLoading(false); });
     }
@@ -358,7 +365,7 @@ function MyWorkbench({ user, onLogout }: { user: AuthUser; onLogout: () => void 
         <div className="wb-session-filters">
           <Select aria-label="状态筛选" placeholder="状态" value={statusFilter} onChange={setStatusFilter} allowClear options={availableStatuses.map((name) => ({ value: name, label: name }))} />
           {view === "work" && <><Select aria-label="TAPD 项目" placeholder="TAPD 项目" value={workspaceId} onChange={id => { rememberIteration(id); setIterationId(undefined); setIterations([]); setWorkspaceId(id); }} options={workspaces.map((item) => ({ value: item.id, label: item.pretty_name || item.name || item.id }))} />
-          <Select className="wb-iteration-select" aria-label="迭代" placeholder="选择迭代" value={iterationId} onChange={id => { setIterationId(id); if (workspaceId) rememberIteration(workspaceId, id); }} loading={tapdLoading} options={iterations.map((item) => ({ value: item.id, label: item.name }))} /></>}
+          <Select className="wb-iteration-select" aria-label="迭代" placeholder="选择迭代" value={iterationId} onChange={id => { setIterationId(id); if (workspaceId) { rememberIteration(workspaceId, id); sharedScope.current = { workspaceId, iterationId: id }; void api.saveWorkbenchPreferences(sharedScope.current).catch(error => message.error(`项目和迭代同步失败：${errorText(error)}`)); } }} loading={tapdLoading} options={iterations.map((item) => ({ value: item.id, label: item.name }))} /></>}
           {view !== "work" && <Select aria-label="业务项目" placeholder="业务项目" value={businessProject} onChange={setBusinessProject} options={businessProjects.map((name) => ({ value: name, label: name }))} />}
           {view === "work" && <div className="wb-work-types" role="group" aria-label="工作类型">{([["all", "全部"], ["task", "任务"], ["bug", "Bug"]] as const).map(([value, label]) => <button key={value} aria-label={label} aria-pressed={workType === value} onClick={() => setWorkType(value)}>{label}</button>)}</div>}
           <Button type="text" className="wb-clear-filters" onClick={() => { setSearch(""); setStatusFilter(undefined); setWorkType("all"); }}>清除筛选</Button>

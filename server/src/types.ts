@@ -135,6 +135,7 @@ export interface Job {
   workbenchPauseRequested?: boolean;
   workbenchRound?: number;
   workbenchExecutionStarted?: boolean;
+  workbenchAnalysisOnly?: boolean;
   workbenchWorkspaceId?: string;
   workbenchContextStartIndex?: number;
   workbenchArchivedWorktrees?: Array<{ path: string; branch?: string; commitSha?: string; archivedAt: string }>;

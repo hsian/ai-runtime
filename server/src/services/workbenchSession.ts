@@ -99,7 +99,7 @@ export function createWorkbenchWorker(deps: WorkbenchWorkerDependencies) {
               deps.update(id, { status: latest.mergedToDefaultAt ? "completed" : reviewable ? "awaiting_merge" : "awaiting_input", message });
               appendAssistant(id, message);
             }
-          } else if (decision.action === "implement" && current.taskMode !== "question") {
+          } else if (decision.action === "implement" && current.taskMode !== "question" && !current.workbenchAnalysisOnly) {
             deps.update(id, { workbenchQuestion: undefined, workbenchReset: false, workbenchNeedsInput: false, planSummary: decision.plan, requiresConfirm: true, status: "pending", workbenchLatestPrompt: buildWorkbenchRequest(deps.get(id)!) });
             await deps.execute(id);
             const latest = deps.get(id)!;
@@ -201,7 +201,7 @@ const worker = createWorkbenchWorker({
     }, {
       jobId: job.jobId, mode: "question", agentProvider: job.agentProvider, attachments,
       conversationHistory: job.conversationHistory, jsonSchema: WORKBENCH_DECISION_SCHEMA, apiDocAccess: true,
-      systemPrompt: "你是与用户协作的编程助手。当前阶段只读取代码，不修改文件。理解最新一条用户消息，并结合持续对话、需求正文和评论决定下一步。用户要求生成、补充或调整测试用例时用 test_cases，调用专用用例生成能力；仅讨论用例或要求编写自动化测试代码时分别使用 reply 或 implement。回答、解释、讨论用 reply；确实缺少业务决定才用 needs_input，在 message 中自然提出问题，允许多轮回复；用户授权实现且信息足够时用 implement，输出具体 plan，message 简洁说明马上要做什么。不要每轮重复整份需求，不要机械要求确认计划。用户只问问题时不得执行修改；新补充覆盖旧约定。message 使用中文自然语言，不提 JSON 或内部阶段。严格返回指定 JSON 结构。" + WORKBENCH_REPLY_GUIDANCE,
+      systemPrompt: "你是与用户协作的编程助手。当前阶段只读取代码，不修改文件。理解最新一条用户消息，并结合持续对话、需求正文和评论决定下一步。用户要求生成、补充或调整测试用例时用 test_cases，调用专用用例生成能力；仅讨论用例或要求编写自动化测试代码时分别使用 reply 或 implement。回答、解释、讨论用 reply；确实缺少业务决定才用 needs_input，在 message 中自然提出问题，允许多轮回复；用户授权实现且信息足够时用 implement，输出具体 plan，message 简洁说明马上要做什么。不要每轮重复整份需求，不要机械要求确认计划。用户只问问题时不得执行修改；新补充覆盖旧约定。message 使用中文自然语言，不提 JSON 或内部阶段。严格返回指定 JSON 结构。" + WORKBENCH_REPLY_GUIDANCE + (job.workbenchAnalysisOnly ? "本任务当前仅预先分析。即使信息完整也不得返回 implement 或修改代码；需要用户补充时用 needs_input，分析完成用 reply 概述准备情况。" : ""),
       questionChangeInstructions: "你在只读阶段为持续会话决定下一步，按指定结构返回 reply、needs_input、implement、test_cases 或 cancel。用户要求取消/撤销当前任务时返回 cancel，不得反问下一步或执行代码修改。",
     });
     return parseWorkbenchDecision(result.summary);
@@ -221,6 +221,7 @@ export function receiveWorkbenchMessage(jobId: string, text: string, attachments
   if (!text || text.length > 20000) throw new Error("消息应为 1–20000 个字符");
   const attachmentIndexes = attachments.length ? attachments.map((_, index) => (job.attachments?.length ?? 0) + index) : !job.workbenchMessages?.length ? (job.attachments ?? []).map((_, index) => index) : [];
   const messages = [...(job.workbenchMessages ?? []), { id: randomUUID(), role: "user" as const, text, createdAt: new Date().toISOString(), attachmentIndexes }];
+  if (job.workbenchAnalysisOnly && /^(?:请)?(?:开始|继续)(?:修改|实现|开发|处理)/.test(text)) updateJob(jobId, { workbenchAnalysisOnly: false });
   const cancelling = isWorkbenchCancellation(text) || isWorkbenchResetRequest(text);
   const deferredResume = (job.workbenchPauseRequested || cancelling) && worker.isRunning(jobId);
   updateJob(jobId, { workbenchSession: true, workbenchNeedsInput: false, workbenchInputSource: undefined, workbenchQuestion: undefined, workbenchMessages: messages, workbenchPauseRequested: Boolean(deferredResume), attachments: [...(job.attachments ?? []), ...attachments] });

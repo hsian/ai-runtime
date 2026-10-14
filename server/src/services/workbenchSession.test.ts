@@ -63,6 +63,20 @@ test("明确需求自动执行并等待审查，保留同一任务和工作区",
   assert.equal(state.job().workbenchTurnRunning, false);
 });
 
+test("固定分析模式即使模型返回 implement 也不得修改，补充仍只分析", async () => {
+  const state = setup(); state.deps.update("session-1", { workbenchAnalysisOnly: true });
+  const worker = createWorkbenchWorker(state.deps);
+  await worker.start("session-1");
+  assert.deepEqual(state.executions, []);
+  assert.equal(state.job().workbenchExecutionStarted, false);
+  state.addMessage("后端接口字段已经确认"); await worker.start("session-1");
+  assert.deepEqual(state.executions, []);
+  assert.equal(state.job().workbenchAnalysisOnly, true);
+  state.deps.update("session-1", { workbenchAnalysisOnly: false });
+  state.addMessage("开始修改"); await worker.start("session-1");
+  assert.deepEqual(state.executions, ["session-1"]);
+});
+
 test("问题通过自然对话补充，多轮继续使用原任务", async () => {
   const state = setup(); const worker = createWorkbenchWorker(state.deps);
   state.deps.analyze = async job => job.workbenchProcessedInputs ? { action: "implement", message: "按三分钟有效期实现。", plan: "验证码有效期三分钟" } : { action: "needs_input", message: "验证码有效期希望设为多久？", plan: "" };

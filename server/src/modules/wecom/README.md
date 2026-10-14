@@ -2,6 +2,27 @@
 
 ## Workbench clarification inbox (小迪)
 
+Private workbench commands bypass model intent routing. Send `-help` (or `-heip`)
+for the complete command list. Main workflow: `-use`, `-use P1`, `-use I2`,
+`-list`, `-analyze T1`, `-start T1`, `-reply T1 补充内容`, `-review T1`, `-done T1`.
+`-use iter` lists iterations, `-use next` pages them, and `-use 前端` searches
+names. `-list next` pages tasks; `-list 关键词` searches assigned tasks.
+Number mappings persist per bot/account and never retarget after reordering.
+Task ownership is read back from TAPD for every operation.
+
+`-analyze` and its follow-up replies cannot execute code, even if the model
+returns an implementation decision. `-start` explicitly enables code changes;
+existing tasks keep their engine, conversation and worktree. Review provides a
+summary and workbench link (configure `QWECHAT_WORKBENCH_URL` for the full Diff).
+`-done` returns a ten-minute confirmation code tied to the exact commit; the
+confirmation is consumed before merging, and changed commits require a new one.
+Code execution and completion require the existing code allowlist. Backend
+readiness is informational, not an execution gate.
+
+Project and iteration selection persist in `workbench_preferences` by login
+account. Web selection is written to that store; saved scope is used when the
+Web URL does not explicitly select another scope. No new polling is added.
+
 Workbench notices reuse `TAPD_COMPLETION_NOTIFY_RECIPIENTS`: match the logged-in
 account's display name or TAPD owner name to the configured real WeCom sender ID.
 This works even when TAPD completion notifications are disabled. Conflicting name

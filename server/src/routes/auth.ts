@@ -3,7 +3,8 @@ import { Router } from "express";
 import { z } from "zod";
 
 import { getDatabase } from "../services/database.js";
-import { clearSession, createSession, createUser, getAuthUser, getUserByName, hashPassword, publicUser, requirePermission, verifyPassword } from "../services/auth.js";
+import { clearSession, createSession, createUser, getAuthUser, getUserByName, hashPassword, publicUser, requirePermission, requireSameOrigin, verifyPassword } from "../services/auth.js";
+import { getWorkbenchPreferences, setWorkbenchPreferences } from "../services/workbenchPreferences.js";
 
 export const authRouter = Router();
 export const adminRouter = Router();
@@ -14,6 +15,20 @@ const password = z.string().min(6).max(128);
 authRouter.get("/me", (req, res) => {
   res.setHeader("Cache-Control", "no-store");
   res.json({ user: getAuthUser(req) ?? null });
+});
+
+authRouter.get("/workbench", (req, res) => {
+  const user = getAuthUser(req);
+  if (!user) { res.status(401).json({ error: "请先登录" }); return; }
+  res.setHeader("Cache-Control", "no-store");
+  res.json(getWorkbenchPreferences(user.id));
+});
+authRouter.put("/workbench", requireSameOrigin, (req, res) => {
+  const user = getAuthUser(req);
+  if (!user) { res.status(401).json({ error: "请先登录" }); return; }
+  const input = z.object({ workspaceId: z.string().regex(/^\d+$/).optional(), iterationId: z.string().regex(/^\d+$/).optional() }).safeParse(req.body);
+  if (!input.success) { res.status(400).json({ error: "项目或迭代 ID 无效" }); return; }
+  setWorkbenchPreferences(user.id, input.data); res.json(input.data);
 });
 
 authRouter.post("/login", (req, res) => {

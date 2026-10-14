@@ -85,6 +85,12 @@ type ApiDocSearchResponse = {
 };
 
 export const api = {
+  async workbenchPreferences(): Promise<{ workspaceId?: string; iterationId?: string }> {
+    return request("/api/auth/workbench");
+  },
+  async saveWorkbenchPreferences(preferences: { workspaceId?: string; iterationId?: string }): Promise<void> {
+    await request("/api/auth/workbench", { method: "PUT", body: JSON.stringify(preferences) });
+  },
   async retryTapdSync(jobId: string): Promise<void> {
     await request(`/api/jobs/${encodeURIComponent(jobId)}/tapd-sync`, { method: "POST", body: "{}" });
   },
