@@ -96,9 +96,9 @@ test("spoken control commands are blocked before semantic routing, including tra
 });
 
 test("semantic voice actions cannot request revert or bypass the text confirmation guard", async () => {
-  for (const action of ["execute", "cancel", "merge", "discard", "revert"] as const) {
+  for (const action of ["execute", "cancel", "merge", "discard", "revert", "release"] as const) {
     const { client, calls } = fakeClient();
-    const handler = createMessageHandler(client, options, async () => ({ action }));
+    const handler = createMessageHandler(client, options, async () => action === "release" ? { action, targetBranch: "20260930" } : { action });
     try {
       handler.handle(frame(`resolved-${action}`, "developer", "撤回刚才那次改动"));
       await delay();

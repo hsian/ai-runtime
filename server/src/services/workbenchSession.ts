@@ -8,6 +8,9 @@ import { getProjectGitService } from "./projectRuntime.js";
 import { stageAttachmentsForAgent } from "./uploadService.js";
 import { buildPromptWithTapdContext } from "./tapd/tapdContext.js";
 import { syncWorkbenchTask } from "./tapd/taskStatusSync.js";
+import { mergeCompletedJobToBranch } from "./jobMergeService.js";
+import { getProject } from "./projectRegistry.js";
+import { jobQueue } from "./jobQueue.js";
 import { WORKBENCH_REPLY_GUIDANCE } from "./workbenchReplyGuidance.js";
 import { runTestCaseJob } from "./testCases/testCaseJobService.js";
 import type { Job, JobAttachment } from "../types.js";
@@ -38,6 +41,12 @@ export interface WorkbenchWorkerDependencies {
   testCases: (id: string) => Promise<void>;
   event: (id: string, phase: string, text: string) => void;
   cancel?: (id: string, reset?: boolean) => Promise<string>;
+  release?: (id: string, targetBranch: string) => Promise<string>;
+}
+
+export function parseWorkbenchReleaseTarget(text: string): string | undefined {
+  const match = /^(?:请|帮我|请帮我)?\s*(?:将|把)?\s*(?:(?:本次|这次|当前|这个)(?:的)?(?:修改|改动|代码|提交))?\s*(?:合并|同步|发布)\s*(?:(?:本次|这次|当前|这个)(?:的)?(?:修改|改动|代码|提交))?\s*(?:到|至)\s*[`"']?([a-zA-Z0-9][a-zA-Z0-9_./-]*)[`"']?\s*(?:分支)?[。！!\s]*$/.exec(text.trim());
+  return match?.[1];
 }
 
 export const isWorkbenchCancellation = (text: string) => /^(?:请)?(?:取消|撤销)(?:这次|本次|当前|这个|本)?(?:任务|执行|任务执行)(?:吧)?[。！!\s]*$/.test(text.trim());
@@ -62,6 +71,21 @@ export function createWorkbenchWorker(deps: WorkbenchWorkerDependencies) {
       deps.update(id, { status: "planning", workbenchReset: false, workbenchExecutionStarted: current.workbenchExecutionStarted ?? Boolean(current.workbenchHasCodeChanges || current.workbenchInputSource === "implementation" || (current.commitSha && current.commitSha !== current.workbenchBaseCommitSha)), error: undefined, message: "正在读取上下文…" });
       deps.event(id, "session_turn", "正在读取需求、对话和项目代码");
       try {
+        const releaseTarget = parseWorkbenchReleaseTarget(latestInput);
+        if (releaseTarget) {
+          // Branch operations must never become an agent implementation plan.
+          deps.update(id, { status: current.status, workbenchProcessedInputs: inputCount });
+          try {
+            const message = deps.release ? await deps.release(id, releaseTarget) : "请使用任务的发版分支合并功能处理指定分支。";
+            deps.update(id, { message });
+            appendAssistant(id, message);
+          } catch (error) {
+            const message = `发版合并未完成：${error instanceof Error ? error.message : String(error)}。任务代码已保留，请查看合并记录后重试。`;
+            deps.update(id, { status: current.status, message });
+            appendAssistant(id, message);
+          }
+          continue;
+        }
         if ((isWorkbenchCancellation(latestInput) || isWorkbenchResetRequest(latestInput)) && deps.cancel) {
           const reply = await deps.cancel(id, isWorkbenchResetRequest(latestInput));
           deps.update(id, { workbenchProcessedInputs: inputCount });
@@ -145,6 +169,17 @@ export function buildWorkbenchRequest(job: Job): string {
 const worker = createWorkbenchWorker({
   get: getJob, update: updateJob, execute: processJob, testCases: runTestCaseJob,
   event: (id, phase, text) => { appendJobEvent(id, { type: "stage", phase, text }); },
+  release: async (id, targetBranch) => {
+    const job = getJob(id)!;
+    const defaultBranch = getProject(job.projectId).defaultBranch;
+    if (job.workbenchAnalysisOnly) return "当前为仅分析模式，不会执行分支合并。请先在工作台完成代码修改和 Review。";
+    if (!job.mergedToDefaultAt || job.status !== "completed") return `当前修改尚未完成合并。点击“完成”会先合并到默认分支 ${defaultBranch}，不会直接合并到 ${targetBranch}。请先 Review 并完成，再发送“合并本次修改到${targetBranch}分支”，通过发版功能应用本次提交。`;
+    if (targetBranch === defaultBranch) return `本次修改已经合并到默认分支 ${defaultBranch}，无需重复合并。`;
+    if (job.releaseMerges?.some(record => record.targetBranch === targetBranch && record.status === "completed")) return `本次修改已经合并到 ${targetBranch}，无需重复执行。`;
+    const { done } = jobQueue.enqueueAndWait(id, queuedId => mergeCompletedJobToBranch(queuedId, targetBranch));
+    await done;
+    return `已通过发版合并功能，将本次提交应用到 ${targetBranch}。可在任务活动中查看结果。`;
+  },
   cancel: async (id, reset) => {
     const job = getJob(id)!;
     if (job.mergedToDefaultAt) {

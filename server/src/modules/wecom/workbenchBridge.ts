@@ -7,7 +7,6 @@ import type { WecomConfig } from "./config.js";
 import { canModifyCode } from "./permissions.js";
 import { splitMessage } from "./replies.js";
 import { parseCommand } from "./commands.js";
-import { quickReply } from "./intentRouter.js";
 import { createWorkbenchCommands } from "./workbenchCommands.js";
 
 interface Account { id: string; username: string; display_name: string; tapd_owner_name: string }
@@ -96,7 +95,7 @@ export function createWorkbenchBridge(options: WecomConfig, send: (target: strin
         if (!target || accountForSender(options, target)?.id !== job.workbenchUserId) continue;
         const text = review
           ? `**代码已完成，请进行 Review**\n${title(job)}\n任务编号：\`${job.jobId}\`\n\n请到任务工作台查看代码 Diff。需要调整可继续对话；审查通过后点击「完成」合并代码。${link(job)}`
-          : `**任务需要你补充信息**\n${title(job)}\n任务编号：\`${job.jobId}\`\n\n${question(job)}${link(job)}\n\n可在工作台回复，也可私聊小迪发送「补充 ${job.jobId}：答案」。只有一个待补充任务时，可直接回复答案。`;
+          : `**任务需要你补充信息**\n${title(job)}\n任务编号：\`${job.jobId}\`\n\n${question(job)}${link(job)}\n\n可在工作台回复，也可私聊小迪发送「补充 ${job.jobId}：答案」。使用 /list 获取 T编号后，也可发送「/reply T编号 答案」。`;
         getDatabase().prepare(`INSERT OR IGNORE INTO wecom_workbench_notices
           (bot_id, job_id, signature, target_id, chunks) VALUES (?, ?, ?, ?, ?)`)
           .run(options.botId, job.jobId, review || workbenchQuestionSignature(job), target, JSON.stringify(splitMessage(text)));
@@ -142,9 +141,12 @@ export function createWorkbenchBridge(options: WecomConfig, send: (target: strin
       if (stopped) return;
       const fixed = await fixedCommands(sender, content, context);
       if (fixed !== undefined) return fixed;
-      const command = parseCommand(content);
       const listRequested = /^(?:工作台)?待补充(?:任务)?$/.test(content.trim());
+      const command = parseCommand(content);
       const explicit = command.action === "clarify";
+      // A delivered notification is not authorization to consume the user's next chat.
+      // Only an explicit reply with a task identifier can target a workbench session.
+      if (!listRequested && !explicit) return;
       const namedJob = explicit && command.jobId ? getJob(command.jobId) : undefined;
       // Keep the original bot's own task replies in its original handler.
       if (explicit && command.jobId && namedJob && !namedJob.workbenchSession) return;
@@ -153,35 +155,19 @@ export function createWorkbenchBridge(options: WecomConfig, send: (target: strin
       if (!account) return listRequested || (explicit && namedJob?.workbenchSession) ? "你的企微身份尚未绑定有效的工作台账号，请联系管理员配置。" : undefined;
       const pending = pendingFor(account);
       if (listRequested) return pending.length ? list(pending) : "当前没有工作台待补充任务。";
-      if (explicit && !command.jobId && !pending.length) return;
-      const plain = command.action === "auto" && !quickReply(command.text) && !/https?:\/\//.test(content);
-      if (!explicit && (!plain || !pending.length)) return;
-      if (plain || (explicit && !command.jobId)) {
-        const sessions = getDatabase().prepare("SELECT active_job_id FROM wecom_sessions WHERE owner_id = ? AND target_id = ?")
-          .all(`wecom:${options.botId}:${sender}`, sender) as { active_job_id: string | null }[];
-        if (sessions.some(session => {
-          const active = session.active_job_id ? getJob(session.active_job_id) : undefined;
-          return active && !["completed", "failed", "cancelled"].includes(active.status);
-        })) return `你还有企微会话任务，请用完整任务编号指定工作台补充。\n\n${list(pending)}`;
-      }
+      if (explicit && !command.jobId) return pending.length ? `请指定要补充的任务，发送 /reply T编号 答案，或使用完整任务编号。\n\n${list(pending)}` : undefined;
       if (explicit && command.jobId && (!namedJob || namedJob.workbenchUserId !== account.id || recipient(options, namedJob) !== sender)) return "任务不存在或不属于当前绑定的工作台账号。";
-      const job = explicit && command.jobId ? namedJob : pending.length === 1 ? pending[0] : undefined;
+      const job = namedJob;
       if (!job) return pending.length ? `有多个待补充任务，请指定任务编号。\n\n${list(pending)}` : "当前没有工作台待补充任务。";
       if (!workbenchNeedsSupplement(job)) return "该任务当前已不需要补充，可能已从工作台回复。请查看工作台进度。";
-      if (!explicit) {
-        const delivered = getDatabase().prepare(`SELECT 1 FROM wecom_workbench_notices
-          WHERE bot_id = ? AND job_id = ? AND signature = ? AND target_id = ? AND delivered = 1 AND sent_chunks > 0`)
-          .get(options.botId, job.jobId, workbenchQuestionSignature(job), sender);
-        if (!delivered) return;
-      }
       if (!canModifyCode(options, sender)) return "该账号尚未开通企微代码执行权限，补充后会继续修改代码，请联系管理员开通，或到工作台补充。";
       if (context.voice || context.images) return "补充后会继续执行，请使用文字回复；图片请在工作台上传。";
-      const answer = explicit ? command.text : content.trim();
+      const answer = explicit ? command.text : "";
       if (!answer.trim()) return "请填写需要补充的答案。";
       // No await between the current question check and consumption. The worker
       // clears needsInput synchronously, so replies from both entry points cannot consume it twice.
       receive(job.jobId, answer);
-      return `已将补充写入原任务「${title(job)}」，会继续使用原工作区执行。Review 和完成仍在工作台处理。`;
+      return `已将补充写入原任务「${title(job)}」，继续原会话和原阶段。可在工作台查看，也可通过 /review、/done 操作。`;
     },
   };
 }

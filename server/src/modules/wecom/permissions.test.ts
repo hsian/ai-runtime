@@ -41,6 +41,7 @@ test("all write commands are denied before any topic or job mutation for a read-
   const commands: Command[] = [
     { action: "plan", text: "改成蓝色", topicId: "new" }, { action: "clarify", text: "蓝色" },
     { action: "execute" }, { action: "merge" }, { action: "discard" }, { action: "revert" },
+    { action: "release", targetBranch: "20260930", topicId: "new" },
   ];
   for (const [index, command] of commands.entries()) {
     await assert.rejects(dispatchCommand(session, command, `deny-${index}`, options), error => error instanceof Error && error.message === CODE_PERMISSION_DENIED);

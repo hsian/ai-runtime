@@ -105,9 +105,16 @@ test("another WeCom user cannot reply to the workbench owner's question", async 
   assert.equal(state.received.length, 0);
   assert.equal(getJob(job.jobId)?.workbenchNeedsInput, true);
 });
-test("single delivered question accepts natural reply in the original job, duplicate answer is rejected", async () => {
+test("a delivered question never captures ordinary chat; explicit task replies still work", async () => {
   reset(); const job = make(); const state = setup(); state.bridge.reconcile(); await state.bridge.flush();
-  assert.match((await state.bridge.reply("alice-wecom", "三分钟"))!, /原任务/);
+  for (const text of ["三分钟", "你解释下后端新建任务时候，前缀要加上后端 -", "这个看板怎么用", "好的"]) {
+    assert.equal(await state.bridge.reply("alice-wecom", text), undefined);
+  }
+  assert.equal(state.received.length, 0);
+  assert.equal(getJob(job.jobId)?.workbenchNeedsInput, true);
+  assert.match((await state.bridge.reply("alice-wecom", "补充：三分钟"))!, /请指定/);
+  assert.equal(state.received.length, 0);
+  assert.match((await state.bridge.reply("alice-wecom", `补充 ${job.jobId}：三分钟`))!, /原任务/);
   assert.deepEqual(state.received, [{ id: job.jobId, text: "三分钟" }]);
   assert.equal(getJob(job.jobId)?.worktreePath, "/isolated/task");
   assert.match((await state.bridge.reply("alice-wecom", `补充 ${job.jobId}：五分钟`))!, /不需要补充/);
@@ -115,7 +122,7 @@ test("single delivered question accepts natural reply in the original job, dupli
 });
 test("multiple pending workbench jobs require an explicit full task ID", async () => {
   reset(); make(); const second = make(); const state = setup(); state.bridge.reconcile(); await state.bridge.flush();
-  assert.match((await state.bridge.reply("alice-wecom", "三分钟"))!, /多个/);
+  assert.equal(await state.bridge.reply("alice-wecom", "三分钟"), undefined);
   assert.equal(state.received.length, 0);
   await state.bridge.reply("alice-wecom", `补充 ${second.jobId}：三分钟`);
   assert.equal(state.received[0].id, second.jobId);

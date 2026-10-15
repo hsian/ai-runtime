@@ -1,5 +1,15 @@
 # Enterprise WeChat integration
 
+Ordinary conversation supports a `release` intent for explicitly requested
+merges of existing changes into a named branch. The tool-free classifier extracts
+the topic, bound source job and literal target branch from varied wording. It
+does not create a code plan or run Git. Missing or ambiguous tasks/branches ask for
+clarification. `releaseConversationJob` rechecks code permission, session binding,
+ownership, topic, completed default merge, source commit, revert and duplicate
+records, and the remote branch list before using the same queued
+`mergeCompletedJobToBranch` service as the Web release action. Questions and
+negated requests remain non-mutating; voice release requests require text.
+
 ## Workbench clarification inbox (小迪)
 
 Private workbench commands bypass model intent routing. Send `/help`
@@ -15,6 +25,9 @@ return a migration hint without invoking the model or changing task state.
 resolved Bugs remain listed until acceptance/closure.
 Number mappings persist per bot/account and never retarget after reordering.
 Task ownership is read back from TAPD for every operation.
+Workbench supplements require `/reply T1 内容` or `补充 完整任务编号：内容`.
+Ordinary chat remains in the bot conversation even after a clarification notice
+has been delivered and only one workbench task is waiting for input.
 
 `/analyze` and its follow-up replies cannot execute code, even if the model
 returns an implementation decision. `/start` explicitly enables code changes;

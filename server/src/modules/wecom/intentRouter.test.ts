@@ -23,6 +23,40 @@ after(() => { closeDatabase(); rmSync(directory, { recursive: true, force: true 
 
 const session = store.getSession("bot", "alice", "alice", "b2b-composite");
 
+test("natural branch merge expressions produce a release command for a bound completed task", async () => {
+  const local = store.getSession("bot", "natural-release", "alice", "b2b-composite");
+  const job = jobs.createJob({ prompt: "修复登录按钮", ownerId: local.owner_id, conversationId: local.conversation_id, taskMode: "code" });
+  jobs.updateJob(job.jobId, { status: "completed", mergedToDefaultBranch: "test", mergedToDefaultAt: "2026-10-15", commitSha: "merged-code", sourceCommitSha: "merged-code" });
+  store.bindJob(local, job.jobId);
+  for (const text of ["合并到20260930", "把这次修改合并到20260930", "这次修复同步到20260930分支", "麻烦将登录修复带到20260930", "把本次提交应用到20260930分支"]) {
+    const result = await resolveIntent(parseCommand(text), local, async input => {
+      const payload = JSON.parse(input);
+      assert.equal(payload.mergeCandidates[0].jobId, job.jobId);
+      return JSON.stringify({ intent: "release", relation: "related", topicId: local.conversation_id, jobId: job.jobId, targetBranch: "20260930", reply: "", prompt: "" });
+    });
+    assert.deepEqual(result, { action: "release", topicId: local.conversation_id, jobId: job.jobId, targetBranch: "20260930" });
+  }
+  const model = (targetBranch: string, jobId = job.jobId, topicId = local.conversation_id) => async () => JSON.stringify({ intent: "release", relation: "related", topicId, jobId, targetBranch, reply: "", prompt: "" });
+  assert.equal((await resolveIntent(parseCommand("合并到20260930"), local, model("release/20260930"))).action, "chat", "must not invent a branch prefix");
+  assert.equal((await resolveIntent(parseCommand("合并到发版分支"), local, model(""))).action, "chat");
+  assert.equal((await resolveIntent(parseCommand("合并到20260930"), local, model("20260930", "foreign-job"))).action, "chat");
+  assert.equal((await resolveIntent(parseCommand("合并到20260930"), local, model("20260930", job.jobId, "foreign-topic"))).action, "chat");
+  const second = jobs.createJob({ prompt: "调整登录提示", ownerId: local.owner_id, conversationId: local.conversation_id, taskMode: "code" });
+  jobs.updateJob(second.jobId, { status: "completed", mergedToDefaultBranch: "test", sourceCommitSha: "second-code" });
+  store.bindJob(local, second.jobId);
+  const ambiguous = await resolveIntent(parseCommand("这次合并到20260930"), local, async () => JSON.stringify({ intent: "release", relation: "related", topicId: local.conversation_id, targetBranch: "20260930", reply: "", prompt: "" }));
+  assert.equal(ambiguous.action, "chat");
+  if (ambiguous.action === "chat") assert.match(ambiguous.reply, /哪一次/);
+});
+
+test("branch merge questions and negation retain non-mutating intents", async () => {
+  for (const text of ["为什么合并到20260930失败", "先别合并到20260930", "如果合并到20260930会怎样"]) {
+    const result = await resolveIntent(parseCommand(text), session, async () => JSON.stringify({ intent: "chat", reply: "这里只讨论合并，不执行。", prompt: "", relation: "related" }));
+    assert.equal(result.action, "chat");
+  }
+  assert.match(routingAgentOptions().systemPrompt, /不是 release/);
+});
+
 test("intent classification uses locally validated JSON without native CLI schema requirements", () => {
   const options = routingAgentOptions();
   assert.equal(options.mode, "conversation");

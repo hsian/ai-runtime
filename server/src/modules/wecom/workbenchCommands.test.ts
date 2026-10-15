@@ -89,7 +89,7 @@ test("list only includes assigned tasks; analyze/start/reply use one account-own
   assert.doesNotMatch(list, /别人的任务/);
   assert.doesNotMatch(list, /已完成任务|已关闭的 Bug/);
   assert.match(list, /待验收的 Bug/);
-  assert.match((await commands("alice-wecom", "/analyze T1"))!, /只读分析/);
+  assert.match((await commands("alice-wecom", "/analyze T1"))!, /已开始分析，不修改代码/);
   const job = listJobs().find(item => item.workbenchUserId === alice.id)!;
   assert.equal(job.workbenchAnalysisOnly, true);
   assert.equal(job.tapdTask?.taskId, "11");

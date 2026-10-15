@@ -20,6 +20,7 @@ import { getDialogue, setDialogue } from "./dialogueStore.js";
 import { milestoneSignature, splitMessage } from "./replies.js";
 import { queueNotice, pendingNotices, acknowledgeChunk } from "./sessionStore.js";
 import { canModifyCode, requireCommandPermission } from "./permissions.js";
+import { releaseConversationJob } from "./releaseMerge.js";
 import { runTestCaseJob } from "../../services/testCases/testCaseJobService.js";
 
 function acknowledgeMilestone(job: Job, session: WecomSession): void {
@@ -84,7 +85,7 @@ export async function dispatchCommand(session: WecomSession, command: Command, m
   onJob?: (jobId: string) => void, messageAttachments: JobAttachment[] = []): Promise<string> {
   const revertSource = getDialogue(session)?.sourceJobId;
   const text = await dispatchCommandBody(session, command, messageKey, options, onJob, messageAttachments);
-  if (!["execute", "cancel", "status", "merge", "discard", "revert"].includes(command.action)) return text;
+  if (!["execute", "cancel", "status", "merge", "discard", "revert", "release"].includes(command.action)) return text;
   const id = ("jobId" in command ? command.jobId : undefined) ?? revertSource ?? session.active_job_id;
   const job = id ? getJob(id) : undefined;
   return job?.ownerId === session.owner_id && getBinding(job.jobId, session.session_key) ? withEngineFooter(job, text) : text;
@@ -98,6 +99,11 @@ async function dispatchCommandBody(session: WecomSession, command: Command, mess
     if (previous) await cleanupObsoletePlan(session, previous);
   }
   if (command.topicId) selectTopic(session, command.topicId, command.topicTitle);
+  if (command.action === "release") {
+    const text = await releaseConversationJob(session, command, options);
+    rememberMessage(messageKey);
+    return text;
+  }
   if (command.action === "clarify" && command.jobId) {
     const job = currentJob(session, command.jobId);
     if (job.conversationId) selectTopic(session, job.conversationId);

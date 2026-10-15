@@ -3,9 +3,10 @@ import { runAgent } from "../../services/agent/index.js";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { getBinding, getChatHistory, getConversationHistory } from "./sessionStore.js";
+import { getBinding, getChatHistory, getConversationHistory, listBindings } from "./sessionStore.js";
 import type { WecomSession } from "./types.js";
 import type { Command } from "./commands.js";
+import type { Job } from "../../types.js";
 import { topicCandidates } from "./topicStore.js";
 import { getDialogue, setDialogue } from "./dialogueStore.js";
 import { formatJob } from "./replies.js";
@@ -63,7 +64,13 @@ export async function resolveIntent(command: Command, session: WecomSession, mod
     const available = topicCandidates(session);
     const topics = command.topicId ? available.filter(topic => topic.id === command.topicId) : available;
     if (command.topicId && !topics.length) throw new Error("Unknown linked topic");
-    const payload = { message: text,
+    const mergeCandidates = listBindings().filter(binding => binding.session_key === session.session_key)
+      .map(binding => getJob(binding.job_id)).filter((item): item is Job => Boolean(item && item.ownerId === session.owner_id && item.taskMode === "code"
+        && !item.revertedFromDefaultAt && topics.some(topic => topic.id === item.conversationId)))
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(0, 30)
+      .map(item => ({ jobId: item.jobId, topicId: item.conversationId, prompt: item.prompt.slice(0, 600), status: item.status,
+        mergedToDefaultBranch: item.mergedToDefaultBranch, commitSha: item.sourceCommitSha || item.commitSha }));
+    const payload = { message: text, mergeCandidates,
       history: getConversationHistory(contextSession).map(turn => ({ role: turn.role, content: turn.content.slice(0, 600) })),
       lastQuestion: active?.clarificationQuestions ?? (selection ? dialogue?.question : undefined),
       topics: topics.map(topic => ({ id: topic.id, title: topic.title, current: topic.current,
@@ -87,9 +94,21 @@ export async function resolveIntent(command: Command, session: WecomSession, mod
     }
     if (command.topicId) result.topicId = command.topicId;
     else if (selection) result.topicId = contextSession.conversation_id;
-    else if (result.relation === "new" && !["workflow", "revert", "clarify"].includes(result.intent)) result.topicId = "new";
+    else if (result.relation === "new" && !["workflow", "revert", "clarify", "release"].includes(result.intent)) result.topicId = "new";
     if (!result.topicId || result.relation === "uncertain") {
       return { action: "chat", reply: result.reply.trim() || "你指的是哪个页面或需求？我确认后再继续。" };
+    }
+    if (result.intent === "release") {
+      const topic = topics.find(item => item.id === result.topicId);
+      if (!topic) return { action: "chat", reply: "你要合并哪次修改？请说明对应的页面或任务。" };
+      const branch = result.targetBranch?.trim();
+      if (!branch || !text.includes(branch) || !/^[a-zA-Z0-9][a-zA-Z0-9_./-]*$/.test(branch)) return { action: "chat", reply: "你要合并到哪个分支？请提供完整分支名。" };
+      const candidates = mergeCandidates.filter(item => item.topicId === topic.id && item.status === "completed" && item.mergedToDefaultBranch && item.commitSha);
+      const source = result.jobId ? candidates.find(item => item.jobId === result.jobId) : candidates.length === 1 ? candidates[0] : undefined;
+      if (!source) return { action: "chat", topicId: topic.id, historySource: "task", reply: candidates.length > 1
+        ? `这个话题有多次修改，你要合并哪一次？\n${candidates.map(item => `${item.prompt.slice(0, 100)}\n任务编号：${item.jobId}`).join("\n\n")}`
+        : "这个话题还没有可发版的已完成修改。请先完成代码修改和默认分支合并。" };
+      return { action: "release", topicId: topic.id, jobId: source.jobId, targetBranch: branch };
     }
     if (result.intent === "revert") {
       const topic = topics.find(topic => topic.id === result.topicId);

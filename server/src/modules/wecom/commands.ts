@@ -2,10 +2,11 @@ export type Command = ({ action: "execute" | "status" | "cancel" | "merge" | "di
   | { action: "new" | "help" | "topics" | "identity" }
   | { action: "question" | "plan" | "test-case" | "clarify" | "auto"; text: string; jobId?: string }
   | { action: "revert"; jobId?: string }
+  | { action: "release"; targetBranch: string; jobId?: string }
   | { action: "chat"; reply: string; historySource?: "task" }) & { topicId?: string; topicTitle?: string; agentProvider?: "claude" | "codex"; projectId?: string };
 
 export function requiresTextConfirmation(command: Command): boolean {
-  return ["execute", "cancel", "merge", "discard", "revert"].includes(command.action);
+  return ["execute", "cancel", "merge", "discard", "revert", "release"].includes(command.action);
 }
 
 export function parseTaskPrefixes(raw: string): { text: string; agentProvider?: "codex"; projectId?: string } {

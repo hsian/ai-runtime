@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createWorkbenchWorker, parseWorkbenchDecision, isWorkbenchCancellation, isWorkbenchResetRequest, type WorkbenchWorkerDependencies } from "./workbenchSession.js";
+import { createWorkbenchWorker, parseWorkbenchDecision, parseWorkbenchReleaseTarget, isWorkbenchCancellation, isWorkbenchResetRequest, type WorkbenchWorkerDependencies } from "./workbenchSession.js";
 import type { Job } from "../types.js";
 
 const setup = () => {
@@ -17,6 +17,43 @@ const setup = () => {
   const addMessage = (text: string) => deps.update(job.jobId, { workbenchMessages: [...job.workbenchMessages!, { id: `input-${job.workbenchMessages!.length}`, role: "user", text, createdAt: "2026-10-13" }] });
   return { deps, executions, job: () => job, addMessage };
 };
+
+test("指定分支合并直接交给运行时，不调用模型或修改代码", async () => {
+  for (const input of ["合并本次修改到20260930分支", "请将本次修改合并到 release/20261015 分支", "同步到20260930分支"]) {
+    const state = setup();
+    state.addMessage(input);
+    state.deps.analyze = async () => { throw new Error("不能交给模型"); };
+    const targets: string[] = [];
+    state.deps.release = async (_id, target) => { targets.push(target); return "请先 Review 并合并到默认分支 test，之后再发版。"; };
+    await createWorkbenchWorker(state.deps).start("session-1");
+    assert.equal(targets.length, 1);
+    assert.equal(state.job().status, "awaiting_input");
+    assert.equal(state.executions.length, 0);
+    assert.match(state.job().workbenchMessages!.at(-1)!.text, /默认分支 test/);
+    assert.equal(state.job().worktreePath, "/isolated/task-1");
+  }
+  assert.equal(parseWorkbenchReleaseTarget("为什么合并到20260930分支失败了？"), undefined);
+  assert.equal(parseWorkbenchReleaseTarget("合并到test; rm分支"), undefined);
+});
+
+test("已完成任务的发版请求保留完成状态，失败也不退回代码执行", async () => {
+  const state = setup();
+  state.deps.update("session-1", { status: "completed", mergedToDefaultAt: "2026-10-15", commitSha: "merged-sha" });
+  state.addMessage("合并本次修改到20260930分支");
+  state.deps.analyze = async () => { throw new Error("不能重新分析代码"); };
+  let attempts = 0;
+  state.deps.release = async () => { if (++attempts === 1) throw new Error("目标分支不存在"); return "已发版合并"; };
+  const worker = createWorkbenchWorker(state.deps);
+  await worker.start("session-1");
+  assert.equal(state.job().status, "completed");
+  assert.match(state.job().workbenchMessages!.at(-1)!.text, /目标分支不存在/);
+  state.addMessage("合并本次修改到20260930分支");
+  await worker.start("session-1");
+  assert.equal(attempts, 2);
+  assert.equal(state.job().status, "completed");
+  assert.equal(state.job().commitSha, "merged-sha");
+  assert.equal(state.executions.length, 0);
+});
 
 test("对话内生成用例保留原代码模式和 Review，随后仍可修改代码", async () => {
   const state = setup(); let generations = 0;

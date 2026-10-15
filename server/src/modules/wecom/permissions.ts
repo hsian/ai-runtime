@@ -13,7 +13,7 @@ export function canModifyCode(options: WecomConfig, userId: string): boolean {
 
 export function requireCommandPermission(session: WecomSession, command: Command, options: WecomConfig): void {
   if (canModifyCode(options, session.user_id)) return;
-  if (["plan", "clarify", "execute", "revert", "merge", "discard"].includes(command.action)) {
+  if (["plan", "clarify", "execute", "revert", "merge", "discard", "release"].includes(command.action)) {
     throw new Error(CODE_PERMISSION_DENIED);
   }
   if (command.action !== "cancel") return;
