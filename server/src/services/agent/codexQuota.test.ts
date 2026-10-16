@@ -14,7 +14,18 @@ const fs = require('node:fs'); let input = '';
 process.stdin.on('data', chunk => input += chunk);
 process.stdin.on('end', () => {
   const emit = event => console.log(JSON.stringify(event));
-  if (input.includes('CASE_STDERR')) { console.error('Your credit balance is too low'); process.exitCode = 1; }
+  if (input.includes('CASE_COMPLETED_LINGER')) {
+    console.error('ERROR codex_models_manager::manager: failed to refresh available models: request timed out');
+    emit({type:'item.completed',item:{type:'agent_message',text:'过程说明，不是最终答案'}});
+    emit({type:'item.completed',item:{type:'agent_message',text:'{"intent":"chat","reply":"最终回答"}'}});
+    emit({type:'turn.completed'});
+    setInterval(() => {}, 1000);
+    setTimeout(() => process.exit(0), 4000);
+  } else if (input.includes('CASE_EMPTY_LINGER')) {
+    emit({type:'turn.completed'});
+    setInterval(() => {}, 1000);
+    setTimeout(() => process.exit(0), 4000);
+  } else if (input.includes('CASE_STDERR')) { console.error('Your credit balance is too low'); process.exitCode = 1; }
   else if (input.includes('CASE_TOOL')) {
     emit({type:'item.completed',item:{type:'command_execution',command:'check',status:'failed',exit_code:1,aggregated_output:'usage_limit_reached'}});
     emit({type:'item.completed',item:{type:'agent_message',text:'done'}});
@@ -37,7 +48,7 @@ await writeFile(cli, process.platform === "win32"
 Object.assign(process.env, { GIT_ACCESS_TOKEN: "test-only", CODEX_CLI_PATH: cli, CODEX_MODEL: "", CODEX_PROFILE: "",
   CODEX_ENABLE_SYSTEM_PROXY: "false", CODEX_DISABLE_WEBSOCKETS: "false", CODEX_TIMEOUT_MS: "10000" });
 const { runCodexAgent } = await import("./codexAgentService.js");
-after(() => rm(root, { recursive: true, force: true }));
+after(() => rm(root, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 }));
 
 test("JSON quota errors trigger continuation even with a zero process exit code", async () => {
   let calls = 0;
@@ -63,4 +74,22 @@ test("tool quota text and recovered transport errors do not cause fallback", asy
 test("a generic 429 turn failure remains an error, even on exit zero", async () => {
   await assert.rejects(runCodexAgent(root, "CASE_RATE", undefined, undefined, { mode: "question" }), error =>
     error instanceof Error && !(error instanceof CodexQuotaError) && /429/.test(error.message));
+});
+
+test("a completed tool-free turn returns its final answer even when model refresh keeps the CLI alive", async () => {
+  const response = await runCodexAgent(root, "CASE_COMPLETED_LINGER", undefined, undefined, { mode: "conversation", disableTools: true, timeoutMs: 2000 });
+  assert.deepEqual(response, { summary: '{"intent":"chat","reply":"最终回答"}' });
+});
+
+test("completion without an answer still times out with a human-readable error", async () => {
+  await assert.rejects(runCodexAgent(root, "CASE_EMPTY_LINGER", undefined, undefined, { mode: "conversation", disableTools: true, timeoutMs: 1000 }), error => {
+    assert.ok(error instanceof Error);
+    assert.match(error.message, /模型连接或响应超时/);
+    assert.doesNotMatch(error.message, /stderr|turn.completed|models_manager/);
+    return true;
+  });
+});
+
+test("code execution still waits for the CLI exit, even when a turn completed event was emitted", async () => {
+  await assert.rejects(runCodexAgent(root, "CASE_COMPLETED_LINGER", undefined, undefined, { mode: "execute", timeoutMs: 1000 }), /Codex 处理超时/);
 });

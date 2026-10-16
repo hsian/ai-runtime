@@ -49,7 +49,11 @@ function killChildProcess(child: ChildProcess): void {
 
   if (IS_WINDOWS) {
     try {
-      spawn("taskkill", ["/F", "/PID", String(child.pid), "/T"], { shell: true, windowsHide: true });
+      const terminator = spawn("taskkill", ["/F", "/PID", String(child.pid), "/T"], {
+        shell: false, windowsHide: true, stdio: "ignore",
+      });
+      terminator.on("error", () => child.kill("SIGTERM"));
+      terminator.unref();
     } catch {
       child.kill("SIGTERM");
     }
@@ -170,10 +174,12 @@ function runCodexCommand(
   stdinText: string,
   jobId?: string,
   onEvent?: AgentEventHandler,
-  timeoutMs = config.CODEX_TIMEOUT_MS
+  timeoutMs = config.CODEX_TIMEOUT_MS,
+  finishOnCompletedTurn = false
 ): Promise<string> {
   return new Promise((resolve, reject) => {
     let aborted = false;
+    let settled = false;
     const child = spawn(config.CODEX_CLI_PATH, args, {
       cwd,
       shell: IS_WINDOWS,
@@ -195,8 +201,24 @@ function runCodexCommand(
     let stderr = "";
     let lastActivityAt = Date.now();
     let lastEventLabel = "process started";
+    const finish = (output: string, terminate = false) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (jobId) unregisterAgentProcess(jobId);
+      if (terminate) killChildProcess(child);
+      resolve(output);
+    };
+    const fail = (error: Error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (jobId) unregisterAgentProcess(jobId);
+      reject(error);
+    };
 
     child.stdout.on("data", (chunk: Buffer) => {
+      if (settled) return;
       lastActivityAt = Date.now();
       buffer += chunk.toString();
       const lines = buffer.split("\n");
@@ -208,37 +230,52 @@ function runCodexCommand(
         lastEventLabel = describeCodexLine(trimmed);
         const extracted = handleCodexJsonLine(trimmed, onEvent, parseState);
         if (extracted) streamedText += extracted;
+        try {
+          const event = JSON.parse(trimmed) as Record<string, unknown>;
+          const item = asRecord(event.item);
+          if (event.type === "item.completed" && item?.type === "agent_message") {
+            const text = extractText(item).trim();
+            if (text) finalSummary = text;
+          }
+          // A tool-free response is complete at the protocol boundary. The CLI
+          // may still be waiting on unrelated background model refresh requests.
+          if (finishOnCompletedTurn && event.type === "turn.completed" && !parseState.failure && finalSummary) {
+            finish(finalSummary, true);
+            return;
+          }
+        } catch { /* Non-JSON output is ignored by the stream parser as before. */ }
       }
     });
 
     child.stderr.on("data", (chunk: Buffer) => {
+      if (settled) return;
       lastActivityAt = Date.now();
       lastEventLabel = "stderr";
       stderr += chunk.toString();
     });
 
     const timer = setTimeout(() => {
+      if (settled) return;
       aborted = true;
       killChildProcess(child);
       const idleSeconds = Math.round((Date.now() - lastActivityAt) / 1000);
       const stderrTail = stderr.trim().slice(-300);
       const detail = `最后活动 ${idleSeconds}s 前，最后事件: ${lastEventLabel}`;
       const stderrDetail = stderrTail ? `，stderr: ${stderrTail}` : "";
-      reject(new Error(`执行超时（${timeoutMs}ms，${detail}${stderrDetail}）`));
+      console.warn(`[AI Runtime] Codex 执行超时（${timeoutMs}ms，${detail}${stderrDetail}）`);
+      fail(new Error(finishOnCompletedTurn ? "模型连接或响应超时，请稍后重试。" : "Codex 处理超时，已有工作区修改已保留，请稍后重试。"));
     }, timeoutMs);
 
     child.on("error", (err) => {
-      clearTimeout(timer);
-      if (jobId) unregisterAgentProcess(jobId);
-      reject(new Error(`无法启动 Codex CLI: ${err.message}。请确认 CODEX_CLI_PATH 配置可用，并已完成 codex login。`));
+      fail(new Error(`无法启动 Codex CLI: ${err.message}。请确认 CODEX_CLI_PATH 配置可用，并已完成 codex login。`));
     });
 
     child.on("close", (code, signal) => {
-      clearTimeout(timer);
-      if (jobId) unregisterAgentProcess(jobId);
+      // A previous process must not unregister a newer turn's process.
+      if (settled) return;
 
       if (aborted || signal === "SIGTERM" || signal === "SIGKILL") {
-        reject(new AgentAbortedError());
+        fail(new AgentAbortedError());
         return;
       }
 
@@ -250,13 +287,13 @@ function runCodexCommand(
       }
 
       if (code === 0 && !parseState.failure) {
-        resolve(finalSummary || streamedText.trim());
+        finish(finalSummary || streamedText.trim());
         return;
       }
 
       const detail = [parseState.failure, stderr.trim()].filter(Boolean).join("\n") || streamedText.trim() || `exit code ${code}`;
       const message = `Codex CLI 执行失败: ${detail.slice(0, 500)}`;
-      reject(isCodexQuotaMessage([parseState.failure, stderr].filter(Boolean).join("\n")) ? new CodexQuotaError(message) : new Error(message));
+      fail(isCodexQuotaMessage([parseState.failure, stderr].filter(Boolean).join("\n")) ? new CodexQuotaError(message) : new Error(message));
     });
 
     child.stdin.write(stdinText);
@@ -390,7 +427,8 @@ export async function runCodexAgent(
       `${systemPrompt}\n\n${isReadOnly ? "" : `${CODEX_EXECUTION_PROMPT}\n\n`}${userPrompt}`,
       options?.jobId,
       onEvent,
-      options?.timeoutMs ?? config.CODEX_TIMEOUT_MS
+      options?.timeoutMs ?? config.CODEX_TIMEOUT_MS,
+      isConversation
     );
 
     if (structuredOutputPath) {
