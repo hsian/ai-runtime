@@ -52,13 +52,33 @@ const commands = createWorkbenchCommands({ botId: "test", secret: "test", projec
 test("help prints every command; unknown syntax and groups never invoke the model or expose tasks", async () => {
   assert.equal(await commands("unknown", "/help"), WORKBENCH_COMMAND_HELP);
   assert.match((await commands("unknown", "/heip"))!, /未知工作台命令/);
-  for (const command of ["use", "list", "analyze", "start", "reply", "review", "done"]) assert.ok(WORKBENCH_COMMAND_HELP.includes(`/${command}`));
+  for (const command of ["use", "list", "analyze", "start", "reply", "review", "done", "model"]) assert.ok(WORKBENCH_COMMAND_HELP.includes(`/${command}`));
   assert.match((await commands("alice-wecom", "/install T1"))!, /未知/);
   assert.match((await commands("alice-wecom", "/list", { group: true }))!, /私聊/);
   assert.equal(await commands("alice-wecom", "普通聊天"), undefined);
   assert.match((await commands("alice-wecom", "-start T1"))!, /已改为.*前缀/);
   assert.match((await commands("alice-wecom", "/start"))!, /用法：\/start/);
   assert.equal(received.length, 0);
+});
+
+test("model is a read-only fixed command, scoped to the sender and reports fallback without assuming the next engine", async () => {
+  const before = received.length;
+  const empty = (await commands("model-user", "/model"))!;
+  assert.match(empty, /默认引擎：Codex/);
+  assert.match(empty, /没有任务执行记录/);
+  assert.match((await commands("model-user", "/model extra"))!, /不需要参数/);
+  assert.match((await commands("model-user", "/model", { group: true }))!, /私聊/);
+  assert.match((await commands("model-user", "/model", { voice: true }))!, /文字/);
+  const job = createJob({ prompt: "我的模型查询任务", ownerId: "wecom:test:model-user", taskMode: "question" });
+  updateJob(job.jobId, { status: "completed", agentProvider: "claude" });
+  const latest = (await commands("model-user", "/MODEL"))!;
+  assert.match(latest, /最近任务：我的模型查询任务\n引擎：Claude/);
+  assert.match(latest, /每次调用优先 Codex/);
+  assert.doesNotMatch((await commands("other-model-user", "/model"))!, /我的模型查询任务/);
+  updateJob(job.jobId, { status: "running", agentProvider: "codex" });
+  assert.match((await commands("model-user", "/model"))!, /当前任务：我的模型查询任务\n引擎：Codex/);
+  assert.equal(received.length, before, "query must not submit task input");
+  assert.equal(getJob(job.jobId)?.status, "running");
 });
 
 test("project/iteration choices support pages/search, stable IDs, and shared account preferences", async () => {

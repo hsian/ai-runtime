@@ -32,9 +32,9 @@ function frame(id: string, text?: string): MessageFrame {
 }
 
 test("mixed messages preserve text order, prefixes and every image", () => {
-  const message = frame("extract", "#codex");
+  const message = frame("extract", "#小程序");
   message.body!.mixed.msg_item.push({ msgtype: "text", text: { content: "复制合同这个不用置灰" } }, { msgtype: "image", image });
-  assert.deepEqual(extractMessageContent(message.body!), { text: "#codex\n复制合同这个不用置灰", images: [image, image] });
+  assert.deepEqual(extractMessageContent(message.body!), { text: "#小程序\n复制合同这个不用置灰", images: [image, image] });
   assert.deepEqual(extractMessageContent(frame("pure").body!), { text: "", images: [image] });
 });
 
@@ -80,7 +80,7 @@ test("the observed WeCom COS host downloads with its image key while unrelated C
   assert.equal(calls, 1);
 });
 
-test("handler passes actual image bytes with Codex and project selection and cleans temporary files", async () => {
+test("handler passes actual image bytes with project selection and cleans temporary files", async () => {
   const calls: string[] = [];
   const dispatched: Command[] = [];
   const paths: string[] = [];
@@ -99,19 +99,19 @@ test("handler passes actual image bytes with Codex and project selection and cle
       return "图片已传入任务";
     });
   try {
-    const mixed = frame("mixed-task", "#codex #小程序 修改：复制合同这个不用置灰");
+    const mixed = frame("mixed-task", "#小程序 修改：复制合同这个不用置灰");
     handler.handle(mixed); handler.handle(mixed);
     handler.handle(frame("pure-task"));
-    handler.handle(frame("prefix-image", "#codex"));
+    handler.handle(frame("prefix-image", "#小程序"));
     for (let count = 0; count < 100 && dispatched.length < 3; count++) await new Promise(resolve => setTimeout(resolve, 10));
     await new Promise(resolve => setTimeout(resolve, 20));
     assert.equal(downloads, 3);
     assert.equal(dispatched[0].action, "plan");
-    assert.equal(dispatched[0].agentProvider, "codex");
+    assert.equal("agentProvider" in dispatched[0], false);
     assert.equal(dispatched[0].projectId, "yuenongjiao-mini");
     assert.equal(dispatched[1].action, "question");
     assert.equal(dispatched[2].action, "question");
-    assert.equal(dispatched[2].agentProvider, "codex");
+    assert.equal(dispatched[2].projectId, "yuenongjiao-mini");
     assert.ok(paths.every(path => !existsSync(path)));
     assert.equal(calls.filter(text => text === "图片已传入任务").length, 3);
   } finally { handler.stop(); }
@@ -124,7 +124,7 @@ test("image failure stops routing and dispatch instead of submitting text alone"
   const handler = createMessageHandler(client, options, async () => { throw new Error("must not route"); },
     async (_session, content) => ({ command: parseCommand(content) }));
   try {
-    handler.handle(frame("failed", "#codex 修改：不用置灰"));
+    handler.handle(frame("failed", "修改：不用置灰"));
     for (let count = 0; count < 100 && !calls.some(text => text.includes("读取失败")); count++) await new Promise(resolve => setTimeout(resolve, 10));
     assert.match(calls.at(-1)!, /图片读取失败.*下载或解密.*未提交任务/);
     assert.doesNotMatch(calls.at(-1)!, /secret|must not route/);
@@ -136,7 +136,7 @@ test("job bridge persists image attachments independently of the message tempora
   const temporary = "12345678-1234-1234-1234-123456789abc";
   const attachments = saveImageBuffers(temporary, [{ name: "screenshot.png", mime: "image/png", buffer: png }]);
   let jobId = "";
-  await assert.rejects(dispatchCommand(session, { action: "plan", text: "复制合同这个不用置灰", agentProvider: "codex" }, "image-bridge", options,
+  await assert.rejects(dispatchCommand(session, { action: "plan", text: "复制合同这个不用置灰" }, "image-bridge", options,
     id => { jobId = id; throw new Error("stop before external execution"); }, attachments), /stop before external execution/);
   rmSync(join(directory, "uploads", temporary), { recursive: true });
   const job = getJob(jobId)!;

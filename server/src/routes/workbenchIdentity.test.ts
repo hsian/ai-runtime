@@ -14,7 +14,7 @@ const { authMiddleware, createUser } = await import("../services/auth.js");
 const { clientIdentityMiddleware, getClientIdentity } = await import("../services/clientIdentity.js");
 const { authRouter } = await import("./auth.js");
 const { jobsRouter } = await import("./jobs.js");
-const { createJob, updateJob } = await import("../services/jobStore.js");
+const { createJob, updateJob, deleteJob } = await import("../services/jobStore.js");
 initDatabase();
 const alice = createUser({ username: "alice", displayName: "Alice", tapdOwnerName: "Alice", password: "test-password", role: "member" });
 createUser({ username: "bobby", displayName: "Bob", tapdOwnerName: "Bob", password: "test-password", role: "member" });
@@ -50,6 +50,87 @@ test("same browser with another login cannot read or continue another user's wor
 test("anonymous workbench creation cannot spoof the logged in account", async () => {
   const response = await fetch(`${base}/api/jobs/workbench`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ prompt: "spoof", workbenchUserId: alice.id }) });
   assert.equal(response.status, 401);
+});
+
+test("artifact routes retain account authorization after being split into a child router", async () => {
+  const job = createJob({ prompt: "private artifacts", ownerId: "artifact-browser", projectId: "b2b-composite" });
+  updateJob(job.jobId, { workbenchSession: true, workbenchUserId: alice.id, status: "awaiting_input" });
+  const ownerCookie = await login("alice");
+  const otherCookie = await login("bobby");
+  const routes = [
+    ["GET", "diff", 404],
+    ["GET", "mini-program-preview", 404],
+    ["GET", "attachments/0", 404],
+    ["POST", "mini-program-preview", 400],
+    ["POST", "mini-program-upload", 400],
+  ] as const;
+  for (const [method, suffix, ownerStatus] of routes) {
+    const url = `${base}/api/jobs/${job.jobId}/${suffix}`;
+    assert.equal((await fetch(url, { method, headers: { Cookie: otherCookie } })).status, 404, suffix);
+    assert.equal((await fetch(url, { method, headers: { Cookie: ownerCookie } })).status, ownerStatus, suffix);
+    assert.equal((await fetch(`${base}/api/jobs/missing-artifact-task/${suffix}`, { method, headers: { Cookie: ownerCookie } })).status, 404, suffix);
+  }
+});
+
+test("workbench list omits conversation bodies and scoped details never read other projects or accounts", async () => {
+  const fixture = createJob({ prompt: "summary fixture", projectId: "b2b-composite", conversationId: "scoped-query", ownerId: "different-browser" });
+  updateJob(fixture.jobId, { workbenchSession: true, workbenchUserId: alice.id, status: "awaiting_input", workbenchMessages: [{ id: "m1", role: "user", text: "conversation-title-" + "private-message-body".repeat(300), createdAt: "now" }] });
+  const cookie = await login("alice");
+  const list = await fetch(`${base}/api/jobs/workbench/jobs`, { headers: { Cookie: cookie } });
+  const data = await list.json() as { jobs: Array<{ jobId: string; workbenchMessages?: unknown; conversationTitle: string; taskState?: unknown }> };
+  const summary = data.jobs.find(job => job.jobId === fixture.jobId)!;
+  assert.equal(summary.workbenchMessages, undefined);
+  assert.ok(summary.taskState);
+  assert.equal(summary.conversationTitle.length, 60);
+  assert.equal(JSON.stringify(summary).includes("private-message-body".repeat(20)), false);
+  const path = `${base}/api/jobs/workbench/conversations/scoped-query?projectId=b2b-composite`;
+  const detail = await (await fetch(path, { headers: { Cookie: cookie } })).json() as { jobs: { jobId: string; workbenchMessages: unknown[] }[] };
+  assert.equal(detail.jobs[0].jobId, fixture.jobId);
+  assert.equal(detail.jobs[0].workbenchMessages.length, 1);
+  for (const [url, user] of [[path.replace("b2b-composite", "other-project"), "alice"], [path, "bobby"]]) {
+    const result = await (await fetch(url, { headers: { Cookie: await login(user) } })).json() as { jobs: unknown[] };
+    assert.equal(result.jobs.length, 0);
+  }
+});
+
+test("idle task state and account-scoped list changes stream without polling", { timeout: 10000 }, async () => {
+  const fixture = createJob({ prompt: "stream fixture", projectId: "b2b-composite", conversationId: "state-stream" });
+  updateJob(fixture.jobId, { workbenchSession: true, workbenchUserId: alice.id, status: "awaiting_input" });
+  const controller = new AbortController();
+  const response = await fetch(`${base}/api/jobs/workbench/changes`, { headers: { Cookie: await login("alice") }, signal: controller.signal });
+  const reader = response.body!.getReader();
+  const decoder = new TextDecoder();
+  let text = "";
+  const until = async (needle: string) => { while (!text.includes(needle)) { const next = await reader.read(); if (next.done) throw new Error("stream ended"); text += decoder.decode(next.value); } };
+  try {
+    await until("event: snapshot");
+    assert.ok(text.includes(fixture.jobId));
+    updateJob(fixture.jobId, { message: "state-change-without-agent-event", workbenchNeedsInput: true });
+    await until("state-change-without-agent-event");
+    assert.ok(text.includes("event: upsert"));
+    deleteJob(fixture.jobId);
+    await until("event: remove");
+  } finally { controller.abort(); await reader.cancel().catch(() => undefined); }
+  const detailController = new AbortController();
+  const detail = await fetch(`${base}/api/jobs/${fixture.jobId}/stream`, { headers: { Cookie: await login("bobby") }, signal: detailController.signal });
+  assert.equal(detail.status, 404);
+  detailController.abort();
+});
+
+test("detail stream publishes actor completion even without an agent event", { timeout: 10000 }, async () => {
+  const job = createJob({ prompt: "idle actor", projectId: "b2b-composite" });
+  updateJob(job.jobId, { workbenchSession: true, workbenchUserId: alice.id, status: "awaiting_merge", commitSha: "code", workbenchBaseCommitSha: "base", workbenchTurnRunning: true });
+  const controller = new AbortController();
+  const response = await fetch(`${base}/api/jobs/${job.jobId}/stream?continuous=true`, { headers: { Cookie: await login("alice") }, signal: controller.signal });
+  const reader = response.body!.getReader(); const decoder = new TextDecoder(); let text = "";
+  const until = async (needle: string) => { while (!text.includes(needle)) { const item = await reader.read(); if (item.done) throw new Error("stream ended"); text += decoder.decode(item.value); } };
+  try {
+    await until('"canComplete":false');
+    updateJob(job.jobId, { workbenchTurnRunning: false });
+    await until('"canComplete":true');
+    updateJob(job.jobId, { workbenchPauseRequested: true });
+    await until('"phase":"paused"');
+  } finally { controller.abort(); await reader.cancel().catch(() => undefined); }
 });
 
 test("conversation deletion blocks a workbench actor still winding down and denies another account", async () => {

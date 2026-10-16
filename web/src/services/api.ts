@@ -144,6 +144,11 @@ export const api = {
     return data.jobs ?? [];
   },
 
+  async listConversationJobs(conversationId: string, projectId: string): Promise<JobStatus[]> {
+    const data = await request<{ jobs: JobStatus[] }>(`/api/jobs/workbench/conversations/${encodeURIComponent(conversationId)}?projectId=${encodeURIComponent(projectId)}`);
+    return data.jobs;
+  },
+
   async getJob(jobId: string): Promise<JobStatus> {
     return request(`/api/jobs/${encodeURIComponent(jobId)}`);
   },
@@ -355,8 +360,8 @@ export const api = {
   },
 };
 
-export function openJobStream(jobId: string, onEvent: (event: JobEvent) => void): EventSource {
-  const source = new EventSource(`/api/jobs/${encodeURIComponent(jobId)}/stream`);
+export function openJobStream(jobId: string, onEvent: (event: JobEvent) => void, onState?: (job: JobStatus) => void): EventSource {
+  const source = new EventSource(`/api/jobs/${encodeURIComponent(jobId)}/stream${onState ? "?continuous=true" : ""}`);
   source.onmessage = (message) => {
     try {
       onEvent(JSON.parse(message.data) as JobEvent);
@@ -365,5 +370,20 @@ export function openJobStream(jobId: string, onEvent: (event: JobEvent) => void)
     }
   };
   source.addEventListener("close", () => source.close());
+  if (onState) source.addEventListener("state", message => {
+    try { onState(JSON.parse((message as MessageEvent).data) as JobStatus); } catch { /* Ignore malformed snapshots. */ }
+  });
+  return source;
+}
+
+export function openWorkbenchStream(callbacks: {
+  snapshot: (jobs: JobStatus[]) => void; upsert: (job: JobStatus) => void;
+  remove: (jobId: string) => void; error: () => void;
+}): EventSource {
+  const source = new EventSource("/api/jobs/workbench/changes");
+  source.addEventListener("snapshot", message => callbacks.snapshot(JSON.parse((message as MessageEvent).data).jobs));
+  source.addEventListener("upsert", message => callbacks.upsert(JSON.parse((message as MessageEvent).data)));
+  source.addEventListener("remove", message => callbacks.remove(JSON.parse((message as MessageEvent).data).jobId));
+  source.onerror = callbacks.error;
   return source;
 }

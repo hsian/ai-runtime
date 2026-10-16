@@ -69,67 +69,60 @@ test("read-only submission binds a running test-case job without execution confi
   assert.equal(getJob(jobId)?.status, "cancelled");
 });
 
-test("Codex prefix applies only at the beginning and preserves explicit control commands", () => {
-  assert.deepEqual(parseCommand("  #codex 问答：登录逻辑"), { action: "question", text: "登录逻辑", agentProvider: "codex" });
-  assert.deepEqual(parseCommand("#CODEX：测试用例：登录"), { action: "test-case", text: "登录", agentProvider: "codex" });
-  assert.deepEqual(parseCommand("#codex\n修改：按钮颜色"), { action: "plan", text: "按钮颜色", agentProvider: "codex" });
-  assert.deepEqual(parseCommand("说明 #codex 的含义"), { action: "auto", text: "说明 #codex 的含义" });
-  assert.deepEqual(parseCommand("#codexx 登录"), { action: "auto", text: "#codexx 登录" });
-  assert.deepEqual(parseCommand("#codex 执行"), { action: "execute", jobId: undefined });
-  assert.deepEqual(parseCommand("#codex 取消"), { action: "cancel", jobId: undefined });
-  assert.equal(parseCommand("#codex").action, "chat");
+test("removed engine prefix stays ordinary text and never becomes a control command", () => {
+  for (const text of ["#codex", "#codex 执行", "#codex 取消", "#CODEX：测试用例：登录", "#codex\n修改：按钮颜色", "说明 #codex 的含义"]) {
+    assert.deepEqual(parseCommand(text), { action: "auto", text });
+  }
 });
 
-test("semantic routing strips Codex marker and retains the explicit task engine", async () => {
+test("semantic routing needs no engine marker", async () => {
   const session = store.getSession(options.botId, "codex-intent", "reader", options.projectId);
-  const prepared = await prepareTapdMessage(session, "#codex 给登录生成测试用例");
+  const prepared = await prepareTapdMessage(session, "给登录生成测试用例");
   const command = await resolveIntent(prepared.command, session, async input => {
     assert.equal(JSON.parse(input).message, "给登录生成测试用例");
     assert.doesNotMatch(input, /#codex/);
     return JSON.stringify({ intent: "test-case", prompt: "登录用例", reply: "", topicId: "new", topicTitle: "登录" });
   });
-  assert.equal(command.agentProvider, "codex");
+  assert.equal("agentProvider" in command, false);
   assert.equal(command.action, "test-case");
   const next = await resolveIntent(parseCommand("给登录生成测试用例"), session, async () =>
     JSON.stringify({ intent: "test-case", prompt: "登录用例", reply: "", topicId: "new", topicTitle: "登录" }));
-  assert.equal(next.agentProvider, undefined);
+  assert.equal("agentProvider" in next, false);
 });
 
-test("question, change and test-case jobs pin Codex once without changing subsequent defaults", async () => {
+test("question, change and test-case jobs default to Codex without engine markers", async () => {
   const session = store.getSession(options.botId, "codex-jobs", "reader", options.projectId);
   const allowed = { ...options, codeAllowedUserIds: ["reader"] };
   const stopBeforeAgent = new Error("Stop before external agent");
   for (const prefix of ["问答", "修改", "测试用例"]) {
-    for (const codex of [true, false]) {
-      const command = parseCommand(`${codex ? "#codex " : ""}${prefix}：登录`);
-      let jobId = "";
-      await assert.rejects(dispatchCommand(session, command, `${prefix}-${codex}`, allowed,
-        id => { jobId = id; throw stopBeforeAgent; }), error => error === stopBeforeAgent);
-      const job = getJob(jobId)!;
-      assert.equal(job.agentProvider, codex ? "codex" : "claude");
-      assert.equal(job.prompt, "登录");
-      updateJob(jobId, { status: "completed" });
-    }
+    const command = parseCommand(`${prefix}：登录`);
+    let jobId = "";
+    await assert.rejects(dispatchCommand(session, command, prefix, allowed,
+      id => { jobId = id; throw stopBeforeAgent; }), error => error === stopBeforeAgent);
+    const job = getJob(jobId)!;
+    assert.equal(job.agentProvider, "codex");
+    assert.equal(job.prompt, "登录");
+    updateJob(jobId, { status: "completed" });
   }
 });
 
-test("TAPD requests retain the message prefix, while a bare tagged link only reads the requirement", async () => {
+test("TAPD requests need no engine prefix; a bare link only reads the requirement", async () => {
   const session = store.getSession(options.botId, "codex-tapd", "reader", options.projectId);
   const url = "https://www.tapd.cn/123/stories/view/789";
   const loader = async () => ({ snapshotId: randomUUID(), context: { url, workspaceId: "123", itemType: "story" as const,
     itemId: "789", title: "Login", description: "Validation", commentCount: 0, fetchedAt: new Date().toISOString() },
     attachments: [], warnings: [] });
-  const prepared = await prepareTapdMessage(session, `#codex ${url} 生成用例`, loader);
-  assert.equal(prepared.command.agentProvider, "codex");
+  const prepared = await prepareTapdMessage(session, `${url} 生成用例`, loader);
+  assert.equal("agentProvider" in prepared.command, false);
   assert.equal(prepared.command.action, "auto");
   assert.equal("text" in prepared.command && prepared.command.text, "生成用例");
   assert.equal(prepared.command.topicId, session.conversation_id);
-  const explicit = await prepareTapdMessage(session, `#codex 测试用例：${url} 登录校验`, loader);
+  const explicit = await prepareTapdMessage(session, `测试用例：${url} 登录校验`, loader);
   assert.equal(explicit.command.action, "test-case");
-  assert.equal(explicit.command.agentProvider, "codex");
-  const bare = await prepareTapdMessage(session, `#codex ${url}`, loader);
+  assert.equal("agentProvider" in explicit.command, false);
+  const bare = await prepareTapdMessage(session, `${url}`, loader);
   assert.equal(bare.command.action, "chat");
-  assert.equal(bare.command.agentProvider, undefined);
+  assert.equal("agentProvider" in bare.command, false);
 });
 
 test("TAPD-linked generation copies requirement and image snapshots into the test-case job", async () => {
@@ -203,7 +196,8 @@ test("completion includes Excel link; credentials reject tampering, expiry and o
 
 test("all Codex task replies carry one footer regardless of status, mode or old prefix metadata", () => {
   const created = createJob({ prompt: "#codex is just text here", taskMode: "question", agentProvider: "claude" });
-  const completed = updateJob(created.jobId, { status: "completed", message: "Answer" })!;
+  assert.equal(created.agentProvider, "codex", "legacy request preferences cannot change the automatic default");
+  const completed = updateJob(created.jobId, { status: "completed", message: "Answer", agentProvider: "claude" })!;
   assert.doesNotMatch(formatJob(completed), /本次回答执行引擎/);
   assert.doesNotMatch(formatJob({ ...completed, projectId: "yuenongjiao-mini" }), /本次回答执行引擎/);
   const explicit = { ...completed, agentProvider: "codex" as const };

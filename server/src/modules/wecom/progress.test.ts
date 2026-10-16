@@ -37,7 +37,7 @@ function setup(lifetime = 300_000) {
 
 test("progress uses actual phases, omits elapsed time and prioritizes queue state", () => {
   const job = createJob({ prompt: "test", ownerId: "format" });
-  assert.equal(formatProgress(job, "agent"), "正在分析并修改代码");
+  assert.equal(formatProgress(job, "agent"), "正在分析并修改代码\n\n本次回答执行引擎为 codex。");
   assert.equal(progressStage({ ...job, jobsAhead: 2 }, "agent"), "正在排队，前面还有 2 个任务");
   assert.equal(progressStage(job, "unknown_internal_phase"), "正在等待处理");
   assert.doesNotMatch(formatProgress(job, "agent"), /%|任务：|Thinking|已用时/);
@@ -103,7 +103,7 @@ test("the progress command shows the latest real phase without invoking Agent or
   appendJobEvent(job.jobId, { type: "stage", phase: "question" });
   assert.equal(parseCommand("进度").action, "status");
   const text = await dispatchCommand({ ...session, active_job_id: job.jobId }, parseCommand("进度"), "progress-command", options);
-  assert.equal(text, "正在读取项目代码");
+  assert.equal(text, "正在读取项目代码\n\n本次回答执行引擎为 codex。");
   assert.doesNotMatch(text, new RegExp(getJob(job.jobId)!.jobId));
 });
 
@@ -173,7 +173,7 @@ test("unchanged progress stays silent and real activity updates the same stream"
     context.time(240_000);
     await context.coordinator.refresh();
     assert.equal(context.calls.length, 3);
-    assert.equal(context.calls[2].text, "正在分析修改计划");
+    assert.equal(context.calls[2].text, "正在分析修改计划\n\n本次回答执行引擎为 codex。");
     assert.ok(context.calls.every(call => !/已完成|本阶段已结束/.test(call.text)));
     assert.ok(context.calls.every(call => call.streamId === "same-stream" && call.finish === false));
     assert.ok(context.calls.every(call => !/未收到|卡住|暂无新进展/.test(call.text)));

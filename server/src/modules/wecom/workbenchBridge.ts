@@ -8,6 +8,7 @@ import { canModifyCode } from "./permissions.js";
 import { splitMessage } from "./replies.js";
 import { parseCommand } from "./commands.js";
 import { createWorkbenchCommands } from "./workbenchCommands.js";
+import { getTaskState } from "@ai-runtime/shared/task-state";
 
 interface Account { id: string; username: string; display_name: string; tapd_owner_name: string }
 interface Notice { id: number; job_id: string; signature: string; target_id: string; chunks: string; sent_chunks: number }
@@ -23,14 +24,13 @@ export function initWorkbenchBridgeStore(): void {
 }
 
 export function workbenchNeedsSupplement(job: Job): boolean {
-  return Boolean(job.workbenchSession && job.workbenchUserId && !job.workbenchReset && !job.workbenchPauseRequested
-    && job.status === "awaiting_input" && job.workbenchNeedsInput === true && job.workbenchInputSource !== "implementation");
+  return Boolean(job.workbenchSession && job.workbenchUserId && getTaskState(job).needsInput
+    && job.workbenchNeedsInput === true && job.workbenchInputSource !== "implementation");
 }
 
 function reviewSignature(job: Job): string | undefined {
-  if (job.workbenchSession && job.workbenchUserId && !job.workbenchReset && !job.workbenchPauseRequested
-    && !job.workbenchTurnRunning && job.status === "awaiting_merge" && job.worktreePath && job.commitSha
-    && job.commitSha !== job.workbenchBaseCommitSha && job.workbenchHasCodeChanges !== false) return `review:${job.commitSha}`;
+  if (job.workbenchSession && job.workbenchUserId && !job.workbenchPauseRequested && job.worktreePath
+    && getTaskState(job).canComplete) return `review:${job.commitSha}`;
 }
 
 function question(job: Job): string {

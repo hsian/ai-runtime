@@ -1,3 +1,4 @@
+import type { TaskState } from "@ai-runtime/shared/task-state";
 export type JobStatusType =
   | "planning"
   | "awaiting_confirm"
@@ -71,6 +72,8 @@ export interface ReleaseMergeRecord {
 }
 
 export interface JobStatus {
+  taskState?: TaskState;
+  conversationTitle?: string;
   workbenchSession?: boolean;
   workbenchUserId?: string;
   workbenchQuestion?: string;

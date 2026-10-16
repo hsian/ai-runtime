@@ -90,7 +90,7 @@ test("execution targets the current plan while ambiguous cancellation still requ
   const { session, a, b } = makeTopics("controls", true);
   const stopBeforeExecution = new Error("Stop before external execution");
   let selected = "";
-  await assert.rejects(dispatchCommand(session, parseCommand("#codex 执行"), "execute-current", options,
+  await assert.rejects(dispatchCommand(session, parseCommand("执行"), "execute-current", options,
     id => { selected = id; throw stopBeforeExecution; }), error => error === stopBeforeExecution);
   assert.equal(selected, b.jobId);
   await assert.rejects(dispatchCommand(session, { action: "cancel" }, "ambiguous-cancel", options), /有多个任务/);

@@ -133,6 +133,5 @@ export async function prepareTapdMessage(session: WecomSession, text: string, lo
   const command: Command = ["auto", "question", "plan", "test-case", "clarify"].includes(requested.action)
     ? requested : { action: "auto", text: link.request };
   return { command: { ...command, topicId: session.conversation_id,
-    ...(prefixed.projectId ? { projectId: prefixed.projectId } : {}),
-    ...(prefixed.agentProvider ? { agentProvider: prefixed.agentProvider } : {}) }, prefix: summary, topicId: session.conversation_id };
+    ...(prefixed.projectId ? { projectId: prefixed.projectId } : {}) }, prefix: summary, topicId: session.conversation_id };
 }

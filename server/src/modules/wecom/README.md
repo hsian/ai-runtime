@@ -14,7 +14,13 @@ negated requests remain non-mutating; voice release requests require text.
 
 Private workbench commands bypass model intent routing. Send `/help`
 for the complete command list. Main workflow: `/use`, `/use P1`, `/use I2`,
-`/list`, `/analyze T1`, `/start T1`, `/reply T1 补充内容`, `/review T1`, `/done T1`.
+`/list`, `/analyze T1`, `/start T1`, `/reply T1 补充内容`, `/review T1`, `/done T1`, `/model`.
+
+`/model` is a read-only private-chat query that does not invoke an agent or TAPD.
+It reports the Codex default and the sender's active tasks (or latest task),
+including the recorded provider after a Claude fallback. Model names reflect
+server configuration; an unspecified model is labeled as the CLI default rather
+than guessing a model. Workbench jobs are included only for the mapped account.
 `/use iter` lists iterations, `/use next` pages them, and `/use 前端` searches
 names. `/list next` pages tasks; `/list 关键词` searches assigned tasks.
 `/use P1 I17` selects a registered project and iteration together; IDs are
@@ -180,18 +186,18 @@ merge into `test` and the existing preview service for `b2b-composite`.
 `问答：...` runs the shared read-only project question workflow.
 Both Agent providers use WeCom-specific question guidance in their system and
 user prompts: changes are requested directly in chat, never through a Web mode
-selector. Suggested explicit commands retain the task's project/engine prefix.
+selector. Suggested explicit commands retain the task's project prefix.
 Read-only members are directed to an administrator for code-change permission.
 
-Start a message with `#codex ` to use Codex only for the task it creates, such as
-`#codex 问答：登录逻辑` or `#codex https://www.tapd.cn/123/stories/view/456 生成测试用例`.
-The prefix is removed before intent classification, which uses the default
-engine. No session preference is saved: later new tasks use `AGENT_PROVIDER`.
-A task retains its engine through clarification and execution. Prefixes on
-control commands do not change an existing task's engine or permissions.
+All Web and WeCom agent calls try Codex first. An explicit Codex account quota
+exhaustion automatically continues with Claude in the same workspace, retaining
+history, attachments and permissions. Network/authentication errors, generic 429
+throttling and cancellation do not switch providers. The next call tries Codex
+again. The engine-selection prefix has been removed. The legacy
+`AGENT_PROVIDER` setting no longer selects the engine.
 
 Start a message with `#小程序 ` to target the configured `yuenongjiao-mini`
-project for that message. Combine it with `#codex ` in either order. Unmarked
+project for that message. Unmarked
 new requests use the bot's default project; no project preference is saved.
 Project sessions isolate topics, TAPD snapshots, history and active jobs.
 Use `#小程序 补充：...`, `#小程序 执行` or `#小程序 状态` to continue or manage
@@ -246,7 +252,7 @@ or implement; the material itself never authorizes a plan or execution.
 Direct image and mixed text/image messages are downloaded and decrypted with
 the SDK's per-image key, validated as JPEG/PNG/WebP/GIF, and copied into the same
 job attachments as TAPD images. Send screenshots and the request together;
-`#codex` and `#小程序` in the text retain their single-task behavior. Image-only
+`#小程序` in the text selects the project for that task. Image-only
 messages use read-only analysis. Failed images stop submission rather than
 silently submitting text alone. A message accepts up to nine images and 20 MiB
 total, with a 10 MiB per-image limit independent of Web uploads. Download errors

@@ -15,7 +15,7 @@ const envSchema = z.object({
   GIT_ACCESS_TOKEN: z.string().min(1),
   GIT_AUTHOR_NAME: z.string().default("AI Runtime Bot"),
   GIT_AUTHOR_EMAIL: z.string().default("ai-runtime@company.com"),
-  AGENT_PROVIDER: z.enum(["claude", "codex"]).default("claude"),
+  AGENT_PROVIDER: z.enum(["claude", "codex"]).default("codex"),
   CLAUDE_CLI_PATH: z.string().default("claude"),
   CLAUDE_MODEL: z.string().optional(),
   CLAUDE_TEST_CASE_MODEL: z.string().default("sonnet"),

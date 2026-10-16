@@ -1,18 +1,16 @@
 import { Alert, App as AntApp, Button, Input, Modal, Select, Space, Spin, Tooltip, Typography } from "antd";
 import { BellOutlined, SafetyCertificateOutlined } from "@ant-design/icons";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { ConversationPanel } from "./components/ConversationPanel";
-import { CodeDiffModal } from "./components/CodeDiffModal";
-import { BugRichTextEditor, type BugEditorImage } from "./components/BugRichTextEditor";
+import { CodeDiffModal, ApiDocSearch } from "./components/DeferredDialogs";
 import { TaskComposer } from "./components/TaskComposer";
-import { ApiDocSearch } from "./components/ApiDocSearch";
 import { TaskDetailPanel } from "./components/TaskDetailPanel";
 import { TaskSidebar } from "./components/TaskSidebar";
 import { TapdRichTextEditor } from "./components/TapdRichTextEditor";
 import { api, openJobStream } from "./services/api";
 import { useTaskStore } from "./stores/taskStore";
-import type { AgentProvider, ClarificationAnswer, JobStatus, ProjectProfile, TapdBugDraft, TapdContext, TapdImageOption, TapdIteration, TapdWorkspace, TaskMode } from "./types";
+import type { AgentProvider, ClarificationAnswer, JobStatus, ProjectProfile, TapdContext, TapdImageOption, TaskMode } from "./types";
 import { compressImage } from "./utils/imageCompress";
 import {
   getDesktopNotificationPermission,
@@ -24,6 +22,8 @@ import { startTitleAlert, stopTitleAlert } from "./utils/titleAlert";
 import { createUniqueId } from "./utils/uniqueId";
 import { resolveTaskMode } from "./utils/taskMode";
 import { workHoursApi, type AuthUser } from "./services/workHoursApi";
+
+const TapdBugDialog = lazy(() => import("./components/TapdBugDialog"));
 
 const terminalStatuses = new Set(["completed", "failed", "cancelled", "awaiting_confirm", "awaiting_input", "awaiting_merge"]);
 
@@ -51,30 +51,12 @@ function plainTextToEditorHtml(value: string): string {
     .replace(/\n/g, "<br>")}</p>`;
 }
 
-function buildBugDescription(draft: TapdBugDraft): string {
-  const escapeHtml = (value: string) => value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/\"/g, "&quot;").replace(/'/g, "&#39;");
-  const section = (label: string, value: string) => value.trim()
-    ? `<p><strong>${label}：</strong></p><p>${escapeHtml(value.trim()).replace(/\n/g, "<br>")}</p>`
-    : "";
-  return [
-    section("前置条件", draft.preconditions),
-    section("操作步骤", draft.steps),
-    section("实际结果", draft.actualResult),
-    section("预期结果", draft.expectedResult),
-    section("证据", draft.evidence),
-  ].join("");
-}
-
-function bugBodyHasText(html: string): boolean {
-  return Boolean(new DOMParser().parseFromString(html, "text/html").body.textContent?.trim());
-}
-
 export default function App() {
   const { message, modal } = AntApp.useApp();
   const store = useTaskStore();
   const [draft, setDraft] = useState("");
   const [taskMode, setTaskMode] = useState<TaskMode>("code");
-  const [agentProvider, setAgentProvider] = useState<AgentProvider>("claude");
+  const agentProvider: AgentProvider = "codex";
   const [projects, setProjects] = useState<ProjectProfile[]>([]);
   const [projectId, setProjectId] = useState("b2b-composite");
   const [files, setFiles] = useState<File[]>([]);
@@ -95,23 +77,11 @@ export default function App() {
   const [releaseBranches, setReleaseBranches] = useState<string[]>([]);
   const [releaseBranch, setReleaseBranch] = useState<string>();
   const [releaseJobIds, setReleaseJobIds] = useState<string[]>([]);
-  const [bugOpen, setBugOpen] = useState(false);
-  const [bugJobId, setBugJobId] = useState<string>();
-  const [bugTitle, setBugTitle] = useState("");
-  const [bugBodyHtml, setBugBodyHtml] = useState("");
-  const [bugGenerating, setBugGenerating] = useState(false);
-  const [bugDraftError, setBugDraftError] = useState("");
-  const [bugImages, setBugImages] = useState<BugEditorImage[]>([]);
-  const bugImagesRef = useRef<BugEditorImage[]>([]);
-  const bugDraftRequestId = useRef(0);
+  const [bugJob, setBugJob] = useState<JobStatus>();
   const [miniProgramUploadOpen, setMiniProgramUploadOpen] = useState(false);
   const [diffOpen, setDiffOpen] = useState(false);
   const [miniProgramUploadVersion, setMiniProgramUploadVersion] = useState(defaultMiniProgramVersion);
   const [miniProgramUploadDescription, setMiniProgramUploadDescription] = useState("");
-  const [workspaces, setWorkspaces] = useState<TapdWorkspace[]>([]);
-  const [workspaceId, setWorkspaceId] = useState<string>();
-  const [iterations, setIterations] = useState<TapdIteration[]>([]);
-  const [iterationId, setIterationId] = useState<string>();
   const [createMergeRequest] = useState(
     () => localStorage.getItem("createMergeRequestOnMerge") === "true"
   );
@@ -121,8 +91,6 @@ export default function App() {
   );
   const knownJobStatuses = useRef(new Map<string, JobStatus["status"]>());
   const [authUser, setAuthUser] = useState<AuthUser | null>(null);
-  useEffect(() => { bugImagesRef.current = bugImages; }, [bugImages]);
-  useEffect(() => () => bugImagesRef.current.forEach((image) => URL.revokeObjectURL(image.url)), []);
   useEffect(() => {
     const refresh = () => { void workHoursApi.me().then(({ user }) => setAuthUser(user)).catch(() => setAuthUser(null)); };
     refresh();
@@ -251,8 +219,18 @@ export default function App() {
       api.listProjects().then((items) => setProjects(items)),
       api.getClient().then((client) => store.setRemoteIp(client.remoteIp)).catch(() => store.setRemoteIp("服务未连接")),
     ]).finally(() => store.setLoading(false));
-    const timer = window.setInterval(() => void refreshJobs(), 10_000);
-    return () => window.clearInterval(timer);
+    const onFocus = () => void refreshJobs();
+    window.addEventListener("focus", onFocus);
+    const pending = new Map<string, ReturnType<typeof setTimeout>>();
+    const source = new EventSource("/api/jobs/changes");
+    let connected = false;
+    source.onopen = () => { if (connected) void refreshJobs(); connected = true; };
+    source.onmessage = message => {
+      const { jobId } = JSON.parse(message.data) as { jobId: string };
+      if (jobId === useTaskStore.getState().selectedJobId || pending.has(jobId)) return;
+      pending.set(jobId, setTimeout(() => { pending.delete(jobId); void refreshJob(jobId); }, 200));
+    };
+    return () => { window.removeEventListener("focus", onFocus); source.close(); for (const timer of pending.values()) clearTimeout(timer); };
   }, []);
 
   useEffect(() => {
@@ -279,7 +257,7 @@ export default function App() {
       ) {
         void refreshJob(jobId);
       }
-    });
+    }, applyJobUpdate);
     return () => source.close();
   }, [store.selectedJobId]);
 
@@ -596,123 +574,6 @@ export default function App() {
     },
   });
 
-  const generateBugDraft = async (jobId: string) => {
-    const requestId = ++bugDraftRequestId.current;
-    setBugGenerating(true);
-    setBugDraftError("");
-    try {
-      const { draft } = await api.generateTapdBugDraft(jobId);
-      if (requestId === bugDraftRequestId.current) {
-        setBugTitle(draft.title);
-        setBugBodyHtml(buildBugDescription(draft));
-      }
-    } catch (error) {
-      if (requestId === bugDraftRequestId.current) setBugDraftError(error instanceof Error ? error.message : "生成草稿失败，请手动填写");
-    } finally {
-      if (requestId === bugDraftRequestId.current) setBugGenerating(false);
-    }
-  };
-
-  const closeBug = () => {
-    bugDraftRequestId.current += 1;
-    setBugGenerating(false);
-    setBugOpen(false);
-    bugImages.forEach((image) => URL.revokeObjectURL(image.url));
-    setBugImages([]);
-  };
-
-  const addBugImages = (filesToAdd: File[]): BugEditorImage[] => {
-    const valid = filesToAdd.filter((file) => /^image\/(png|jpeg|webp|gif)$/i.test(file.type) && file.size <= 5 * 1024 * 1024);
-    if (valid.length !== filesToAdd.length) message.error("仅支持单张不超过 5MB 的 PNG、JPEG、WebP 或 GIF 图片");
-    const available = Math.max(0, 5 - bugImages.length);
-    if (valid.length > available) message.warning("最多添加 5 张截图");
-    const added = valid.slice(0, available).map((file) => ({ id: createUniqueId(), file, url: URL.createObjectURL(file) }));
-    if (added.length) setBugImages((current) => [...current, ...added]);
-    return added;
-  };
-
-  const changeBugBody = (html: string) => {
-    setBugBodyHtml(html);
-    const doc = new DOMParser().parseFromString(html, "text/html");
-    const ids = new Set(Array.from(doc.querySelectorAll("img[data-bug-image-id]"), (image) => image.getAttribute("data-bug-image-id")));
-    setBugImages((current) => current.filter((image) => {
-      if (ids.has(image.id)) return true;
-      URL.revokeObjectURL(image.url);
-      return false;
-    }));
-  };
-
-  const submitTapdBug = async () => {
-    if (busy || !workspaceId || !iterationId) return;
-    setBusy(true);
-    try {
-      const doc = new DOMParser().parseFromString(bugBodyHtml, "text/html");
-      const imageIds = new Set(Array.from(doc.querySelectorAll("img[data-bug-image-id]"), (image) => image.getAttribute("data-bug-image-id")));
-      doc.querySelectorAll("img[data-bug-image-id]").forEach((image) => image.remove());
-      const images = await Promise.all(bugImages.filter((image) => imageIds.has(image.id)).map(async ({ file }) => {
-        const compressed = await compressImage(file);
-        const name = compressed.type === "image/webp" && compressed !== file
-          ? file.name.replace(/\.[^.]+$/, "") + ".webp"
-          : file.name;
-        return new File([compressed], name, { type: compressed.type });
-      }));
-      const result = await api.createTapdBug({
-        title: bugTitle.trim(),
-        description: doc.body.innerHTML,
-        workspaceId,
-        iterationId,
-        images,
-      });
-      closeBug();
-      if (result.failedImages.length) {
-        modal.warning({
-          title: `Bug ${result.bug.id} 已创建，但部分截图未上传`,
-          content: `已上传 ${result.uploadedImageCount} 张。失败：${result.failedImages.join("；")}。请到 TAPD 手动补充。`,
-        });
-      } else {
-        message.success(`TAPD Bug 创建成功${images.length ? `，已附 ${images.length} 张截图` : ""}`);
-      }
-    } catch (error) {
-      message.error(error instanceof Error ? error.message : "创建 TAPD Bug 失败");
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const openBug = async () => {
-    if (!selectedJob) return;
-    const jobId = selectedJob.jobId;
-    setBugJobId(jobId);
-    setBugTitle("");
-    setBugBodyHtml("");
-    setBugImages([]);
-    setIterationId(undefined);
-    setBugOpen(true);
-    void generateBugDraft(jobId);
-    try {
-      const data = await api.tapdWorkspaces();
-      setWorkspaces(data.workspaces);
-      const contextWorkspace = selectedJob.tapdContext?.workspaceId;
-      const selected = data.workspaces.some((item) => item.id === contextWorkspace)
-        ? contextWorkspace
-        : data.defaultWorkspaceId || data.workspaces[0]?.id;
-      setWorkspaceId(selected);
-      if (selected) {
-        const iterationData = await api.tapdIterations(selected);
-        setIterations(iterationData.iterations);
-      }
-    } catch (error) {
-      message.error(error instanceof Error ? error.message : "TAPD 配置读取失败");
-    }
-  };
-
-  const changeWorkspace = async (value: string) => {
-    setWorkspaceId(value);
-    setIterationId(undefined);
-    const data = await api.tapdIterations(value);
-    setIterations(data.iterations);
-  };
-
   const active = selectedJob && !terminalStatuses.has(selectedJob.status);
 
   return (
@@ -783,14 +644,12 @@ export default function App() {
           ) : <TaskComposer
             value={draft}
             taskMode={taskMode}
-            agentProvider={agentProvider}
             files={files}
             tapdContext={tapdContext}
             tapdImages={tapdImages}
             submitting={submitting}
             onChange={setDraft}
             onTaskModeChange={setTaskMode}
-            onAgentProviderChange={setAgentProvider}
             onFilesChange={setFiles}
             onOpenTapd={() => setTapdOpen(true)}
             onOpenApiDocs={() => setApiDocsOpen(true)}
@@ -816,7 +675,7 @@ export default function App() {
         onDiscard={discardMerge}
         onRelease={() => void openRelease()}
         onRevert={revertJob}
-        onTapdBug={() => void openBug()}
+        onTapdBug={() => setBugJob(selectedJob)}
         onMiniProgramPreview={() => void generateMiniProgramPreview()}
         onMiniProgramUpload={openMiniProgramUpload}
         onViewDiff={() => setDiffOpen(true)}
@@ -895,41 +754,9 @@ export default function App() {
         <Select style={{ width: "100%" }} value={releaseBranch} options={releaseBranches.map((branch) => ({ label: branch, value: branch }))} onChange={setReleaseBranch} placeholder="选择目标分支" />
       </Modal>
 
-      <Modal
-        title="提交 TAPD Bug"
-        open={bugOpen}
-        onCancel={closeBug}
-        closable={!busy}
-        maskClosable={!busy}
-        cancelButtonProps={{ disabled: busy }}
-        centered
-        width={720}
-        className="bug-draft-modal"
-        styles={{ body: { maxHeight: "min(56vh, 520px)", overflowY: "auto" } }}
-        okText="确认提交 Bug"
-        okButtonProps={{ disabled: bugGenerating || !workspaceId || !iterationId || !bugTitle.trim() || !bugBodyHasText(bugBodyHtml) }}
-        confirmLoading={busy}
-        onOk={() => void submitTapdBug()}
-      >
-        {bugGenerating ? (
-          <div className="bug-draft-loading" role="status" aria-live="polite">
-            <Spin size="large" />
-            <strong>正在生成缺陷草稿</strong>
-            <span>整理任务描述与复现信息中，请稍候</span>
-          </div>
-        ) : (
-          <div className="bug-draft-fields">
-            {bugDraftError && <Alert type="warning" showIcon message={bugDraftError} action={<Button size="small" onClick={() => bugJobId && void generateBugDraft(bugJobId)}>重试</Button>} />}
-            <div className="bug-draft-projects">
-              <label>项目<Select showSearch optionFilterProp="label" value={workspaceId} options={workspaces.map((item) => ({ label: item.name || item.pretty_name || item.id, value: item.id }))} onChange={(value) => void changeWorkspace(value)} placeholder="选择项目" /></label>
-              <label>迭代<Select showSearch optionFilterProp="label" value={iterationId} options={iterations.map((item) => ({ label: item.name, value: item.id }))} onChange={setIterationId} placeholder="选择迭代" /></label>
-            </div>
-            <label>标题<Input value={bugTitle} maxLength={200} onChange={(event) => setBugTitle(event.target.value)} placeholder="模块与异常现象" /></label>
-            <div className="bug-body-heading"><span>正文</span>{bugImages.length > 0 && <span>{bugImages.length}/5 张截图</span>}</div>
-            <BugRichTextEditor initialHtml={bugBodyHtml} onChange={changeBugBody} onAddImages={addBugImages} />
-          </div>
-        )}
-      </Modal>
+      {bugJob && <Suspense fallback={<Modal open title="正在加载缺陷编辑器…" footer={null} onCancel={() => setBugJob(undefined)}><Spin /></Modal>}>
+        <TapdBugDialog key={bugJob.jobId} job={bugJob} busy={busy} onBusyChange={setBusy} onClose={() => setBugJob(undefined)} />
+      </Suspense>}
     </div>
   );
 }

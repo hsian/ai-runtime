@@ -82,7 +82,7 @@ test("request memory keeps ordinary replies but excludes task output and unknown
   assert.deepEqual(store.getConversationHistory(local), before);
 });
 
-test("natural change follow-ups use the linked TAPD topic and preserve the single-use engine", async () => {
+test("natural change follow-ups use the linked TAPD topic and keep the default engine", async () => {
   const local = store.getSession("bot", "copy-contract", "alice", "b2b-composite");
   const { saveTopicTapd } = await import("./tapdStore.js");
   saveTopicTapd(local, { snapshotId: "copy-contract", attachments: [], warnings: [], context: {
@@ -92,7 +92,7 @@ test("natural change follow-ups use the linked TAPD topic and preserve the singl
     fetchedAt: new Date().toISOString(),
   } });
   store.recordChatExchange(local, "需求本身已经实现，只是产品增加了一处", "已读取合同录入页面优化需求");
-  const command = { ...parseCommand('#codex “复制合同页”也要修改'), topicId: local.conversation_id };
+  const command = { ...parseCommand('“复制合同页”也要修改'), topicId: local.conversation_id };
   let calls = 0;
   const result = await resolveIntent(command, local, async input => {
     calls++;
@@ -105,7 +105,7 @@ test("natural change follow-ups use the linked TAPD topic and preserve the singl
   });
   assert.equal(result.action, "plan");
   assert.equal(result.topicId, local.conversation_id);
-  assert.equal(result.agentProvider, "codex");
+  assert.equal("agentProvider" in result, false);
   assert.equal(calls, 1);
 });
 
@@ -125,7 +125,7 @@ test("one understanding call receives topic summaries but never pending plan bod
   jobs.updateJob(old.jobId, { status: "awaiting_confirm", requiresConfirm: true, planSummary: "Old plan body" });
   store.bindJob(local, old.jobId);
   let calls = 0;
-  const command = await resolveIntent(parseCommand("#codex 这需求已经实现，只补齐复制页面"), local, async input => {
+  const command = await resolveIntent(parseCommand("这需求已经实现，只补齐复制页面"), local, async input => {
     calls++;
     const data = JSON.parse(input);
     assert.doesNotMatch(input, /Old plan body|awaiting_confirm/);
@@ -136,7 +136,7 @@ test("one understanding call receives topic summaries but never pending plan bod
   });
   assert.equal(calls, 1);
   assert.equal(command.action, "plan");
-  assert.equal(command.agentProvider, "codex");
+  assert.equal("agentProvider" in command, false);
 });
 
 test("an independent request bypasses old topics, creates a clean job and supersedes the old draft", async () => {
@@ -152,7 +152,7 @@ test("an independent request bypasses old topics, creates a clean job and supers
   store.bindJob(local, old.jobId);
   store.recordChatExchange(local, "修改合同", "Old contract plan", "task");
   let calls = 0;
-  const command = await resolveIntent(parseCommand("#codex 登录按钮改成蓝色"), local, async input => {
+  const command = await resolveIntent(parseCommand("登录按钮改成蓝色"), local, async input => {
     calls++;
     assert.doesNotMatch(input, /Old contract plan|awaiting_confirm/);
     assert.ok(JSON.parse(input).topics.length > 0);

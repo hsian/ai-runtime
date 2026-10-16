@@ -24,6 +24,7 @@ import { pickPlanOutput } from "./planSummaryResolver.js";
 import { AgentAbortedError } from "./errors.js";
 import { loadCodexWebSocketOverrides } from "./codexWebSocketOverrides.js";
 import { commandActivity } from "./commandActivity.js";
+import { CodexQuotaError, isCodexQuotaMessage } from "./providerFallback.js";
 
 export { killAgentForJob } from "./agentProcessRegistry.js";
 
@@ -62,6 +63,7 @@ export interface CodexStreamState {
   seenTools: Set<string>;
   lastStatusAt: number;
   lastStatusText: string;
+  failure?: string;
 }
 
 function emitStatus(
@@ -116,6 +118,11 @@ export function handleCodexJsonLine(
   }
 
   const type = String(parsed.type ?? parsed.event ?? "");
+  if (type === "error" || type === "turn.failed") {
+    const detail = parsed.error ?? parsed.message ?? parsed;
+    state.failure = typeof detail === "string" ? detail : JSON.stringify(detail);
+  }
+  if (type === "turn.completed") state.failure = undefined;
   if (type.includes("turn.started") || type.includes("request")) {
     emitStatus(state, onEvent, "正在请求模型响应...");
   } else if (type.includes("reasoning") || type.includes("thinking")) {
@@ -242,13 +249,14 @@ function runCodexCommand(
         if (extracted) streamedText += extracted;
       }
 
-      if (code === 0) {
+      if (code === 0 && !parseState.failure) {
         resolve(finalSummary || streamedText.trim());
         return;
       }
 
-      const detail = stderr.trim() || streamedText.trim() || `exit code ${code}`;
-      reject(new Error(`Codex CLI 执行失败: ${detail.slice(0, 500)}`));
+      const detail = [parseState.failure, stderr.trim()].filter(Boolean).join("\n") || streamedText.trim() || `exit code ${code}`;
+      const message = `Codex CLI 执行失败: ${detail.slice(0, 500)}`;
+      reject(isCodexQuotaMessage([parseState.failure, stderr].filter(Boolean).join("\n")) ? new CodexQuotaError(message) : new Error(message));
     });
 
     child.stdin.write(stdinText);

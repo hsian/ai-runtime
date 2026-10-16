@@ -1,8 +1,4 @@
 import { getJob } from "../../services/jobStore.js";
-import { runAgent } from "../../services/agent/index.js";
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { getBinding, getChatHistory, getConversationHistory, listBindings } from "./sessionStore.js";
 import type { WecomSession } from "./types.js";
 import type { Command } from "./commands.js";
@@ -10,36 +6,13 @@ import type { Job } from "../../types.js";
 import { topicCandidates } from "./topicStore.js";
 import { getDialogue, setDialogue } from "./dialogueStore.js";
 import { formatJob } from "./replies.js";
-import { parseRoutingResult, routingAgentOptions } from "./conversationRouting.js";
+import { classifyWithAgent, routeConversation, type IntentModel } from "../../services/conversationIntent.js";
+export { classifyWithAgent, type IntentModel } from "../../services/conversationIntent.js";
+import { chatQuickReply } from "../../services/chatQuickReply.js";
 
 export function quickReply(text: string): Command | undefined {
-  const content = text.trim();
-  const normalized = content.replace(/[\s!！?？。.,，~～]/g, "");
-  if (/^(你好|您好|嗨|哈喽|hi|hello|hey|在吗|在不在|早上好|晚上好|下午好)$/i.test(normalized)) {
-    return { action: "chat", reply: "你好，我在。你可以和我聊聊，也可以直接问项目问题或告诉我想改什么。" };
-  }
-  if (/^(谢谢|谢谢你|多谢|感谢|辛苦了|thanks|thankyou)$/i.test(normalized)) {
-    return { action: "chat", reply: "不客气，有问题随时说。" };
-  }
-  if (/^(你是谁|你能做什么|你会做什么|你有什么功能)$/.test(normalized)) {
-    return { action: "chat", reply: "我是项目开发助手，可以解释代码、排查问题、生成测试用例 Excel，也可以修改功能。修改前会先给你计划，等你确认执行。" };
-  }
-  if (/^(test|测试)$/i.test(normalized)) return { action: "chat", reply: "消息收到了，连接正常。" };
-  return undefined;
-}
-
-export type IntentModel = (input: string) => Promise<string>;
-
-export async function classifyWithAgent(input: string): Promise<string> {
-  const directory = await mkdtemp(join(tmpdir(), "ai-runtime-wecom-intent-"));
-  try {
-    const result = await runAgent(directory, input, undefined, undefined, routingAgentOptions());
-    return result.summary;
-  } finally {
-    // Windows may hold the CLI's working directory until its process exits.
-    await rm(directory, { recursive: true, force: true, maxRetries: 20, retryDelay: 250 })
-      .catch(() => console.warn("[WeCom] 临时会话目录暂时被占用，未影响识别结果"));
-  }
+  const reply = chatQuickReply(text);
+  return reply ? { action: "chat", reply } : undefined;
 }
 
 export async function resolveIntent(command: Command, session: WecomSession, model: IntentModel = classifyWithAgent): Promise<Command> {
@@ -80,14 +53,7 @@ export async function resolveIntent(command: Command, session: WecomSession, mod
           .slice(-2).map(turn => ({ role: turn.role, content: turn.content.slice(0, 600) })),
         userGoal: topic.activeTask?.prompt.slice(0, 600) })),
       linkedTopicId: command.topicId, selectionTopicId: selection ? contextSession.conversation_id : undefined };
-    // Retry malformed model output once, never transport failures or execution authorization.
-    let result: ReturnType<typeof parseRoutingResult>;
-    const raw = await model(JSON.stringify(payload));
-    try { result = parseRoutingResult(raw); }
-    catch {
-      console.warn("[WeCom] 对话理解输出格式无效，正在修正一次");
-      result = parseRoutingResult(await model(JSON.stringify({ ...payload, outputRepair: true })));
-    }
+    const result = await routeConversation(payload, model);
     if (result.intent === "chat" || result.intent === "uncertain") {
       if (!result.reply.trim()) throw new Error("Empty reply");
       return { action: "chat", reply: result.reply.trim() };
@@ -139,7 +105,6 @@ export async function resolveIntent(command: Command, session: WecomSession, mod
     }
     if (selection) setDialogue(contextSession);
     return { action: result.intent, text: result.prompt.trim(),
-      ...(command.agentProvider ? { agentProvider: command.agentProvider } : {}),
       ...(command.projectId ? { projectId: command.projectId } : {}),
       ...(result.topicId ? { topicId: result.topicId, topicTitle: result.topicTitle ?? "" } : {}) };
   } catch (error) {

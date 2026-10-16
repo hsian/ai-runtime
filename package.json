@@ -4,7 +4,8 @@
   "workspaces": [
     "web",
     "extension",
-    "server"
+    "server",
+    "shared"
   ],
   "scripts": {
     "dev": "node scripts/dev.mjs",

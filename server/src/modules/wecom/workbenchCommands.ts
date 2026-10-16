@@ -4,17 +4,18 @@ import { getDatabase } from "../../services/database.js";
 import { createJob, getJob, listJobs, updateJob } from "../../services/jobStore.js";
 import { getProjectGitService } from "../../services/projectRuntime.js";
 import type { GitCommitDiff } from "../../services/gitService.js";
-import { confirmJobMerge } from "../../services/jobMergeService.js";
-import { jobQueue } from "../../services/jobQueue.js";
 import { getWorkbenchPreferences, setWorkbenchPreferences } from "../../services/workbenchPreferences.js";
 import { receiveWorkbenchMessage } from "../../services/workbenchSession.js";
 import { syncWorkbenchTask } from "../../services/tapd/taskStatusSync.js";
+import { requestTaskMerge } from "../../services/taskOperations.js";
+import { getTaskState } from "@ai-runtime/shared/task-state";
 import { getTask, getBug, getIterationWorkItems, listIterationBugs, listIterations, loadBackendDependencies } from "../../services/tapd/tapdClient.js";
 import { copyJobAttachments, deleteJobAttachments } from "../../services/uploadService.js";
 import { loadTapdSnapshot } from "./tapdBridge.js";
 import { canModifyCode } from "./permissions.js";
 import type { WecomConfig } from "./config.js";
 import type { Job } from "../../types.js";
+import { formatModelCommand } from "./modelCommand.js";
 
 export const WORKBENCH_COMMAND_HELP = `工作台固定命令（私聊使用）：
 /use                 查看项目，显示当前选择
@@ -33,10 +34,11 @@ export const WORKBENCH_COMMAND_HELP = `工作台固定命令（私聊使用）�
 /review T1           查看修改摘要、验证结果和 Diff 链接
 /done T1             获取当前版本的合并确认码
 /done T1 确认码      合并该版本；任务改已完成，Bug 改已解决并转创建人
+/model               查看默认引擎、模型和自己任务的实际引擎
 /help                打印本帮助
 
 P/I/T 编号绑定真实条目，不会因翻页变成其他任务。项目和迭代与工作台按账号共用。
-后端状态仅供参考，由你判断何时 start。参数错误不猜测执行；同一任务沿用原引擎和工作区。`;
+后端状态仅供参考，由你判断何时 start。参数错误不猜测执行；同一任务沿用原工作区。`;
 
 interface Account { id: string; username: string; tapd_owner_name: string }
 interface Item { workspaceId: string; iterationId?: string; itemId: string; type: "task" | "bug"; title: string; storyId?: string; status?: string }
@@ -44,8 +46,7 @@ interface Choice { short_id: number; data: string }
 interface PageState { page?: number; search?: string; kind?: string; workspaceId?: string }
 const urlFor = (workspace: string, type: string, id: string) => `https://www.tapd.cn/tapd_fe/${workspace}/${type}/detail/${id}`;
 const owns = (owner: string | undefined, name: string) => Boolean(name && owner?.split(/[;；,，|]/).some(value => value.trim() === name.trim()));
-const ready = (job: Job) => job.status === "awaiting_merge" && !job.workbenchTurnRunning && !job.workbenchPauseRequested && !job.workbenchReset
-  && Boolean(job.commitSha && job.branch && job.worktreePath && job.commitSha !== job.workbenchBaseCommitSha && job.workbenchHasCodeChanges !== false);
+const ready = (job: Job) => getTaskState(job).canComplete && !job.workbenchPauseRequested && Boolean(job.branch && job.worktreePath);
 
 export function createWorkbenchCommands(options: WecomConfig, accountFor: (sender: string) => Account | undefined,
   receive = receiveWorkbenchMessage, snapshotLoader = loadTapdSnapshot, operations?: {
@@ -90,15 +91,21 @@ export function createWorkbenchCommands(options: WecomConfig, accountFor: (sende
       : job.tapdContext?.workspaceId === item.workspaceId && job.tapdContext?.itemType === "bug" && job.tapdContext.itemId === item.itemId));
 
   return async (sender: string, text: string, context: { group?: boolean; voice?: boolean; images?: boolean } = {}): Promise<string | undefined> => {
-    if (/^-(help|use|list|analyze|start|reply|review|done)(?:\s|$)/i.test(text.trim())) return "工作台命令已改为 / 前缀，请发送 /help 查看用法。";
+    if (/^-(help|use|list|analyze|start|reply|review|done|model)(?:\s|$)/i.test(text.trim())) return "工作台命令已改为 / 前缀，请发送 /help 查看用法。";
     if (!/^\/[a-z]/i.test(text.trim())) return;
-    const parsed = /^\/(help|use|list|analyze|start|reply|review|done)(?:\s+([\s\S]*))?$/i.exec(text.trim());
+    const parsed = /^\/(help|use|list|analyze|start|reply|review|done|model)(?:\s+([\s\S]*))?$/i.exec(text.trim());
     if (!parsed) return "未知工作台命令，请发送 /help 查看全部命令。";
     const command = parsed[1].toLowerCase(), argument = (parsed[2] || "").trim();
     if (command === "help") return argument ? "帮助命令不需要参数。\n" + WORKBENCH_COMMAND_HELP : WORKBENCH_COMMAND_HELP;
     if (context.group) return "请私聊小迪使用工作台命令，避免在群里展示个人任务。";
     if (context.voice || context.images) return "固定命令请用文字发送；图片请在工作台补充。";
     const account = accountFor(sender);
+    if (command === "model") {
+      if (argument) return "用法：/model，不需要参数。";
+      const own = listJobs().filter(job => job.ownerId === `wecom:${options.botId}:${sender}`
+        || Boolean(account && job.workbenchSession && job.workbenchUserId === account.id));
+      return formatModelCommand(own);
+    }
     if (!account) return "企微身份没有唯一对应的有效工作台账号，请检查姓名映射。";
     try {
       const cfg = getTapdConfig();
@@ -206,9 +213,7 @@ export function createWorkbenchCommands(options: WecomConfig, accountFor: (sende
         }
         if (!confirmation || confirmation.code !== match[2].trim() || confirmation.expires_at < Date.now() || confirmation.commit_sha !== job.commitSha) return "确认码无效、已过期或代码已更新。请重新 /review，再发送 /done 获取确认码。";
         db.prepare("DELETE FROM workbench_merge_confirmations WHERE bot_id=? AND user_id=? AND job_id=?").run(options.botId, account.id, job.jobId);
-        updateJob(job.jobId, { status: "pending", message: "已从小迪确认合并，等待排队…", mergeRetryable: false });
-        if (operations?.enqueueMerge) operations.enqueueMerge(job.jobId);
-        else jobQueue.enqueue(job.jobId, async id => { await confirmJobMerge(id); });
+        requestTaskMerge(job.jobId, { enqueue: operations?.enqueueMerge ? id => { operations.enqueueMerge!(id); return 0; } : undefined });
         return `已确认当前版本，开始合并。${item.type === "bug" ? "合并成功后将 Bug 改为已解决，并转回创建人回归。" : "TAPD 会在合并成功后同步已完成。"}${link(job)}`;
       }
       if (job?.workbenchTurnRunning || (job && ["running", "pending"].includes(job.status) && !job.workbenchPauseRequested)) return "该任务正在处理，请等本轮结束；需要停止可到工作台操作。";

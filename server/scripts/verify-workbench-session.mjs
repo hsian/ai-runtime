@@ -38,6 +38,14 @@ process.stdin.setEncoding('utf8'); process.stdin.on('data', text => prompt += te
 process.stdin.on('end', () => {
   const args = process.argv.slice(2);
   const outputIndex = args.indexOf('--output-last-message');
+  if (args.includes('--skip-git-repo-check')) {
+    const input = JSON.parse(prompt.trim().split('\n').at(-1));
+    const chat = input.message.includes('收集下今天的新闻');
+    const result = { intent: chat ? 'chat' : 'plan', relation: 'related',
+      reply: chat ? '当前无法联网获取实时新闻。' : '', prompt: chat ? '' : input.message,
+      topicId: input.linkedTopicId, topicTitle: '当前对话' };
+    fs.writeFileSync(args[outputIndex + 1], JSON.stringify(result)); return;
+  }
   const latest = [...prompt.matchAll(/用户：([^\n]+)/g)].at(-1)?.[1] || '';
   if (args.includes('--output-schema')) {
     const result = latest.includes('开始处理') ? { action: 'needs_input', message: '验证码有效期希望设为多久？', plan: '' } : { action: 'implement', message: '我会结合最新补充继续修改并验证。', plan: '按最新要求修改当前工作区中的登录功能，执行适当验证。' };
@@ -101,11 +109,18 @@ const moduleRoot = new URL("../dist/services/", import.meta.url);
 const { createJob, getJob, updateJob, initJobStore } = await import(new URL("jobStore.js", moduleRoot));
 const { receiveWorkbenchMessage, pauseWorkbenchSession } = await import(new URL("workbenchSession.js", moduleRoot));
 const { getProjectGitService } = await import(new URL("projectRuntime.js", moduleRoot));
-const { confirmJobMerge } = await import(new URL("jobMergeService.js", moduleRoot));
+const { requestTaskMerge } = await import(new URL("taskOperations.js", moduleRoot));
 const { closeDatabase } = await import(new URL("database.js", moduleRoot));
 const { syncWorkbenchTask } = await import(new URL("tapd/taskStatusSync.js", moduleRoot));
 try {
   initJobStore();
+  const social = createJob({ prompt: '收集下今天的新闻给我', ownerId: 'alice', conversationId: 'social', projectId: 'b2b-composite', taskMode: 'code' });
+  updateJob(social.jobId, { workbenchSession: true, status: 'awaiting_input' });
+  receiveWorkbenchMessage(social.jobId, '收集下今天的新闻给我');
+  await waitFor(() => getJob(social.jobId)?.workbenchProcessedInputs === 1 && !getJob(social.jobId)?.workbenchTurnRunning, 'tool-free social routing');
+  assert.equal(getJob(social.jobId).worktreePath, undefined, 'social chat must not create a worktree');
+  assert.equal(getJob(social.jobId).workbenchMessages.at(-1).text, '当前无法联网获取实时新闻。');
+  assert.equal(tapdStatus, 'open');
   const job = createJob({ prompt: "实现短信登录入口", ownerId: "alice", conversationId: "task-1", projectId: "b2b-composite", agentProvider: "codex", taskMode: "code" });
   updateJob(job.jobId, { workbenchSession: true, status: "awaiting_input", tapdTask: { workspaceId: "123", taskId: "456" }, tapdOperator: "alice" });
   receiveWorkbenchMessage(job.jobId, "请开始处理这个需求。");
@@ -156,7 +171,8 @@ try {
   assert.equal(getJob(job.jobId).workbenchReset, false);
   assert.equal(getJob(job.jobId).commitSha, preservedCommit);
   assert.equal(await readFile(join(worktree, "partial.txt"), "utf8"), "preserved work\n");
-  await confirmJobMerge(job.jobId);
+  requestTaskMerge(job.jobId);
+  await waitFor(() => getJob(job.jobId)?.status === "completed" && getJob(job.jobId)?.tapdSync?.state === "failed", "shared completion operation");
   assert.equal(getJob(job.jobId).status, "completed");
   assert.equal(getJob(job.jobId).tapdSync.state, "failed");
   assert.equal(tapdStatus, "progressing");
@@ -210,7 +226,8 @@ try {
   receiveWorkbenchMessage(bugJob.jobId, "修复Bug验证");
   await waitFor(() => getJob(bugJob.jobId)?.status === "awaiting_merge" && !getJob(bugJob.jobId)?.workbenchTurnRunning, "bug fix ready for Review");
   assert.equal(bugWrites, 0, "must not resolve Bug before user reviews and completes");
-  await confirmJobMerge(bugJob.jobId);
+  requestTaskMerge(bugJob.jobId);
+  await waitFor(() => getJob(bugJob.jobId)?.status === "completed" && getJob(bugJob.jobId)?.tapdSync?.state === "failed", "shared bug completion operation");
   assert.equal(getJob(bugJob.jobId).status, "completed");
   assert.equal(getJob(bugJob.jobId).tapdSync.target, "resolved");
   assert.equal(getJob(bugJob.jobId).tapdSync.state, "failed");

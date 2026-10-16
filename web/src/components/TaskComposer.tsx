@@ -3,20 +3,18 @@ import { App as AntApp, Button, Dropdown, Image, Input, Tag, Tooltip } from "ant
 import type { ClipboardEvent } from "react";
 import { useEffect, useRef, useState } from "react";
 
-import type { AgentProvider, TapdContext, TapdImageOption, TaskMode } from "../types";
+import type { TapdContext, TapdImageOption, TaskMode } from "../types";
 import { taskModeLabels } from "../utils/taskMode";
 
 export function TaskComposer(props: {
   value: string;
   taskMode: TaskMode;
-  agentProvider: AgentProvider;
   files: File[];
   tapdContext?: TapdContext;
   tapdImages: TapdImageOption[];
   submitting: boolean;
   onChange: (value: string) => void;
   onTaskModeChange: (value: TaskMode) => void;
-  onAgentProviderChange: (value: AgentProvider) => void;
   onFilesChange: (files: File[]) => void;
   onOpenTapd: () => void;
   onOpenApiDocs: () => void;
@@ -102,23 +100,6 @@ export function TaskComposer(props: {
       />
       <div className="composer-toolbar">
         <div className="composer-tools">
-          <div className="agent-provider-pills" role="radiogroup" aria-label="执行模型">
-            {([
-              ["claude", "默认模式"],
-              ["codex", "智能模式"],
-            ] as const).map(([value, label]) => (
-              <button
-                key={value}
-                type="button"
-                role="radio"
-                aria-checked={props.agentProvider === value}
-                className={`agent-provider-pill${props.agentProvider === value ? " is-active" : ""}`}
-                onClick={() => props.onAgentProviderChange(value)}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
           <input ref={inputRef} hidden type="file" accept="image/*" multiple onChange={(event) => addFiles(event.target.files)} />
           <Tooltip title="选择图片，也可以在输入框中直接 Ctrl+V 粘贴截图">
             <Button className="composer-tool-button" type="text" icon={<PaperClipOutlined />} onClick={() => inputRef.current?.click()}>图片</Button>

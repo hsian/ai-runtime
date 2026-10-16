@@ -14,6 +14,7 @@ export interface AgentStreamEvent {
   type: "agent_text" | "agent_tool" | "agent_status";
   delta?: string;
   statusText?: string;
+  agentProvider?: AgentProvider;
   toolAction?: "start" | "done";
   toolName?: string;
   toolDetail?: string;

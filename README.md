@@ -7,6 +7,7 @@
 ```text
 web/        React + TypeScript + Ant Design 前端
 server/     Express API、Agent、Git、TAPD、SQLite 任务存储和任务队列
+shared/     前后端共用的纯任务状态规则，无运行依赖
 extension/  旧版 Chrome 插件，仅保留用于迁移对照，不参与默认构建
 ```
 
@@ -45,6 +46,8 @@ Web 页面支持 Plan 待确认、等待合并、任务完成和执行失败提�
 npm run build
 npm run start -w server
 ```
+
+Web 和服务端的构建会先自动编译本地 `@ai-runtime/shared` workspace 包。部署时保留 `shared` 目录及 npm workspace 依赖链接，服务端生产运行读取 `shared/dist`；开发模式直接使用共享源码。沿用上面的根目录安装、构建和启动命令即可。
 
 默认构建 React Web 和服务端。Express 会从 `web/dist` 同源托管页面，浏览器直接访问：
 
@@ -118,10 +121,12 @@ npm run auth:create-admin -- zhengweixian 郑伟贤 郑伟贤
 
 ## Agent 执行引擎
 
-前端输入框下方可按任务选择 `Claude` 或 `Codex`。服务端默认值由 `server/.env` 的 `AGENT_PROVIDER` 控制：
+工作台、原 Web 和小迪统一优先使用 Codex，不再显示引擎选择。Codex 明确返回账号额度耗尽时，会提示并自动切换到 Claude，在同一工作区中继续当前任务，保留对话、附件和执行权限。每次新调用仍先尝试 Codex，额度恢复后即可继续使用，无需定时检查。
+
+网络错误、登录失败、普通 429 限流或主动停止不会触发切换。Claude 也失败时会正常报告失败，不循环重试。`AGENT_PROVIDER` 和历史请求中的引擎字段仅为旧客户端兼容保留，不再控制实际引擎选择。服务端需同时安装并配置两个 CLI：
 
 ```env
-AGENT_PROVIDER=claude
+CLAUDE_CLI_PATH=claude
 CODEX_CLI_PATH=codex
 CODEX_ENABLE_SYSTEM_PROXY=true
 CODEX_DISABLE_WEBSOCKETS=true

@@ -1,9 +1,12 @@
-import { config } from "../../config.js";
+import { createAutomaticAgent } from "./providerFallback.js";
 import { prepareAgentApiDocs } from "../agentApiDocs.js";
 import { runClaudeAgent } from "./claudeAgentService.js";
 import { runCodexAgent } from "./codexAgentService.js";
 import type { AgentEventHandler, AgentProvider, AgentResult, AgentRunOptions } from "./types.js";
 import type { PageContext } from "../../types.js";
+import { getJob, updateJob } from "../jobStore.js";
+
+const runAutomatically = createAutomaticAgent(runCodexAgent, runClaudeAgent);
 
 export type { AgentResult, AgentEventHandler, AgentProvider } from "./types.js";
 export { killAgentForJob } from "./agentProcessRegistry.js";
@@ -16,7 +19,12 @@ export async function runAgent(
   onEvent?: AgentEventHandler,
   options?: AgentRunOptions
 ): Promise<AgentResult> {
-  const provider: AgentProvider = options?.agentProvider ?? config.AGENT_PROVIDER;
+  const recordProvider = (provider: AgentProvider) => {
+    if (!options?.jobId) return;
+    const job = getJob(options.jobId);
+    if (job && job.agentProvider !== provider) updateJob(job.jobId, { agentProvider: provider });
+  };
+  recordProvider("codex");
   let documents: Awaited<ReturnType<typeof prepareAgentApiDocs>> | undefined;
   if (options?.apiDocAccess && !options.disableTools) {
     onEvent?.({ type: "agent_status", statusText: "正在读取最新接口文档…" });
@@ -27,7 +35,9 @@ export async function runAgent(
     }
   }
   try {
-    return provider === "codex" ? await runCodexAgent(repoPath, prompt, pageContext, onEvent, options)
-      : await runClaudeAgent(repoPath, prompt, pageContext, onEvent, options);
+    return await runAutomatically(repoPath, prompt, pageContext, event => {
+      if (event.agentProvider) recordProvider(event.agentProvider);
+      onEvent?.(event);
+    }, options);
   } finally { await documents?.dispose(); }
 }

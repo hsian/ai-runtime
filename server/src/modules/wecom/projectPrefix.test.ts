@@ -43,7 +43,7 @@ test("WeCom question prompts guide changes through chat while Web keeps its mode
         assert.match(text, /禁止修改|严禁修改/);
         assert.match(text, /不要让用户对当前问答任务直接回复执行/);
       }
-      const command = [agentProvider === "codex" ? "#codex" : "", projectId === mini ? "#小程序" : "",
+      const command = [projectId === mini ? "#小程序" : "",
         "修改：具体需求"].filter(Boolean).join(" ");
       assert.ok(guidance.includes(`「${command}」`));
     }
@@ -56,10 +56,10 @@ test("WeCom question prompts guide changes through chat while Web keeps its mode
   assert.doesNotMatch(readOnlyGuidance, /修改：具体需求/);
 });
 
-test("project and engine prefixes combine in either order and do not match embedded text", () => {
-  for (const prefix of ["#codex #小程序", "#小程序 #codex"]) {
+test("project prefixes support whitespace and colons without matching embedded text", () => {
+  for (const prefix of ["#小程序", "#小程序："]) {
     assert.deepEqual(parseCommand(`${prefix} 问答：登录逻辑`),
-      { action: "question", text: "登录逻辑", agentProvider: "codex", projectId: mini });
+      { action: "question", text: "登录逻辑", projectId: mini });
   }
   assert.deepEqual(parseCommand("#小程序 状态"), { action: "status", jobId: undefined, projectId: mini });
   assert.deepEqual(parseCommand("#小程序：执行"), { action: "execute", jobId: undefined, projectId: mini });
@@ -74,7 +74,7 @@ test("mini-program tasks use the selected project and retain their task engine",
   const stopBeforeAgent = new Error("Stop before external agent");
   for (const task of ["问答", "修改", "测试用例"]) {
     let jobId = "";
-    await assert.rejects(dispatchCommand(session, parseCommand(`#小程序 #codex ${task}：登录`), `${task}-mini`, selected,
+    await assert.rejects(dispatchCommand(session, parseCommand(`#小程序 ${task}：登录`), `${task}-mini`, selected,
       id => { jobId = id; throw stopBeforeAgent; }), error => error === stopBeforeAgent);
     const job = getJob(jobId)!;
     assert.equal(job.projectId, mini);
@@ -84,10 +84,10 @@ test("mini-program tasks use the selected project and retain their task engine",
   }
 });
 
-test("combined prefixes survive TAPD preparation and semantic routing", async () => {
+test("project prefix survives TAPD preparation and semantic routing", async () => {
   const session = store.getSession(options.botId, "tapd", "alice", mini);
   const url = "https://www.tapd.cn/123/stories/view/456";
-  const prepared = await prepareTapdMessage(session, `#小程序 #codex ${url} 生成用例`, async () => ({
+  const prepared = await prepareTapdMessage(session, `#小程序 ${url} 生成用例`, async () => ({
     snapshotId: randomUUID(), context: { url, workspaceId: "123", itemType: "story", itemId: "456",
       title: "Mini login", description: "Mini validation", commentCount: 0, fetchedAt: new Date().toISOString() },
     attachments: [], warnings: [],
@@ -97,7 +97,7 @@ test("combined prefixes survive TAPD preparation and semantic routing", async ()
     return JSON.stringify({ intent: "test-case", prompt: "Mini login cases", reply: "", topicId: prepared.topicId });
   });
   assert.equal(command.projectId, mini);
-  assert.equal(command.agentProvider, "codex");
+  assert.equal("agentProvider" in command, false);
   assert.equal(command.topicId, session.conversation_id);
 });
 
@@ -121,14 +121,14 @@ test("message routing isolates project history and locates numbered tasks only i
   try {
     await send("问答：composite-only-context");
     await send("#小程序 问答：mini-only-context");
-    await send("#codex #小程序 问答：组合测试");
+    await send("#小程序 问答：组合测试");
     await send("问答：默认项目追问");
     assert.deepEqual(seen.map(item => item.project), [options.projectId, mini, mini, options.projectId]);
     assert.doesNotMatch(seen[1].history, /composite-only-context/);
     assert.match(seen[2].history, /mini-only-context/);
     assert.doesNotMatch(seen[3].history, /mini-only-context/);
-    assert.equal(seen[2].command.agentProvider, "codex");
-    assert.equal(seen[3].command.agentProvider, undefined);
+    assert.equal("agentProvider" in seen[2].command, false);
+    assert.equal("agentProvider" in seen[3].command, false);
     const session = store.getSession(options.botId, "group", "alice", mini);
     const job = createJob({ prompt: "Mini task", projectId: mini, ownerId: session.owner_id,
       conversationId: session.conversation_id, taskMode: "question" });

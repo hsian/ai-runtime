@@ -1,3 +1,8 @@
+import { jobArtifactsRouter } from "./jobArtifacts.js";
+import { toPublicJob } from "../services/publicJob.js";
+import { authorizedJobs, isAuthorizedJob, getAuthorizedJob, getRequestOwnerId } from "./jobAccess.js";
+import { workbenchQueries } from "./workbenchQueries.js";
+import { subscribeJobChanges } from "../services/jobChanges.js";
 import { runQuestion, runQueuedPlan, parseClarificationAnswers, resumePlannedJob, executePlannedJob, cancelOwnedJob } from "../services/jobActions.js";
 import { Router } from "express";
 import {
@@ -19,82 +24,29 @@ import {
   multerErrorMessage,
 } from "../services/uploadService.js";
 import { isMultipartSubmit, parseJobSubmitBody } from "../middleware/parseJobSubmit.js";
-import { confirmJobMerge, createJobMergeRequest, discardJobMerge, mergeCompletedJobToBranch, revertCompletedJobFromDefaultBranch } from "../services/jobMergeService.js";
+import { revertCompletedJobFromDefaultBranch } from "../services/jobMergeService.js";
 import type { JobRequest } from "../types.js";
 import type { AgentProvider } from "../services/agent/index.js";
 import { logOperation } from "../services/operationLog.js";
 import { getClientIdentity } from "../services/clientIdentity.js";
 import { getProject } from "../services/projectRegistry.js";
 import { getProjectGitService } from "../services/projectRuntime.js";
-import { deleteMiniProgramPreview, generateMiniProgramPreview, getMiniProgramPreviewPath, uploadMiniProgramCode } from "../services/miniProgramPreviewService.js";
-import { existsSync } from "fs";
+import { deleteMiniProgramPreview } from "../services/miniProgramPreviewService.js";
 import { receiveWorkbenchMessage, pauseWorkbenchSession, assertWorkbenchCanReceive } from "../services/workbenchSession.js";
 import { getAuthUser, requireSameOrigin } from "../services/auth.js";
 import { syncWorkbenchTask } from "../services/tapd/taskStatusSync.js";
 import { z } from "zod";
+import { requestTaskMerge, releaseTaskToBranch } from "../services/taskOperations.js";
 
-
-function getRequestOwnerId(req: import("express").Request): string {
-  return getClientIdentity(req).ownerId;
-}
 
 function getJobAgentProvider(job: Pick<JobRequest, "agentProvider">): AgentProvider {
   return job.agentProvider ?? config.AGENT_PROVIDER;
-}
-
-function toPublicJob(job: NonNullable<ReturnType<typeof getJob>>) {
-  const {
-    attachments,
-    conversationHistory: _conversationHistory,
-    ownerId: _ownerId,
-    remoteIp: _remoteIp,
-    previewHost: _previewHost,
-    worktreePath: _worktreePath,
-    ...publicJob
-  } = job;
-  return {
-    ...publicJob,
-    agentProvider: getJobAgentProvider(job),
-    attachments: attachments?.map((attachment, index) => ({
-      index,
-      name: attachment.name,
-      mime: attachment.mime,
-      sizeBytes: attachment.sizeBytes,
-      url: `/api/jobs/${encodeURIComponent(job.jobId)}/attachments/${index}`,
-    })),
-  };
 }
 
 function getPublicJob(jobId: string) {
   const job = getJob(jobId);
   return job ? toPublicJob(job) : undefined;
 }
-
-function isAuthorizedJob(
-  job: NonNullable<ReturnType<typeof getJob>>,
-  ownerId: string,
-  userId?: string
-): boolean {
-  if (job.workbenchUserId) return job.workbenchUserId === userId;
-  return !job.ownerId || job.ownerId === ownerId;
-}
-
-function authorizedJobs(req: import("express").Request) {
-  return listJobs().filter(job => isAuthorizedJob(job, getRequestOwnerId(req), getAuthUser(req)?.id));
-}
-
-function getAuthorizedJob(
-  req: import("express").Request,
-  res: import("express").Response
-): NonNullable<ReturnType<typeof getJob>> | undefined {
-  const job = getJob(req.params.jobId);
-  if (!job || !isAuthorizedJob(job, getRequestOwnerId(req), getAuthUser(req)?.id)) {
-    res.status(404).json({ error: "任务不存在" });
-    return undefined;
-  }
-  return job;
-}
-
 
 function handleJobImagesUpload(
   req: import("express").Request,
@@ -163,6 +115,8 @@ function emitUserSubmitEvents(jobId: string, data: JobRequest): void {
 }
 
 export const jobsRouter = Router();
+jobsRouter.use("/workbench", workbenchQueries);
+jobsRouter.use(jobArtifactsRouter);
 
 jobsRouter.post("/workbench", handleJobImagesUpload, (req, res) => {
   const user = getAuthUser(req);
@@ -413,26 +367,9 @@ jobsRouter.post("/:jobId/merge", (req, res) => {
   const retryingMerge = job.mergeRetryable === true;
   const createMergeRequest = !retryingMerge && body?.createMergeRequest === true;
 
-  updateJob(jobId, {
-    status: "pending",
-    message: retryingMerge
-      ? "已请求重试合并，等待排队..."
-      : createMergeRequest
-        ? "已确认提交 Merge Request，等待排队..."
-        : "已确认合并，等待排队...",
-    mergeRetryable: false,
-  });
-
-  const mergeWorker = async (queuedJobId: string) => {
-    if (createMergeRequest) {
-      await createJobMergeRequest(queuedJobId);
-    } else {
-      await confirmJobMerge(queuedJobId);
-    }
-  };
-
-  const gateJobsAhead = jobQueue.enqueueGateContinuation(jobId, mergeWorker);
-  const jobsAhead = gateJobsAhead ?? jobQueue.enqueue(jobId, mergeWorker);
+  let jobsAhead: number;
+  try { jobsAhead = requestTaskMerge(jobId, { createMergeRequest }); }
+  catch (error) { res.status(409).json({ error: error instanceof Error ? error.message : String(error) }); return; }
 
   res.status(202).json({
     jobId,
@@ -458,19 +395,10 @@ jobsRouter.post("/:jobId/discard-merge", async (req, res) => {
     return;
   }
 
-  updateJob(jobId, { status: "pending", message: "已确认放弃合并，等待排队..." });
-  const discardWorker = async (queuedJobId: string) => {
-    try {
-      await discardJobMerge(queuedJobId);
-    } catch (err) {
-      const error = err instanceof Error ? err.message : String(err);
-      updateJob(queuedJobId, { status: "failed", error, message: "放弃合并失败" });
-      appendJobEvent(queuedJobId, { type: "error", message: error, text: `放弃合并失败: ${error}` });
-      throw err;
-    }
-  };
-  const gateJobsAhead = jobQueue.enqueueGateContinuation(jobId, discardWorker);
-  const jobsAhead = gateJobsAhead ?? jobQueue.enqueue(jobId, discardWorker);
+  let jobsAhead: number;
+  try { jobsAhead = requestTaskMerge(jobId, { discard: true }); }
+  catch (error) { res.status(409).json({ error: error instanceof Error ? error.message : String(error) }); return; }
+
   res.status(202).json({
     ok: true,
     status: "pending",
@@ -518,10 +446,7 @@ jobsRouter.post("/:jobId/release-merge", async (req, res) => {
   }
 
   try {
-    const { done } = jobQueue.enqueueAndWait(jobId, async (queuedJobId) => {
-      await mergeCompletedJobToBranch(queuedJobId, targetBranch);
-    });
-    await done;
+    await releaseTaskToBranch(jobId, targetBranch);
     res.json({ ok: true, job: getPublicJob(jobId) });
   } catch (err) {
     res.status(400).json({ error: err instanceof Error ? err.message : String(err), job: getPublicJob(jobId) });
@@ -544,91 +469,6 @@ jobsRouter.post("/:jobId/revert-default", async (req, res) => {
   }
 });
 
-jobsRouter.post("/:jobId/mini-program-preview", async (req, res) => {
-  const jobId = req.params.jobId;
-  const job = getAuthorizedJob(req, res);
-  if (!job) return;
-  const project = getProject(job.projectId);
-  if (project.type !== "wechat-mini-program" || !project.miniProgram) {
-    res.status(400).json({ error: "当前任务不属于小程序项目" });
-    return;
-  }
-  if (job.status !== "completed" || !job.mergedToDefaultBranch || !(job.sourceCommitSha || job.commitSha)) {
-    res.status(400).json({ error: "代码合并到默认分支后才能生成体验版二维码" });
-    return;
-  }
-  try {
-    appendJobEvent(jobId, { type: "stage", phase: "mini_program_preview", text: "正在通过微信 CI 生成体验版二维码..." });
-    let previewCommitSha = "";
-    const { done } = jobQueue.enqueueAndWait(jobId, async () => {
-      const result = await generateMiniProgramPreview(job.projectId, jobId, job.implementationSummary || job.prompt, job.sourceCommitSha || job.commitSha || jobId);
-      previewCommitSha = result.commitSha;
-    });
-    await done;
-    const createdAt = new Date().toISOString();
-    const previewUrl = `/api/jobs/${encodeURIComponent(jobId)}/mini-program-preview`;
-    updateJob(jobId, { miniProgramPreviewUrl: previewUrl, miniProgramPreviewCreatedAt: createdAt, miniProgramPreviewCommitSha: previewCommitSha });
-    appendJobEvent(jobId, { type: "stage", phase: "mini_program_preview_done", text: "体验版二维码已生成" });
-    res.json({ ok: true, previewUrl, createdAt, job: getPublicJob(jobId) });
-  } catch (err) {
-    const error = err instanceof Error ? err.message : String(err);
-    appendJobEvent(jobId, { type: "error", phase: "mini_program_preview_failed", text: `体验版二维码生成失败：${error}`, message: error });
-    res.status(400).json({ error });
-  }
-});
-
-jobsRouter.post("/:jobId/mini-program-upload", async (req, res) => {
-  const jobId = req.params.jobId;
-  const job = getAuthorizedJob(req, res);
-  if (!job) return;
-  const project = getProject(job.projectId);
-  if (project.type !== "wechat-mini-program" || !project.miniProgram) {
-    res.status(400).json({ error: "当前任务不属于小程序项目" });
-    return;
-  }
-  if (job.status !== "completed" || !job.mergedToDefaultBranch || job.revertedFromDefaultAt) {
-    res.status(400).json({ error: "代码合并到默认分支后才能上传小程序代码" });
-    return;
-  }
-  const version = typeof req.body?.version === "string" ? req.body.version.trim() : "";
-  const description = typeof req.body?.description === "string" ? req.body.description.trim() : "";
-  if (!version || version.length > 64) {
-    res.status(400).json({ error: "请填写 1-64 个字符的上传版本号" });
-    return;
-  }
-  try {
-    logOperation({ action: "mini_program_upload", status: "started", jobId, ownerId: job.ownerId, targetBranch: project.defaultBranch, message: version });
-    appendJobEvent(jobId, { type: "stage", phase: "mini_program_upload", text: `正在上传小程序开发版本 ${version}...` });
-    const { done } = jobQueue.enqueueAndWait(jobId, async () => {
-      await uploadMiniProgramCode(job.projectId, version, description || job.prompt);
-    });
-    await done;
-    const uploadedAt = new Date().toISOString();
-    updateJob(jobId, { miniProgramUploadVersion: version, miniProgramUploadDescription: description || job.prompt, miniProgramUploadedAt: uploadedAt });
-    logOperation({ action: "mini_program_upload", status: "success", jobId, ownerId: job.ownerId, targetBranch: project.defaultBranch, message: version });
-    appendJobEvent(jobId, { type: "stage", phase: "mini_program_upload_done", text: `小程序开发版本 ${version} 已上传` });
-    res.json({ ok: true, uploadedAt, job: getPublicJob(jobId) });
-  } catch (err) {
-    const error = err instanceof Error ? err.message : String(err);
-    logOperation({ action: "mini_program_upload", status: "failed", jobId, ownerId: job.ownerId, targetBranch: project.defaultBranch, error });
-    appendJobEvent(jobId, { type: "error", phase: "mini_program_upload_failed", text: `小程序代码上传失败：${error}`, message: error });
-    res.status(400).json({ error });
-  }
-});
-
-jobsRouter.get("/:jobId/mini-program-preview", (req, res) => {
-  const job = getAuthorizedJob(req, res);
-  if (!job) return;
-  const outputPath = getMiniProgramPreviewPath(job.jobId);
-  if (!job.miniProgramPreviewUrl || !existsSync(outputPath)) {
-    res.status(404).json({ error: "体验版二维码尚未生成" });
-    return;
-  }
-  res.setHeader("Cache-Control", "private, no-store");
-  res.type("png");
-  res.sendFile(outputPath);
-});
-
 jobsRouter.get("/context-stats/:conversationId", (req, res) => {
   res.json(
     getConversationContextStats(
@@ -646,42 +486,6 @@ jobsRouter.get("/:jobId/events", (req, res) => {
   res.json({ events: getJobEvents(job.jobId) });
 });
 
-jobsRouter.get("/:jobId/diff", async (req, res) => {
-  const job = getAuthorizedJob(req, res);
-  if (!job) return;
-
-  const commitSha = job.sourceCommitSha || job.commitSha;
-  if (!commitSha) {
-    res.status(404).json({ error: "当前任务没有可查看的代码改动" });
-    return;
-  }
-
-  const filePath = typeof req.query.file === "string" ? req.query.file.trim() : undefined;
-  try {
-    const gitService = getProjectGitService(job.projectId);
-    const diff = await gitService.getCommitDiff(commitSha, filePath || undefined, job.workbenchSession && job.worktreePath ? job.workbenchBaseCommitSha : undefined);
-    res.setHeader("Cache-Control", "private, no-store");
-    res.json(diff);
-  } catch (err) {
-    res.status(400).json({ error: err instanceof Error ? err.message : String(err) });
-  }
-});
-
-jobsRouter.get("/:jobId/attachments/:index", (req, res) => {
-  const job = getAuthorizedJob(req, res);
-  if (!job) return;
-  const index = Number(req.params.index);
-  const attachment = Number.isInteger(index) && index >= 0 ? job.attachments?.[index] : undefined;
-  if (!attachment) {
-    res.status(404).json({ error: "图片不存在" });
-    return;
-  }
-  res.setHeader("Cache-Control", "private, max-age=3600");
-  res.setHeader("Content-Disposition", `inline; filename*=UTF-8''${encodeURIComponent(attachment.name)}`);
-  res.type(attachment.mime);
-  res.sendFile(attachment.path);
-});
-
 jobsRouter.get("/:jobId/stream", (req, res) => {
   const jobId = req.params.jobId;
   const job = getAuthorizedJob(req, res);
@@ -696,6 +500,18 @@ jobsRouter.get("/:jobId/stream", (req, res) => {
     res.write(`data: ${JSON.stringify(event)}\n\n`);
   };
 
+  // State-only updates (actor finished, pause, engine change) need no polling.
+  const writeState = () => {
+    const latest = getJob(jobId);
+    if (latest && isAuthorizedJob(latest, getRequestOwnerId(req), getAuthUser(req)?.id)) res.write(`event: state\ndata: ${JSON.stringify(toPublicJob(latest))}\n\n`);
+  };
+  writeState();
+  let stateTimer: ReturnType<typeof setTimeout> | undefined;
+  const unsubscribeState = subscribeJobChanges(id => {
+    if (id !== jobId || stateTimer) return;
+    stateTimer = setTimeout(() => { stateTimer = undefined; writeState(); }, 100);
+  });
+
   for (const event of getJobEvents(jobId)) {
     writeEvent(event);
   }
@@ -706,7 +522,7 @@ jobsRouter.get("/:jobId/stream", (req, res) => {
 
   const unsubscribe = subscribeJobEvents(jobId, (event) => {
     writeEvent(event);
-    if (event.type === "done" || event.type === "cancelled" || event.type === "error") {
+    if (!job.workbenchSession && req.query.continuous !== "true" && (event.type === "done" || event.type === "cancelled" || event.type === "error")) {
       res.write("event: close\ndata: {}\n\n");
     }
   });
@@ -717,8 +533,26 @@ jobsRouter.get("/:jobId/stream", (req, res) => {
 
   req.on("close", () => {
     clearInterval(heartbeat);
+    clearTimeout(stateTimer);
+    unsubscribeState();
     unsubscribe();
   });
+});
+
+jobsRouter.get("/changes", (req, res) => {
+  const ownerId = getRequestOwnerId(req);
+  const userId = getAuthUser(req)?.id;
+  res.setHeader("Content-Type", "text/event-stream; charset=utf-8");
+  res.setHeader("Cache-Control", "no-cache, no-transform");
+  res.setHeader("Connection", "keep-alive");
+  res.flushHeaders?.();
+  res.write(": ready\n\n");
+  const unsubscribe = subscribeJobChanges(id => {
+    const job = getJob(id);
+    if (job && !job.workbenchSession && isAuthorizedJob(job, ownerId, userId)) res.write(`data: ${JSON.stringify({ jobId: id })}\n\n`);
+  });
+  const heartbeat = setInterval(() => res.write(": ping\n\n"), 25_000);
+  req.on("close", () => { clearInterval(heartbeat); unsubscribe(); });
 });
 
 jobsRouter.get("/:jobId", (req, res) => {

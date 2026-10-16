@@ -2,7 +2,7 @@ import { getDatabase } from "../../services/database.js";
 import { createJob, getJob, updateJob } from "../../services/jobStore.js";
 import { appendJobEvent, getJobEvents } from "../../services/jobEvents.js";
 import { cancelOwnedJob, executePlannedJob, resumePlannedJob, runQueuedPlan, runQuestion, parseClarificationAnswers } from "../../services/jobActions.js";
-import { confirmJobMerge, discardJobMerge, revertCompletedJobFromDefaultBranch } from "../../services/jobMergeService.js";
+import { revertCompletedJobFromDefaultBranch } from "../../services/jobMergeService.js";
 import { jobQueue } from "../../services/jobQueue.js";
 import { config } from "../../config.js";
 import { logOperation } from "../../services/operationLog.js";
@@ -21,6 +21,7 @@ import { milestoneSignature, splitMessage } from "./replies.js";
 import { queueNotice, pendingNotices, acknowledgeChunk } from "./sessionStore.js";
 import { canModifyCode, requireCommandPermission } from "./permissions.js";
 import { releaseConversationJob } from "./releaseMerge.js";
+import { requestTaskMerge } from "../../services/taskOperations.js";
 import { runTestCaseJob } from "../../services/testCases/testCaseJobService.js";
 
 function acknowledgeMilestone(job: Job, session: WecomSession): void {
@@ -261,7 +262,6 @@ async function dispatchCommandBody(session: WecomSession, command: Command, mess
     const tapd = getTopicTapd(session);
     const job = getDatabase().transaction(() => {
       const created = createJob({ prompt: command.text, projectId: options.projectId,
-        agentProvider: command.agentProvider ?? config.AGENT_PROVIDER,
         tapdContext: tapd?.context,
         ownerId: session.owner_id, conversationId: session.conversation_id,
         submittedBy: session.user_id, taskMode: testCase ? "test-case" : question ? "question" : "code" });
@@ -318,19 +318,7 @@ async function dispatchCommandBody(session: WecomSession, command: Command, mess
   if (job.status !== "awaiting_merge") throw new Error("当前任务不需要合并处理。");
   const discard = command.action === "discard";
   onJob?.(job.jobId);
-  getDatabase().transaction(() => {
-    updateJob(job.jobId, { status: "pending", message: discard ? "已请求放弃合并" : "已请求重试合并", mergeRetryable: false });
-    rememberMessage(messageKey);
-  })();
-  const worker = async (id: string) => {
-    try {
-      if (discard) await discardJobMerge(id);
-      else await confirmJobMerge(id);
-    } catch (error) {
-      updateJob(id, { status: "failed", error: String(error), message: "合并处理失败" });
-      appendJobEvent(id, { type: "error", text: "合并处理失败" });
-    }
-  };
-  if (jobQueue.enqueueGateContinuation(job.jobId, worker) === null) jobQueue.enqueue(job.jobId, worker);
+  requestTaskMerge(job.jobId, { discard });
+  rememberMessage(messageKey);
   return "Thinking...";
 }

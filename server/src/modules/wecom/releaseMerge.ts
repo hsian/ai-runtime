@@ -1,7 +1,6 @@
 import { getJob } from "../../services/jobStore.js";
 import { getProjectGitService } from "../../services/projectRuntime.js";
-import { mergeCompletedJobToBranch } from "../../services/jobMergeService.js";
-import { jobQueue } from "../../services/jobQueue.js";
+import { releaseTaskToBranch } from "../../services/taskOperations.js";
 import { getBinding, listBindings } from "./sessionStore.js";
 import { canModifyCode, CODE_PERMISSION_DENIED } from "./permissions.js";
 import type { Job } from "../../types.js";
@@ -14,7 +13,7 @@ interface ReleaseOperations {
 }
 const operations: ReleaseOperations = {
   branches: projectId => getProjectGitService(projectId).listRemoteBranches(),
-  merge: async (id, branch) => { const { done } = jobQueue.enqueueAndWait(id, queuedId => mergeCompletedJobToBranch(queuedId, branch)); await done; },
+  merge: releaseTaskToBranch,
 };
 
 /** Model selects intent only; this boundary owns authorization, scope and Git execution. */

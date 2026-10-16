@@ -5,10 +5,12 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "prebuild": "npm run build -w @ai-runtime/shared",
     "build": "tsc -b && vite build",
     "preview": "vite preview"
   },
   "dependencies": {
+    "@ai-runtime/shared": "0.1.0",
     "@ant-design/icons": "^6.0.0",
     "antd": "^6.0.0",
     "dayjs": "^1.11.22",

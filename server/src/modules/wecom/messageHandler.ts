@@ -88,7 +88,7 @@ export function createMessageHandler(client: WSClient, options: WecomConfig, rou
             // A text-only classifier cannot answer an image question itself.
             if (imageBuffers.length && resolved.action === "chat") {
               const prefixes = parseTaskPrefixes(content);
-              resolved = { action: "question", text: prefixes.text, agentProvider: prefixes.agentProvider,
+              resolved = { action: "question", text: prefixes.text,
                 projectId: prefixes.projectId, topicId: resolved.topicId, topicTitle: resolved.topicTitle };
             }
             const command = prepared.topicId ? { ...resolved, topicId: prepared.topicId } : resolved;

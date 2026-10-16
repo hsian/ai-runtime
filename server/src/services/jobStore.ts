@@ -3,6 +3,7 @@ import { v4 as uuidv4 } from "uuid";
 import type { ConversationHistoryMessage, Job, JobRequest, JobStatus } from "../types.js";
 import { DEFAULT_PROJECT_ID } from "./projectRegistry.js";
 import { getDatabase, initDatabase } from "./database.js";
+import { notifyJobChanged } from "./jobChanges.js";
 
 const MAX_HISTORY_JOBS = 10;
 const MAX_HISTORY_CHARS = 16_000;
@@ -50,6 +51,7 @@ function persistJob(job: Job): void {
       updatedAt: job.updatedAt,
       data: JSON.stringify(job),
     });
+  notifyJobChanged(job.jobId);
 }
 
 function buildConversationHistory(request: JobRequest): ConversationHistoryMessage[] | undefined {
@@ -154,7 +156,7 @@ export function createJob(request: JobRequest): Job {
     remoteIp: request.remoteIp,
     status: "pending",
     prompt: request.prompt,
-    agentProvider: request.agentProvider,
+    agentProvider: "codex",
     pageContext: request.pageContext,
     tapdContext: request.tapdContext,
     submittedBy: request.submittedBy,
@@ -195,6 +197,29 @@ export function listJobs(ownerId?: string): Job[] {
   return rows.map((row) => parseJob(row)!);
 }
 
+/** SQL removes message/document bodies before JSON parsing or returning a list. */
+export function listWorkbenchSummaries(userId: string, ownerId: string): Job[] {
+  return (getDatabase().prepare(`SELECT json_set(
+    json_remove(data, '$.workbenchMessages', '$.conversationHistory', '$.planSummary', '$.attachments', '$.pageContext',
+      '$.workbenchArchivedWorktrees', '$.workbenchLatestPrompt', '$.tapdContext.description', '$.tapdContext.readWarnings', '$.testCaseDocument'),
+    '$.prompt', substr(COALESCE(json_extract(data, '$.prompt'), ''), 1, 300),
+    '$.message', substr(COALESCE(json_extract(data, '$.message'), ''), 1, 600),
+    '$.implementationSummary', substr(COALESCE(json_extract(data, '$.implementationSummary'), ''), 1, 600),
+    '$.conversationTitle', substr(COALESCE((SELECT json_extract(value, '$.text') FROM json_each(data, '$.workbenchMessages')
+      WHERE json_extract(value, '$.role') = 'user' LIMIT 1), json_extract(data, '$.prompt')), 1, 60),
+    '$.hasTestCases', json(CASE WHEN json_type(data, '$.testCaseDocument') = 'object' THEN 'true' ELSE 'false' END)
+    ) AS data FROM jobs WHERE json_extract(data, '$.workbenchSession') = 1
+      AND (json_extract(data, '$.workbenchUserId') = ? OR (json_extract(data, '$.workbenchUserId') IS NULL AND owner_id = ?))
+      ORDER BY created_at DESC`).all(userId, ownerId) as JobRow[]).map(row => parseJob(row)!);
+}
+
+export function listConversationJobs(conversationId: string, projectId: string, userId: string, ownerId: string): Job[] {
+  return (getDatabase().prepare(`SELECT data FROM jobs WHERE conversation_id = ?
+    AND COALESCE(json_extract(data, '$.projectId'), ?) = ?
+    AND (json_extract(data, '$.workbenchUserId') = ? OR (json_extract(data, '$.workbenchUserId') IS NULL AND owner_id = ?))
+    ORDER BY created_at ASC`).all(conversationId, DEFAULT_PROJECT_ID, projectId, userId, ownerId) as JobRow[]).map(row => parseJob(row)!);
+}
+
 export function listExpiredJobs(cutoffIso: string): Job[] {
   const rows = getDatabase()
     .prepare(`
@@ -209,7 +234,7 @@ export function listExpiredJobs(cutoffIso: string): Job[] {
 }
 
 export function deleteJobIfExpired(jobId: string, cutoffIso: string): boolean {
-  return getDatabase()
+  const deleted = getDatabase()
     .prepare(`
       DELETE FROM jobs
       WHERE job_id = ?
@@ -217,8 +242,12 @@ export function deleteJobIfExpired(jobId: string, cutoffIso: string): boolean {
         AND updated_at < ?
     `)
     .run(jobId, cutoffIso).changes > 0;
+  if (deleted) notifyJobChanged(jobId);
+  return deleted;
 }
 
 export function deleteJob(jobId: string): boolean {
-  return getDatabase().prepare("DELETE FROM jobs WHERE job_id = ?").run(jobId).changes > 0;
+  const deleted = getDatabase().prepare("DELETE FROM jobs WHERE job_id = ?").run(jobId).changes > 0;
+  if (deleted) notifyJobChanged(jobId);
+  return deleted;
 }
