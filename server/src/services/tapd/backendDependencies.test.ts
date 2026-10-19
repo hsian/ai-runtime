@@ -7,6 +7,7 @@ after(() => { globalThis.fetch = originalFetch; });
 const cfg = { apiBase: "https://tapd.invalid", clientId: "test", clientSecret: "test", workspaceId: "123", workspaces: [] };
 
 test("associate only same-story backend tasks, including other iterations and orphan fronts", async () => {
+  const searchedNames: string[] = [];
   globalThis.fetch = async input => {
     const url = new URL(String(input));
     if (url.pathname === "/tokens/request_token") return Response.json({ status: 1, data: { access_token: "test", expires_in: 3600 } });
@@ -14,7 +15,16 @@ test("associate only same-story backend tasks, including other iterations and or
     assert.equal(url.searchParams.get("workspace_id"), "123");
     assert.equal(url.searchParams.has("iteration_id"), false);
     assert.equal(url.searchParams.get("story_id"), "s1,s2");
-    assert.equal(url.searchParams.get("name"), "后端");
+    const name = url.searchParams.get("name")!;
+    searchedNames.push(name);
+    assert.ok(["后端", "数据"].includes(name));
+    if (name === "数据") return Response.json({ status: 1, data: [
+      { Task: { id: "d1", name: " 数据 - 报表初始化", story_id: "s1", iteration_id: "earlier", status: "done" } },
+      { Task: { id: "d2", name: "数据-清洗", story_id: "s2", status: "progressing" } },
+      { Task: { id: "data-feature", name: "数据查询", story_id: "s1", status: "open" } },
+      { Task: { id: "d3", name: "数据 - 无关需求", story_id: "s3", status: "done" } },
+      { Task: { id: "b1", name: "后端 - 字段扩展", story_id: "s1", iteration_id: "earlier", status: "done", owner: "backend-a" } },
+    ] });
     return Response.json({ status: 1, data: [
       { Task: { id: "b1", name: "后端 - 字段扩展", story_id: "s1", iteration_id: "earlier", status: "done", owner: "backend-a" } },
       { Task: { id: "b2", name: "后端 - 导出接口", story_id: "s1", iteration_id: "current", status: "progressing" } },
@@ -24,9 +34,10 @@ test("associate only same-story backend tasks, including other iterations and or
     ] });
   };
   const result = await loadBackendDependencies({ workspaceId: "123", iterationId: "current", stories: [{ id: "s1", name: "报表", tasks: [{ id: "f1", name: "前端 - 报表" }] }], orphanTasks: [{ id: "f2", name: "前端 - 孤立项", story_id: "s2" }] }, cfg);
-  assert.deepEqual(result.f1.map(task => task.id), ["b1", "b2"]);
+  assert.deepEqual(searchedNames, ["后端", "数据"]);
+  assert.deepEqual(result.f1.map(task => task.id), ["b1", "b2", "d1"]);
   assert.equal(result.f1[0].owner, "backend-a");
-  assert.deepEqual(result.f2.map(task => task.id), ["b4"]);
+  assert.deepEqual(result.f2.map(task => task.id), ["b4", "d2"]);
 });
 
 test("unlinked tasks do not guess dependencies or fetch the entire workspace", async () => {

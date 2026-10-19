@@ -1,4 +1,5 @@
 import { getTapdConfig, type TapdConfig } from "../../config.js";
+import { isBackendTaskName } from "@ai-runtime/shared/tapd-task";
 import { queueTapdRequest } from "./requestQueue.js";
 
 interface TapdApiEnvelope<T> {
@@ -88,9 +89,12 @@ export async function loadBackendDependencies(items: TapdIterationWorkItems, cfg
   const all: TapdTask[] = [];
   const storyIds = [...stories] as string[];
   for (let index = 0; index < storyIds.length; index += 50) {
-    all.push(...await fetchAllPages<TapdTask>(cfg, "/tasks", { workspace_id: items.workspaceId, story_id: storyIds.slice(index, index + 50).join(","), name: "后端" }, "Task"));
+    for (const name of ["后端", "数据"]) {
+      all.push(...await fetchAllPages<TapdTask>(cfg, "/tasks", { workspace_id: items.workspaceId, story_id: storyIds.slice(index, index + 50).join(","), name }, "Task"));
+    }
   }
-  const backend = all.filter(task => task.name.trim().startsWith("后端") && stories.has(task.story_id));
+  const backend = [...new Map(all.filter(task => isBackendTaskName(task.name) && stories.has(task.story_id))
+    .map(task => [task.id, task])).values()];
   return Object.fromEntries(fronts.map(task => [task.id, backend.filter(candidate => candidate.story_id === task.story_id && candidate.id !== task.id)]));
 }
 

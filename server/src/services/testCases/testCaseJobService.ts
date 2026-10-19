@@ -85,15 +85,22 @@ export async function runTestCaseJob(jobId: string): Promise<void> {
     let output = await generateOutput(generationPrompt);
     let document = parseTestCaseDocument(output);
     const technicalTokens = findTechnicalTokens(document);
-    if (technicalTokens.length > 0) {
-      appendJobEvent(jobId, {
-        type: "stage",
-        phase: "test_case_rewrite",
-        text: "检测到代码术语，正在转换为测试人员可读的业务语言...",
-      });
-      output = await generateOutput(buildTestCaseBusinessRewritePrompt(output, technicalTokens), { rewrite: true });
-      document = parseTestCaseDocument(output);
+    const beforeReview = getJob(jobId);
+    if (!beforeReview || beforeReview.status === "cancelled" || beforeReview.workbenchPauseRequested) return;
+    appendJobEvent(jobId, {
+      type: "stage",
+      phase: "test_case_rewrite",
+      text: "正在复核前置条件、操作步骤、模块命名、UI 标注和优先级，并整理用例分组...",
+    });
+    output = await generateOutput(buildTestCaseBusinessRewritePrompt(JSON.stringify(document), technicalTokens, requirement), { rewrite: true });
+    const reviewedDocument = parseTestCaseDocument(output);
+    if (reviewedDocument.cases.length !== document.cases.length) {
+      throw new Error("测试用例规范复核改变了用例数量，请重新生成");
     }
+    if (reviewedDocument.implementationAssessment && document.implementationAssessment) {
+      reviewedDocument.implementationAssessment.recommendedResult = document.implementationAssessment.recommendedResult;
+    }
+    document = reviewedDocument;
 
     const current = getJob(jobId);
     if (!current || current.status === "cancelled" || current.workbenchPauseRequested) return;

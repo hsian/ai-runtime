@@ -1,8 +1,9 @@
 import { z } from "zod";
 
 import type { TestCaseDocument } from "../../types.js";
+import { normalizeTestCaseDocument, normalizeTestCaseSteps, normalizeTestCaseText } from "./testCaseFormatting.js";
 
-const nonEmptyText = z.string().trim().min(1).max(5_000);
+const nonEmptyText = z.string().transform(normalizeTestCaseText).pipe(z.string().min(1).max(5_000));
 
 const generatedCaseSchema = z.object({
   priority: z.enum(["高", "中", "低"]),
@@ -11,7 +12,7 @@ const generatedCaseSchema = z.object({
   requirementPoint: nonEmptyText,
   testPoint: nonEmptyText,
   preconditions: nonEmptyText,
-  steps: z.array(nonEmptyText).min(1).max(30),
+  steps: z.array(z.string()).transform(normalizeTestCaseSteps).pipe(z.array(nonEmptyText).min(1).max(30)),
   expectedResult: nonEmptyText,
 });
 
@@ -48,12 +49,12 @@ export function parseTestCaseDocument(output: string): TestCaseDocument {
         lastError = parsed.error.issues.map((issue) => `${issue.path.join(".")}: ${issue.message}`).join("；");
         continue;
       }
-      return {
+      return normalizeTestCaseDocument({
         moduleName: parsed.data.moduleName,
         functionDescription: parsed.data.functionDescription,
         implementationAssessment: parsed.data.implementationAssessment,
         cases: parsed.data.cases.map((item, index) => ({ ...item, caseNumber: index + 1 })),
-      };
+      });
     } catch (error) {
       lastError = error instanceof Error ? error.message : String(error);
     }

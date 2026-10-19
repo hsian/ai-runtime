@@ -23,21 +23,26 @@ const document = parseTestCaseDocument(JSON.stringify({
       priority: "高",
       levelOneModule: "示例功能",
       levelTwoModule: "查询页面",
-      requirementPoint: "查询条件",
+      requirementPoint: "查询",
       testPoint: "有效条件查询",
-      preconditions: "用户已进入示例查询页面",
-      steps: ["输入有效查询条件", "点击查询按钮", "查看结果列表"],
+      preconditions: "存在符合条件的数据，用户已进入【示例查询】页面",
+      steps: ["1、输入有效查询条件<br>2、点击【查询】按钮\\n3、查看结果列表"],
       expectedResult: "结果列表显示符合条件的数据",
+    },
+    {
+      priority: "中", levelOneModule: "示例功能", levelTwoModule: "历史页面",
+      requirementPoint: "查询", testPoint: "历史记录查询", preconditions: "有历史记录",
+      steps: ["进入【历史页面】", "点击【查询】按钮"], expectedResult: "展示已有历史记录",
     },
     {
       priority: "中",
       levelOneModule: "示例功能",
       levelTwoModule: "查询页面",
-      requirementPoint: "查询条件",
+      requirementPoint: "查询",
       testPoint: "空条件查询",
       preconditions: "用户已进入示例查询页面",
-      steps: ["清空查询条件", "点击查询按钮", "查看页面反馈"],
-      expectedResult: "页面按业务规则展示数据或提示用户补充条件",
+      steps: ["清空查询条件", "点击【查询】按钮", "查看页面反馈"],
+      expectedResult: "查询条件非必填时展示全部数据；条件是否必填待确认",
     },
   ],
 }));
@@ -49,7 +54,14 @@ const job = {
   status: "completed",
   prompt: "验证示例功能测试用例",
   taskMode: "test-case",
-  testCaseDocument: document,
+  // Export also normalizes older stored documents that bypass the current parser.
+  testCaseDocument: {
+    ...document,
+    cases: [document.cases[0], document.cases[2], document.cases[1]].map((item, index) => ({
+      ...item, caseNumber: 100 + index,
+      steps: [item.steps.map((step, stepIndex) => `${stepIndex + 1}、${step}`).join("<br>")],
+    })),
+  },
   createdAt: new Date().toISOString(),
   updatedAt: new Date().toISOString(),
 };
@@ -74,6 +86,11 @@ assert.equal(worksheet.getCell("D5").value, "功能模块");
 assert.equal(worksheet.getCell("B7").value, 1);
 assert.equal(worksheet.getCell("C7").value, "高");
 assert.match(String(worksheet.getCell("I7").value), /1、输入有效查询条件/);
+assert.equal(worksheet.getCell("I7").value, "1、输入有效查询条件\n2、点击【查询】按钮\n3、查看结果列表");
+assert.equal(worksheet.getCell("I7").alignment.wrapText, true);
+assert.equal(worksheet.getCell("G8").value, "空条件查询");
+assert.equal(worksheet.getCell("E9").value, "历史页面");
+assert.deepEqual([7, 8, 9].map(row => worksheet.getCell(`B${row}`).value), [1, 2, 3]);
 assert.equal(worksheet.getCell("K7").value, null);
 assert(Object.keys(worksheet.dataValidations.model).length >= 3, "模板数据验证应保留");
 console.log(`测试用例工作簿验证通过: ${outputPath}`);

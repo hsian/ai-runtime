@@ -2,6 +2,7 @@ import ExcelJS from "exceljs";
 
 import { config } from "../../config.js";
 import type { Job, TestCaseDocument } from "../../types.js";
+import { normalizeTestCaseDocument } from "./testCaseFormatting.js";
 
 const DATA_START_ROW = 7;
 const DATA_END_ROW = 520;
@@ -43,6 +44,9 @@ function fillDocument(worksheet: ExcelJS.Worksheet, document: TestCaseDocument):
     row.getCell(12).value = null;
     row.getCell(13).value = null;
     row.getCell(14).value = null;
+    for (let column = 7; column <= 10; column += 1) {
+      row.getCell(column).alignment = { ...row.getCell(column).alignment, vertical: "top", wrapText: true };
+    }
     row.height = Math.max(32, 18 * Math.max(item.steps.length, 2));
   }
 }
@@ -119,7 +123,7 @@ export async function buildTestCaseWorkbook(job: Job): Promise<Buffer> {
   const workbook = new ExcelJS.Workbook();
   await workbook.xlsx.readFile(config.TEST_CASE_TEMPLATE_PATH);
   const worksheet = findCaseWorksheet(workbook);
-  fillDocument(worksheet, job.testCaseDocument);
+  fillDocument(worksheet, normalizeTestCaseDocument(job.testCaseDocument));
   addImplementationReference(workbook, job.testCaseDocument);
   updateDirectory(workbook, worksheet, job);
   const output = await workbook.xlsx.writeBuffer();

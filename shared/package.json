@@ -5,6 +5,12 @@
   "type": "module",
   "files": ["dist/*.js", "dist/*.d.ts", "src"],
   "exports": {
+    "./tapd-task": {
+      "types": "./dist/tapdTask.d.ts",
+      "browser": "./src/tapdTask.ts",
+      "development": "./src/tapdTask.ts",
+      "default": "./dist/tapdTask.js"
+    },
     "./task-state": {
       "types": "./dist/taskState.d.ts",
       "browser": "./src/taskState.ts",
@@ -15,7 +21,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "prepack": "npm run build",
-    "test": "npm run build && node --test test/taskState.test.mjs"
+    "test": "npm run build && node --test test/taskState.test.mjs test/tapdTask.test.mjs"
   },
   "devDependencies": {
     "typescript": "^5.4.5"

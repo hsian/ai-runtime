@@ -1,4 +1,5 @@
 import { App as AntApp } from "antd";
+import { isBackendTaskName } from "@ai-runtime/shared/tapd-task";
 import { useEffect, useRef, useState } from "react";
 import { api } from "../services/api";
 import type { ProjectProfile, TapdIteration, TapdWorkspace } from "../types";
@@ -75,7 +76,7 @@ export function useWorkbenchSources(revision: number, ownerName: string) {
         if (!current) return;
         const items: WorkItem[] = [];
         const append = (item: { id: string; name: string; status?: string }, type: "task" | "bug", parentTitle?: string, parentId?: string) => {
-          items.push({ id: `${workspaceId}:${type}:${item.id}`, title: item.name, description: "", source: "tapd", itemType: type, projectId: "", taskMode: "code", conversationId: "", createdAt: "", workspaceId, iterationId, parentTitle, parentUrl: parentId ? tapdDetailUrl(workspaceId, "story", parentId) : undefined, tapdStatus: item.status, tapdUrl: tapdDetailUrl(workspaceId, type, item.id), backendTasks: type === "task" && taskResult.status === "fulfilled" ? taskResult.value.backendDependencies?.[item.id] || taskResult.value.stories.find(story => story.id === parentId)?.tasks.filter(task => task.name.trim().startsWith("后端") && task.id !== item.id) : undefined, backendDependencyError: taskResult.status === "fulfilled" ? taskResult.value.backendDependencyError : undefined });
+          items.push({ id: `${workspaceId}:${type}:${item.id}`, title: item.name, description: "", source: "tapd", itemType: type, projectId: "", taskMode: "code", conversationId: "", createdAt: "", workspaceId, iterationId, parentTitle, parentUrl: parentId ? tapdDetailUrl(workspaceId, "story", parentId) : undefined, tapdStatus: item.status, tapdUrl: tapdDetailUrl(workspaceId, type, item.id), backendTasks: type === "task" && taskResult.status === "fulfilled" ? taskResult.value.backendDependencies?.[item.id] || taskResult.value.stories.find(story => story.id === parentId)?.tasks.filter(task => isBackendTaskName(task.name) && task.id !== item.id) : undefined, backendDependencyError: taskResult.status === "fulfilled" ? taskResult.value.backendDependencyError : undefined });
         };
         if (taskResult.status === "fulfilled") {
           taskResult.value.stories.forEach((story) => {

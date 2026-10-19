@@ -110,6 +110,44 @@ test("reopened backend discards an undelivered completion notice", async () => {
   } finally { s.close(); }
 });
 
+test("data-team completion notifies the same frontend owners and stays deduplicated after restart", async () => {
+  const s = setup();
+  try {
+    s.backend.name = " 数据 - 报表数据同步";
+    await s.tick();
+    assert.equal(s.sent.length, 0);
+    s.backend.status = "done";
+    s.time("2026-10-12T09:10:00+08:00"); await s.tick();
+    assert.deepEqual(s.sent.map(item => item.target), ["zheng", "yuan"]);
+    assert.match(s.sent[0].content, /数据 - 报表数据同步/);
+    s.restart(); await s.tick();
+    s.time("2026-10-12T09:20:00+08:00"); await s.tick();
+    assert.equal(s.sent.length, 2);
+  } finally { s.close(); }
+});
+
+test("data-team pending reminders retry but are discarded after reopening", async () => {
+  const s = setup();
+  try {
+    s.backend.name = "数据-报表初始化";
+    await s.tick();
+    s.backend.status = "done"; s.failSend(true);
+    s.time("2026-10-12T09:10:00+08:00"); await s.tick();
+    assert.equal(s.sent.length, 0);
+    s.failSend(false);
+    s.time("2026-10-12T09:20:00+08:00"); await s.tick();
+    assert.equal(s.sent.length, 2);
+    s.backend.status = "progressing";
+    s.time("2026-10-12T09:30:00+08:00"); await s.tick();
+    s.backend.status = "done"; s.failSend(true);
+    s.time("2026-10-12T09:40:00+08:00"); await s.tick();
+    s.backend.status = "progressing"; s.failSend(false);
+    s.time("2026-10-12T09:50:00+08:00"); await s.tick();
+    assert.equal(s.sent.length, 2);
+    assert.equal((s.db.prepare("SELECT COUNT(*) AS count FROM tapd_completion_notices WHERE sent_at IS NULL").get() as { count: number }).count, 0);
+  } finally { s.close(); }
+});
+
 test("busy monitor serializes queries and pending recipients wait for conversations to unblock", async () => {
   const s = setup();
   try {

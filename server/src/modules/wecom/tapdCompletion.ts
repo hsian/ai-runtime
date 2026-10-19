@@ -1,4 +1,5 @@
 import type Database from "better-sqlite3";
+import { isBackendTaskName } from "@ai-runtime/shared/tapd-task";
 import { getTapdConfig, type TapdConfig } from "../../config.js";
 import { getDatabase } from "../../services/database.js";
 import { listIterations, getIterationWorkItems, type TapdTask, type TapdStory } from "../../services/tapd/tapdClient.js";
@@ -121,7 +122,7 @@ export class TapdCompletionMonitor {
         const previous = db.prepare(`SELECT status, sequence FROM tapd_completion_tasks
           WHERE bot_id = ? AND workspace_id = ? AND task_id = ?`)
           .get(this.botId, workspaceId, task.id) as TaskState | undefined;
-        const backend = task.name.trim().startsWith("后端");
+        const backend = isBackendTaskName(task.name);
         if (!backend && !previous) continue;
         // A new task can already be completed when it first becomes visible to
         // the API. Comparing its completion time to the last poll loses it
@@ -179,7 +180,7 @@ export class TapdCompletionMonitor {
       const state = this.deps.db.prepare(`SELECT status, sequence FROM tapd_completion_tasks
         WHERE bot_id = ? AND workspace_id = ? AND task_id = ?`)
         .get(this.botId, notice.workspace_id, taskId) as TaskState | undefined;
-      if (!backend?.name.trim().startsWith("后端") || backend.status !== "done" || !stillAssigned ||
+      if (!backend || !isBackendTaskName(backend.name) || backend.status !== "done" || !stillAssigned ||
         !state || state.status !== "done" || state.sequence !== sequence) {
         this.deps.db.prepare("DELETE FROM tapd_completion_notices WHERE id = ?").run(notice.id);
         continue;
