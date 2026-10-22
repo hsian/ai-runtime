@@ -1,6 +1,7 @@
 import { getTapdConfig, type TapdConfig } from "../../config.js";
 import { isBackendTaskName } from "@ai-runtime/shared/tapd-task";
 import { queueTapdRequest } from "./requestQueue.js";
+import { sortIterations } from "./iterationOrder.js";
 
 interface TapdApiEnvelope<T> {
   status: number;
@@ -246,7 +247,8 @@ export async function listIterations(
   cfg: TapdConfig = getTapdConfig()
 ): Promise<TapdIteration[]> {
   const wsId = workspaceId ?? cfg.workspaceId;
-  return fetchAllPages<TapdIteration>(cfg, "/iterations", { workspace_id: wsId }, "Iteration");
+  const iterations = await fetchAllPages<TapdIteration>(cfg, "/iterations", { workspace_id: wsId }, "Iteration");
+  return sortIterations(iterations);
 }
 
 export async function listIterationTasks(
