@@ -509,7 +509,7 @@ export async function cancelOwnedJob(jobId: string, ownerId: string): Promise<vo
 
   appendJobEvent(jobId, { type: "cancelled", message: "任务已取消", text: "任务已取消" });
 }
-export async function runQuestion(jobId: string, options?: { responseInstructions?: string; questionChangeInstructions?: string }): Promise<void> {
+export async function runQuestion(jobId: string, options?: { questionChangeInstructions?: string }): Promise<void> {
   const existing = getJob(jobId);
   const project = getProject(existing?.projectId);
   const job = updateJob(jobId, {
@@ -550,8 +550,7 @@ export async function runQuestion(jobId: string, options?: { responseInstruction
     );
     const result = await runAgent(
       repoPath,
-      await withApiDocContext(buildPromptWithTapdContext(job.prompt
-        + (options?.responseInstructions ? `\n\n【回复格式】\n${options.responseInstructions}` : ""), job.tapdContext)),
+      await withApiDocContext(buildPromptWithTapdContext(job.prompt, job.tapdContext)),
       job.pageContext,
       (event) => {
         if (event.type === "agent_text" && event.delta) {

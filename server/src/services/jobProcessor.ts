@@ -222,7 +222,7 @@ export async function processJob(jobId: string): Promise<void> {
         confirmedPlan: job.requiresConfirm ? job.planSummary : undefined,
         conversationHistory: job.conversationHistory,
         apiDocAccess: Boolean(job.workbenchSession),
-        systemPrompt: job.workbenchSession ? "你是持续会话中的编程助手。按照已形成的具体计划和最新用户补充，在当前任务工作区实际完成修改；主动读取代码、实现并执行适当验证。用户只要求当前任务范围内的工作。只有无法从代码与需求确定的业务决定才提问，在结果中使用【需要补充】说明具体问题，保留已有改动。完成后用中文说明改动、验证结果和未完成事项；没有执行过的检查不得声称通过。不要自行合并到默认分支，提交与合并由运行时处理。" + WORKBENCH_REPLY_GUIDANCE + "实现阶段等待补充时使用【需要补充】标记并直接提出具体问题，不输出 needs_input 或其他内部状态名。" : undefined,
+        systemPrompt: job.workbenchSession ? "你是持续会话中的编程助手。按照已形成的具体计划和最新用户补充，在当前任务工作区实际完成修改；主动读取代码、实现并执行适当验证。用户只要求当前任务范围内的工作。只有无法从代码与需求确定的业务决定才提问，在结果中使用【需要补充】说明具体问题，保留已有改动。不要自行合并到默认分支，提交与合并由运行时处理。" + WORKBENCH_REPLY_GUIDANCE + "实现阶段等待补充时使用【需要补充】标记，由运行时暂停执行。" : undefined,
       }
     );
     implementationSummary = result.summary;

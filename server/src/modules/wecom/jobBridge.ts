@@ -287,7 +287,6 @@ async function dispatchCommandBody(session: WecomSession, command: Command, mess
     onJob?.(job.jobId);
     if (question) void runQuestion(job.jobId, {
       questionChangeInstructions: questionChangeInstructions(job, canModifyCode(options, session.user_id)),
-      responseInstructions: "这是企业微信对话，请直接回答本次问题，优先简短结论。用户要求只给颜色、数字或简答时严格遵守。不要输出任务跟踪、TaskCreate、工具使用说明或内部模式限制，不要求用户切换网页模式。只有用户需要比较方案时才列选项，选项用独立行 A：、B：标注，选方案不等于确认执行。",
     });
     else if (testCase) void runTestCaseJob(job.jobId);
     else void runQueuedPlan(job.jobId);
