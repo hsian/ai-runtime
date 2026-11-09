@@ -121,11 +121,12 @@ npm run auth:create-admin -- zhengweixian 郑伟贤 郑伟贤
 
 ## Agent 执行引擎
 
-工作台、原 Web 和小迪统一优先使用 Codex，不再显示引擎选择。Codex 明确返回账号额度耗尽时，会提示并自动切换到 Claude，在同一工作区中继续当前任务，保留对话、附件和执行权限。每次新调用仍先尝试 Codex，额度恢复后即可继续使用，无需定时检查。
+工作台、原 Web 和小迪统一使用服务端 `AGENT_PROVIDER` 配置选择引擎，界面不显示引擎选择。未配置或设为 `codex` 时优先使用 Codex；Codex 明确返回账号额度耗尽时，会提示并自动切换到 Claude，在同一工作区中继续当前任务，保留对话、附件和执行权限。每次新调用仍先尝试 Codex。设为 `claude` 时直接使用 Claude，不调用或回退到 Codex。修改配置后需重启服务。
 
-网络错误、登录失败、普通 429 限流或主动停止不会触发切换。Claude 也失败时会正常报告失败，不循环重试。`AGENT_PROVIDER` 和历史请求中的引擎字段仅为旧客户端兼容保留，不再控制实际引擎选择。服务端需同时安装并配置两个 CLI：
+网络错误、登录失败、普通 429 限流或主动停止不会触发切换。Claude 也失败时会正常报告失败，不循环重试。历史请求中的引擎字段不覆盖服务端配置。使用 Codex 自动切换时，服务端需同时安装并配置两个 CLI：
 
 ```env
+AGENT_PROVIDER=codex
 CLAUDE_CLI_PATH=claude
 CODEX_CLI_PATH=codex
 CODEX_ENABLE_SYSTEM_PROXY=true

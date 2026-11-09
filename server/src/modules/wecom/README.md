@@ -189,12 +189,14 @@ user prompts: changes are requested directly in chat, never through a Web mode
 selector. Suggested explicit commands retain the task's project prefix.
 Read-only members are directed to an administrator for code-change permission.
 
-All Web and WeCom agent calls try Codex first. An explicit Codex account quota
+All Web and WeCom agent calls follow the server's `AGENT_PROVIDER` setting.
+When omitted or set to `codex`, calls try Codex first. An explicit Codex account quota
 exhaustion automatically continues with Claude in the same workspace, retaining
 history, attachments and permissions. Network/authentication errors, generic 429
 throttling and cancellation do not switch providers. The next call tries Codex
-again. The engine-selection prefix has been removed. The legacy
-`AGENT_PROVIDER` setting no longer selects the engine.
+again. Setting `AGENT_PROVIDER=claude` uses Claude directly and never switches
+to Codex. Restart the server after changing this setting. The engine-selection
+prefix has been removed; request metadata does not override the server setting.
 
 Start a message with `#小程序 ` to target the configured `yuenongjiao-mini`
 project for that message. Unmarked

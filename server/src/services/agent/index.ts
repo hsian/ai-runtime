@@ -1,4 +1,5 @@
 import { createAutomaticAgent } from "./providerFallback.js";
+import { config } from "../../config.js";
 import { prepareAgentApiDocs } from "../agentApiDocs.js";
 import { runClaudeAgent } from "./claudeAgentService.js";
 import { runCodexAgent } from "./codexAgentService.js";
@@ -6,7 +7,7 @@ import type { AgentEventHandler, AgentProvider, AgentResult, AgentRunOptions } f
 import type { PageContext } from "../../types.js";
 import { getJob, updateJob } from "../jobStore.js";
 
-const runAutomatically = createAutomaticAgent(runCodexAgent, runClaudeAgent);
+const runAutomatically = createAutomaticAgent(runCodexAgent, runClaudeAgent, config.AGENT_PROVIDER);
 
 export type { AgentResult, AgentEventHandler, AgentProvider } from "./types.js";
 export { killAgentForJob } from "./agentProcessRegistry.js";
@@ -24,7 +25,7 @@ export async function runAgent(
     const job = getJob(options.jobId);
     if (job && job.agentProvider !== provider) updateJob(job.jobId, { agentProvider: provider });
   };
-  recordProvider("codex");
+  recordProvider(config.AGENT_PROVIDER);
   let documents: Awaited<ReturnType<typeof prepareAgentApiDocs>> | undefined;
   if (options?.apiDocAccess && !options.disableTools) {
     onEvent?.({ type: "agent_status", statusText: "正在读取最新接口文档…" });

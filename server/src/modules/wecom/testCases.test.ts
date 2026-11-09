@@ -100,7 +100,7 @@ test("question, change and test-case jobs default to Codex without engine marker
     await assert.rejects(dispatchCommand(session, command, prefix, allowed,
       id => { jobId = id; throw stopBeforeAgent; }), error => error === stopBeforeAgent);
     const job = getJob(jobId)!;
-    assert.equal(job.agentProvider, "codex");
+    assert.equal(job.agentProvider, "claude");
     assert.equal(job.prompt, "登录");
     updateJob(jobId, { status: "completed" });
   }
@@ -195,8 +195,8 @@ test("completion includes Excel link; credentials reject tampering, expiry and o
 });
 
 test("all Codex task replies carry one footer regardless of status, mode or old prefix metadata", () => {
-  const created = createJob({ prompt: "#codex is just text here", taskMode: "question", agentProvider: "claude" });
-  assert.equal(created.agentProvider, "codex", "legacy request preferences cannot change the automatic default");
+  const created = createJob({ prompt: "#codex is just text here", taskMode: "question", agentProvider: "codex" });
+  assert.equal(created.agentProvider, "claude", "tasks use the configured provider");
   const completed = updateJob(created.jobId, { status: "completed", message: "Answer", agentProvider: "claude" })!;
   assert.doesNotMatch(formatJob(completed), /本次回答执行引擎/);
   assert.doesNotMatch(formatJob({ ...completed, projectId: "yuenongjiao-mini" }), /本次回答执行引擎/);

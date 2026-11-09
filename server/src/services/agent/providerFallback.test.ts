@@ -4,7 +4,7 @@ import { AgentAbortedError } from "./errors.js";
 import { CodexQuotaError, createAutomaticAgent, isCodexQuotaMessage } from "./providerFallback.js";
 import type { AgentStreamEvent } from "./types.js";
 
-test("every call starts with Codex, including legacy Claude preferences", async () => {
+test("default configuration starts every call with Codex, ignoring legacy request preferences", async () => {
   let calls = 0;
   const run = createAutomaticAgent(async (_repo, _prompt, _page, _event, options) => {
     calls++; assert.equal(options?.agentProvider, "codex"); return { summary: "ok" };
@@ -12,6 +12,41 @@ test("every call starts with Codex, including legacy Claude preferences", async 
   await run("worktree", "task", undefined, undefined, { agentProvider: "claude" });
   await run("worktree", "task");
   assert.equal(calls, 2);
+});
+
+test("explicit Claude configuration calls only Claude and preserves inputs", async () => {
+  const page = { url: "https://example.test", title: "Example", viewport: { width: 1280, height: 720 } };
+  const onEvent = () => {};
+  const options = { agentProvider: "codex" as const, disableTools: true, mode: "conversation" as const };
+  let calls = 0;
+  const run = createAutomaticAgent(async () => { throw new Error("unexpected Codex call"); },
+    async (repo, prompt, actualPage, actualEvent, actualOptions) => {
+      calls++;
+      assert.equal(repo, "worktree"); assert.equal(prompt, "original");
+      assert.equal(actualPage, page); assert.equal(actualEvent, onEvent);
+      assert.deepEqual(actualOptions, { ...options, agentProvider: "claude" });
+      return { summary: "Claude answer" };
+    }, "claude");
+  assert.deepEqual(await run("worktree", "original", page, onEvent, options), { summary: "Claude answer" });
+  assert.equal(calls, 1);
+});
+
+test("explicit Claude errors propagate without switching providers", async () => {
+  for (const failure of [new Error("Claude unavailable"), new CodexQuotaError("quota"), new AgentAbortedError()]) {
+    let calls = 0;
+    const run = createAutomaticAgent(async () => { throw new Error("unexpected Codex call"); },
+      async () => { calls++; throw failure; }, "claude");
+    await assert.rejects(run("worktree", "task"), actual => actual === failure);
+    assert.equal(calls, 1);
+  }
+});
+
+test("explicit Codex configuration still falls back on quota exhaustion", async () => {
+  let calls = 0;
+  const run = createAutomaticAgent(async () => { throw new CodexQuotaError("usage_limit_reached"); },
+    async () => { calls++; return { summary: "continued" }; }, "codex");
+  assert.deepEqual(await run("worktree", "task"), { summary: "continued" });
+  assert.equal(calls, 1);
 });
 
 test("quota fallback retains worktree, prompt, history, images, permissions and schema; next call retries Codex", async () => {

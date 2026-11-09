@@ -1,5 +1,5 @@
 import { AgentAbortedError } from "./errors.js";
-import type { AgentEventHandler, AgentResult, AgentRunOptions } from "./types.js";
+import type { AgentEventHandler, AgentProvider, AgentResult, AgentRunOptions } from "./types.js";
 import type { PageContext } from "../../types.js";
 
 export class CodexQuotaError extends Error {
@@ -16,8 +16,11 @@ export function isCodexQuotaMessage(message: string): boolean {
 
 type Runner = (repoPath: string, prompt: string, pageContext?: PageContext, onEvent?: AgentEventHandler, options?: AgentRunOptions) => Promise<AgentResult>;
 
-export function createAutomaticAgent(codex: Runner, claude: Runner): Runner {
+export function createAutomaticAgent(codex: Runner, claude: Runner, provider: AgentProvider = "codex"): Runner {
   return async (repoPath, prompt, pageContext, onEvent, options) => {
+    if (provider === "claude") {
+      return claude(repoPath, prompt, pageContext, onEvent, { ...options, agentProvider: "claude" });
+    }
     try {
       return await codex(repoPath, prompt, pageContext, onEvent, { ...options, agentProvider: "codex" });
     } catch (error) {

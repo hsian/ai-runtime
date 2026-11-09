@@ -1,4 +1,5 @@
 import { v4 as uuidv4 } from "uuid";
+import { config } from "../config.js";
 
 import type { ConversationHistoryMessage, Job, JobRequest, JobStatus } from "../types.js";
 import { DEFAULT_PROJECT_ID } from "./projectRegistry.js";
@@ -156,7 +157,7 @@ export function createJob(request: JobRequest): Job {
     remoteIp: request.remoteIp,
     status: "pending",
     prompt: request.prompt,
-    agentProvider: "codex",
+    agentProvider: config.AGENT_PROVIDER,
     pageContext: request.pageContext,
     tapdContext: request.tapdContext,
     submittedBy: request.submittedBy,

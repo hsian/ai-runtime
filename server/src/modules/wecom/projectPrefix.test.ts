@@ -78,7 +78,7 @@ test("mini-program tasks use the selected project and retain their task engine",
       id => { jobId = id; throw stopBeforeAgent; }), error => error === stopBeforeAgent);
     const job = getJob(jobId)!;
     assert.equal(job.projectId, mini);
-    assert.equal(job.agentProvider, "codex");
+    assert.equal(job.agentProvider, "claude");
     assert.equal(job.prompt, "登录");
     updateJob(jobId, { status: "completed" });
   }
