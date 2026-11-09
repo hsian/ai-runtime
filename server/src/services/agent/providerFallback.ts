@@ -9,6 +9,8 @@ export class CodexQuotaError extends Error {
 // A generic 429 may be transient throttling or an API called by a tool.
 // Only an explicit Codex account quota error may switch providers.
 export function isCodexQuotaMessage(message: string): boolean {
+  // CLI account errors may use typographic apostrophes (e.g. “You’ve”).
+  message = message.replace(/[\u2018\u2019\u02bc\uff07]/g, "'");
   return /\b(?:usage_limit_reached|insufficient_quota|quota_exceeded)\b|\b(?:you(?:'ve| have) (?:hit|reached) your usage limit|usage limit (?:has been )?(?:reached|exceeded)|(?:credits?|quota) (?:exhausted|depleted)|(?:exceeded|exhausted) (?:your |the )?(?:current )?quota|not enough credits|credit balance is too low)\b|(?:额度|配额)(?:已)?(?:耗尽|用完|不足)/i.test(message);
 }
 

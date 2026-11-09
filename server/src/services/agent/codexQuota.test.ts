@@ -25,6 +25,11 @@ process.stdin.on('end', () => {
     emit({type:'turn.completed'});
     setInterval(() => {}, 1000);
     setTimeout(() => process.exit(0), 4000);
+  } else if (input.includes('CASE_SMART_APOSTROPHE')) {
+    console.error('Reading prompt from stdin...');
+    console.error('ERROR codex_models_manager::manager: failed to refresh available models: request timed out');
+    emit({type:'turn.failed',error:{message:'You\u2019ve hit your usage limit. Upgrade to Pro or try again at 2:14 PM.'}});
+    process.exitCode = 1;
   } else if (input.includes('CASE_STDERR')) { console.error('Your credit balance is too low'); process.exitCode = 1; }
   else if (input.includes('CASE_TOOL')) {
     emit({type:'item.completed',item:{type:'command_execution',command:'check',status:'failed',exit_code:1,aggregated_output:'usage_limit_reached'}});
@@ -63,6 +68,21 @@ test("JSON quota errors trigger continuation even with a zero process exit code"
 
 test("stderr account exhaustion produces a typed quota error", async () => {
   await assert.rejects(runCodexAgent(root, "CASE_STDERR", undefined, undefined, { mode: "question" }), CodexQuotaError);
+});
+
+test("screenshot quota wording triggers Claude fallback despite model refresh errors", async () => {
+  let calls = 0;
+  const events: string[] = [];
+  const run = createAutomaticAgent(runCodexAgent, async (repo, _prompt, _page, _event, options) => {
+    calls++;
+    assert.equal(repo, root);
+    assert.equal(options?.agentProvider, "claude");
+    return { summary: "continued" };
+  });
+  assert.deepEqual(await run(root, "CASE_SMART_APOSTROPHE", undefined,
+    event => { if (event.agentProvider) events.push(event.agentProvider); }, { mode: "question" }), { summary: "continued" });
+  assert.equal(calls, 1);
+  assert.deepEqual(events, ["claude"]);
 });
 
 test("tool quota text and recovered transport errors do not cause fallback", async () => {

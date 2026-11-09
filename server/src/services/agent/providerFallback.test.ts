@@ -54,6 +54,10 @@ test("tool-free classifiers preserve their exact prompt and options during fallb
 });
 
 test("recognizes explicit account exhaustion, not bare 429 or unrelated failures", () => {
+  for (const apostrophe of ["'", "\u2019", "\u2018", "\u02bc", "\uff07"]) {
+    const message = JSON.stringify({ message: `You${apostrophe}ve hit your usage limit. Upgrade to Pro or try again at 2:14 PM.` });
+    assert.equal(isCodexQuotaMessage(message), true, message);
+  }
   for (const message of ["usage_limit_reached", "You've hit your usage limit. Try again later.", "insufficient_quota", "exceeded your current quota", "Your credit balance is too low", "额度已耗尽"]) assert.equal(isCodexQuotaMessage(message), true, message);
   for (const message of ["429 Too Many Requests", "rate_limit_exceeded", "network timeout", "quota remaining: 50", "failed to read image"]) assert.equal(isCodexQuotaMessage(message), false, message);
 });
