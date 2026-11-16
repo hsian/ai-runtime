@@ -33,7 +33,7 @@ export function progressStage(job: Job | undefined, phase?: string): string {
 }
 
 export function withEngineFooter(job: Pick<Job, "agentProvider"> | undefined, text: string): string {
-  const footer = "本次回答执行引擎为 codex。";
+  const footer = "Powered by Pro";
   if (job?.agentProvider !== "codex") return text;
   return text.trimEnd().endsWith(footer) ? text.trimEnd() : `${text.trimEnd()}\n\n${footer}`;
 }

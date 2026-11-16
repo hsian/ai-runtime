@@ -201,27 +201,27 @@ test("all Codex task replies carry one footer regardless of status, mode or old 
   assert.doesNotMatch(formatJob(completed), /本次回答执行引擎/);
   assert.doesNotMatch(formatJob({ ...completed, projectId: "yuenongjiao-mini" }), /本次回答执行引擎/);
   const explicit = { ...completed, agentProvider: "codex" as const };
-  assert.match(formatJob(explicit), /本次回答执行引擎为 codex。$/);
+  assert.match(formatJob(explicit), /Powered by Pro$/);
   for (const status of ["awaiting_confirm", "awaiting_input"] as const) {
-    assert.match(formatJob({ ...explicit, status, planSummary: "Plan" }), /本次回答执行引擎为 codex。$/);
+    assert.match(formatJob({ ...explicit, status, planSummary: "Plan" }), /Powered by Pro$/);
     assert.doesNotMatch(formatJob({ ...completed, status, planSummary: "Plan" }), /本次回答执行引擎/);
   }
   assert.match(formatJob({ ...explicit, taskMode: "code", implementationSummary: "Done",
-    previewUrl: "http://192.168.1.10:5173" }), /本次回答执行引擎为 codex。$/);
+    previewUrl: "http://192.168.1.10:5173" }), /Powered by Pro$/);
   const cases = formatJob({ ...explicit, taskMode: "test-case", testCaseDocument: document });
   assert.match(cases, /下载 Excel/);
-  assert.match(cases, /本次回答执行引擎为 codex。$/);
+  assert.match(cases, /Powered by Pro$/);
   assert.doesNotMatch(formatJob({ ...explicit, agentProvider: undefined }), /本次回答执行引擎/);
   for (const status of ["pending", "planning", "running", "awaiting_input", "awaiting_confirm", "awaiting_merge", "completed", "failed", "cancelled"] as const) {
     for (const taskMode of ["question", "code", "test-case"] as const) {
       const text = formatJob({ ...explicit, status, taskMode });
-      assert.match(text, /本次回答执行引擎为 codex。$/);
-      assert.equal(text.split("本次回答执行引擎为 codex。").length, 2);
+      assert.match(text, /Powered by Pro$/);
+      assert.equal(text.split("Powered by Pro").length, 2);
       assert.doesNotMatch(formatJob({ ...completed, status, taskMode }), /本次回答执行引擎/);
     }
   }
-  assert.match(formatJob({ ...explicit, revertedFromDefaultAt: new Date().toISOString() }), /本次回答执行引擎为 codex。$/);
-  assert.match(formatProgress(explicit, "agent", "读取文件"), /当前：读取文件\n\n本次回答执行引擎为 codex。$/);
+  assert.match(formatJob({ ...explicit, revertedFromDefaultAt: new Date().toISOString() }), /Powered by Pro$/);
+  assert.match(formatProgress(explicit, "agent", "读取文件"), /当前：读取文件\n\nPowered by Pro$/);
   assert.equal(withEngineFooter(explicit, formatJob(explicit)), formatJob(explicit));
 });
 
