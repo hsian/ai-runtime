@@ -43,7 +43,7 @@ const document: TestCaseDocument = {
 test("explicit and natural-language test cases use a distinct read-only intent", async () => {
   const session = store.getSession(options.botId, "intent", "reader", options.projectId);
   for (const text of ["测试用例：登录校验", "生成测试用例: 登录校验"]) {
-    assert.deepEqual(await resolveIntent(parseCommand(text), session, async () => { throw new Error("Unexpected classifier"); }),
+    assert.deepEqual(await resolveIntent(parseCommand(text), session, async () => JSON.stringify({ intent: "test-case", reply: "", prompt: "登录校验" })),
       { action: "test-case", text: "登录校验" });
   }
   const result = await resolveIntent(parseCommand("给登录生成测试用例"), session,

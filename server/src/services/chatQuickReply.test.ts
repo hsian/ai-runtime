@@ -8,6 +8,9 @@ test("standalone greetings, thanks, capabilities and chat checks have local repl
     assert.ok(chatQuickReply(text, "workbench"), text);
   }
   assert.doesNotMatch(chatQuickReply("你能做什么", "workbench")!, /确认执行/);
+  assert.match(chatQuickReply("你好")!, /小迪.*项目/);
+  assert.doesNotMatch(chatQuickReply("你好")!, /和我聊聊/);
+  assert.match(chatQuickReply("你能闲聊吗")!, /暂不提供无关闲聊/);
 });
 
 test("business requests containing social words and vague confirmations are not swallowed", () => {

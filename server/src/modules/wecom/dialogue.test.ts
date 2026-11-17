@@ -161,7 +161,7 @@ test("fast task completion cannot finish the stream before its initial response 
   const client = { async replyStream(_frame: unknown, id: string, text: string, finish: boolean) { calls.push({ id, text, finish }); },
     async sendMessage() {} } as unknown as WSClient;
   const coordinator = new ResponseCoordinator(client);
-  const handler = createMessageHandler(client, options, undefined, undefined, coordinator);
+  const handler = createMessageHandler(client, options, async command => command, undefined, coordinator);
   const frame = { headers: { req_id: "fast" }, body: { aibotid: options.botId, msgid: "fast",
     chattype: "single", from: { userid: "fast-user" }, msgtype: "text", text: { content: "修改：你好" } } } as MessageFrame;
   handler.handle(frame);
@@ -169,12 +169,13 @@ test("fast task completion cannot finish the stream before its initial response 
   const session = store.getSession(options.botId, "fast-user", "fast-user", options.projectId);
   const job = getJob(session.active_job_id!)!;
   assert.equal(job.status, "awaiting_input");
-  assert.equal(calls.length, 1);
+  assert.equal(calls.length, 2);
   assert.equal(calls[0].finish, false);
+  assert.equal(calls[1].finish, false);
   await coordinator.finish(job.jobId, formatJob(job));
-  assert.equal(calls[1].id, calls[0].id);
-  assert.equal(calls[1].finish, true);
-  assert.doesNotMatch(calls[1].text, /Thinking|任务：|项目：/);
+  assert.equal(calls[2].id, calls[0].id);
+  assert.equal(calls[2].finish, true);
+  assert.doesNotMatch(calls[2].text, /Thinking|任务：|项目：/);
   handler.stop(); coordinator.stop();
 });
 
@@ -210,7 +211,7 @@ test("bot notification integration replaces the waiting stream and drops obsolet
     async sendMessage(target: string, message: { markdown: { content: string } }) { calls.push({ target, text: message.markdown.content }); }
   }
   const client = new FakeClient();
-  const stop = startWecomBot(options, () => client as unknown as WSClient);
+  const stop = startWecomBot(options, () => client as unknown as WSClient, async command => command);
   try {
     client.emit("message", { headers: { req_id: "integration" }, body: { aibotid: options.botId, msgid: "integration",
       chattype: "single", from: { userid: target }, msgtype: "text", text: { content: "修改：你好" } } } as MessageFrame);
@@ -221,15 +222,16 @@ test("bot notification integration replaces the waiting stream and drops obsolet
     client.emit("authenticated");
     await new Promise(resolve => setTimeout(resolve, 50));
     const own = calls.filter(call => call.target === target);
-    assert.equal(own.length, 2);
+    assert.equal(own.length, 3);
     assert.equal(own[0].finish, false);
-    assert.equal(own[1].finish, true);
-    assert.equal(own[1].id, own[0].id);
-    assert.doesNotMatch(own[1].text, /Thinking|发起人|任务：|raw-id/);
+    assert.equal(own[1].finish, false);
+    assert.equal(own[2].finish, true);
+    assert.equal(own[2].id, own[0].id);
+    assert.doesNotMatch(own[2].text, /Thinking|发起人|任务：|raw-id/);
     assert.ok(!store.pendingNotices().some(notice => notice.job_id === job.jobId));
     assert.match(store.getChatHistory({ ...session, conversation_id: job.conversationId! }).at(-1)!.content, /请说明要修改/);
     client.emit("authenticated");
     await new Promise(resolve => setTimeout(resolve, 20));
-    assert.equal(calls.filter(call => call.target === target).length, 2);
+    assert.equal(calls.filter(call => call.target === target).length, 3);
   } finally { stop(); }
 });

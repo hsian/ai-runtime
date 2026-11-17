@@ -227,7 +227,7 @@ test("duplicate requirements create one shared plan task and never execute witho
   const options = { botId: "bot-submit", secret: "test", projectId: "b2b-composite", codeAllowedUserIds: ["alice"] };
   const replies: string[] = [];
   const fake = { async replyStream(_frame: unknown, _id: string, text: string) { replies.push(text); }, async sendMessage() {} } as unknown as WSClient;
-  const handler = createMessageHandler(fake, options);
+  const handler = createMessageHandler(fake, options, async command => command);
   const frame = { headers: { req_id: "submit" }, body: { aibotid: options.botId, msgid: "requirement",
     chattype: "single", from: { userid: "alice" }, msgtype: "text", text: { content: "修改：你好" } } } as MessageFrame;
   handler.handle(frame); handler.handle(frame);

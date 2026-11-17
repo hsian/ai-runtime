@@ -154,6 +154,13 @@ QWECHAT_BOT_DEFAULT_PROJECT=b2b-composite
 QWECHAT_BOT_PREVIEW_HOST=192.168.1.10
 ```
 
+小迪仅处理项目需求、代码、缺陷排查、测试用例和任务流程。无关常识、新闻、生活咨询及闲聊
+返回固定的职责说明，不回答问题本身、不创建任务。问候、感谢和能力询问仍可简短回应。
+`问答：`、`修改：`、`测试用例：` 也先进行范围识别，但不会被模型改成其他任务类型。
+结合需求上下文判断业务术语，不使用关键词黑名单。运行
+`node server/scripts/verify-wecom-intent.mjs --scope` 可验证真实模型的范围判断，
+包括截图中的 APEC 问题、前缀绕过和正常项目问题；不发送企微消息、不创建真实任务。
+
 Messages are routed by intent: greetings reply immediately without creating
 jobs; other natural-language messages use the configured Agent to distinguish
 conversation, read-only project questions, change requests and clarification
@@ -172,7 +179,8 @@ Failed classification creates no task and is excluded from conversation memory.
 Only explicit control commands can authorize execution; model output cannot
 produce execute/cancel/merge actions, and task ownership/confirmation checks remain
 in the program rather than the model.
-Explicit control commands and `问答：` / `修改：` / `补充：` bypass classification.
+Explicit control commands and `补充：` bypass classification.
+`问答：` / `修改：` / `测试用例：` retain their explicit task type after a scope check.
 `node server/scripts/verify-wecom-intent.mjs` checks classification against
 three synthetic messages using the configured Agent; it creates no project jobs
 and sends no WeChat messages.

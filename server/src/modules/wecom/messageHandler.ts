@@ -77,7 +77,7 @@ export function createMessageHandler(client: WSClient, options: WecomConfig, rou
             if (voice && requiresTextConfirmation(voiceCommand)) {
               throw new Error(VOICE_CONFIRMATION_REQUIRED);
             }
-            if ((parsed.action === "auto" && !quickReply(parsed.text)) || extractTapdLink(content)) {
+            if ((parsed.action === "auto" && !quickReply(parsed.text)) || ["question", "plan", "test-case"].includes(parsed.action) || extractTapdLink(content)) {
               try { await client.replyStream(frame, streamId, THINKING, false); }
               catch { console.warn("[WeCom] 初始回复发送失败"); }
             }
@@ -86,7 +86,7 @@ export function createMessageHandler(client: WSClient, options: WecomConfig, rou
             const imageBuffers = await downloadMessageImages(client, extracted.images);
             let resolved = await routeIntent(prepared.command, session);
             // A text-only classifier cannot answer an image question itself.
-            if (imageBuffers.length && resolved.action === "chat") {
+            if (imageBuffers.length && resolved.action === "chat" && !resolved.scopeRejected) {
               const prefixes = parseTaskPrefixes(content);
               resolved = { action: "question", text: prefixes.text,
                 projectId: prefixes.projectId, topicId: resolved.topicId, topicTitle: resolved.topicTitle };
@@ -96,7 +96,8 @@ export function createMessageHandler(client: WSClient, options: WecomConfig, rou
             if (voice && requiresTextConfirmation(command)) {
               throw new Error(VOICE_CONFIRMATION_REQUIRED);
             }
-            if (imageBuffers.length && !["plan", "question", "test-case", "clarify"].includes(command.action)) {
+            if (imageBuffers.length && !["plan", "question", "test-case", "clarify"].includes(command.action)
+              && !(command.action === "chat" && command.scopeRejected)) {
               throw new Error("图片需与问题或修改说明一起发送；执行、取消等操作请单独发送文字命令。");
             }
             imageDirectory = imageBuffers.length ? randomUUID() : undefined;

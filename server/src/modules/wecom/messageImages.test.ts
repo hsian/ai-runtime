@@ -117,6 +117,20 @@ test("handler passes actual image bytes with project selection and cleans tempor
   } finally { handler.stop(); }
 });
 
+test("an attached image cannot turn a scope refusal into a project question", async () => {
+  const dispatched: Command[] = [];
+  const client = { async downloadFile() { return { buffer: png }; }, async replyStream() {} } as unknown as WSClient;
+  const handler = createMessageHandler(client, options,
+    async () => ({ action: "chat", reply: "只处理项目相关问题", scopeRejected: true }),
+    async (_session, content) => ({ command: parseCommand(content) }), undefined,
+    async (_session, command) => { dispatched.push(command); return "只处理项目相关问题"; });
+  try {
+    handler.handle(frame("off-topic-image", "介绍下深圳的APEC会议"));
+    for (let count = 0; count < 100 && !dispatched.length; count++) await new Promise(resolve => setTimeout(resolve, 10));
+    assert.deepEqual(dispatched, [{ action: "chat", reply: "只处理项目相关问题", scopeRejected: true }]);
+  } finally { handler.stop(); }
+});
+
 test("image failure stops routing and dispatch instead of submitting text alone", async () => {
   const calls: string[] = [];
   const client = { async downloadFile() { throw new Error("secret download URL and key"); },

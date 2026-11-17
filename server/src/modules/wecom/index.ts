@@ -1,6 +1,7 @@
 import { getWecomConfig } from "./config.js";
 import { createWecomClient } from "./client.js";
 import { createMessageHandler } from "./messageHandler.js";
+import { resolveIntent } from "./intentRouter.js";
 import { initWecomStore, listBindings, queueNotice, pendingNotices, acknowledgeChunk, areJobNoticesSilent, recordFinalAnswer } from "./sessionStore.js";
 import { getJob } from "../../services/jobStore.js";
 import { subscribeJobEvents } from "../../services/jobEvents.js";
@@ -13,7 +14,7 @@ import type { WecomConfig } from "./config.js";
 import { startTapdCompletionMonitor } from "./tapdCompletion.js";
 import { createWorkbenchBridge } from "./workbenchBridge.js";
 
-export function startWecomBot(options: WecomConfig | undefined = getWecomConfig(), clientFactory = createWecomClient): () => void {
+export function startWecomBot(options: WecomConfig | undefined = getWecomConfig(), clientFactory = createWecomClient, routeIntent = resolveIntent): () => void {
   if (!options) return () => {};
   initWecomStore();
   const client = clientFactory(options);
@@ -21,7 +22,7 @@ export function startWecomBot(options: WecomConfig | undefined = getWecomConfig(
   const workbench = createWorkbenchBridge(options,
     (target, content) => client.sendMessage(target, { msgtype: "markdown", markdown: { content } }),
     target => authenticated && !stopped && !responses.blocked(target));
-  const handler = createMessageHandler(client, options, undefined, undefined, responses, undefined, workbench);
+  const handler = createMessageHandler(client, options, routeIntent, undefined, responses, undefined, workbench);
   const subscriptions = new Map<string, () => void>();
   const retryAfter = new Map<string, number>();
   let authenticated = false;

@@ -109,7 +109,7 @@ test("semantic voice actions cannot request revert or bypass the text confirmati
 
 test("voice change requests still enforce the allowlist, while allowed requests create plans only", async () => {
   const { client, calls } = fakeClient();
-  const handler = createMessageHandler(client, options);
+  const handler = createMessageHandler(client, options, async command => command);
   try {
     handler.handle(frame("denied-plan", "plan-reader", "修改：你好"));
     handler.handle(frame("allowed-plan", "developer", "修改：你好"));

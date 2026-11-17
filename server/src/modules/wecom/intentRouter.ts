@@ -10,13 +10,16 @@ import { classifyWithAgent, routeConversation, type IntentModel } from "../../se
 export { classifyWithAgent, type IntentModel } from "../../services/conversationIntent.js";
 import { chatQuickReply } from "../../services/chatQuickReply.js";
 
+export const PROJECT_ONLY_REPLY = "我主要协助处理项目需求、代码、问题排查、测试用例和任务流程。这个问题与项目无关，暂不回答。请告诉我需要处理的项目问题。";
+
 export function quickReply(text: string): Command | undefined {
   const reply = chatQuickReply(text);
   return reply ? { action: "chat", reply } : undefined;
 }
 
 export async function resolveIntent(command: Command, session: WecomSession, model: IntentModel = classifyWithAgent): Promise<Command> {
-  if (command.action !== "auto") return command;
+  if (command.action !== "auto" && command.action !== "question" && command.action !== "plan" && command.action !== "test-case") return command;
+  const explicit = command.action !== "auto";
   let text = command.text.trim();
   let contextSession = command.topicId ? { ...session, conversation_id: command.topicId } : session;
   if (/^[A-Z]$/i.test(text) && !command.topicId) {
@@ -28,7 +31,7 @@ export async function resolveIntent(command: Command, session: WecomSession, mod
   const selection = dialogue?.step === "selection" && /^[A-Z]$/i.test(text)
     ? dialogue.choices?.find(choice => choice.id === text.toUpperCase()) : undefined;
   if (selection) text = `用户选择方案 ${selection.id}：${selection.text}\n原问题与方案：${dialogue?.question}`;
-  const quick = quickReply(text);
+  const quick = !explicit ? quickReply(text) : undefined;
   if (quick) return quick;
   if (!text || text.length > 50_000) return { action: "chat", reply: "请发送不超过 50000 字符的文字消息。" };
   const job = contextSession.active_job_id ? getJob(contextSession.active_job_id) : undefined;
@@ -43,7 +46,8 @@ export async function resolveIntent(command: Command, session: WecomSession, mod
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(0, 30)
       .map(item => ({ jobId: item.jobId, topicId: item.conversationId, prompt: item.prompt.slice(0, 600), status: item.status,
         mergedToDefaultBranch: item.mergedToDefaultBranch, commitSha: item.sourceCommitSha || item.commitSha }));
-    const payload = { message: text, mergeCandidates,
+    const payload = { message: text, mergeCandidates, scopePolicy: "project-only",
+      requestedAction: explicit ? command.action : undefined,
       history: getConversationHistory(contextSession).map(turn => ({ role: turn.role, content: turn.content.slice(0, 600) })),
       lastQuestion: active?.clarificationQuestions ?? (selection ? dialogue?.question : undefined),
       topics: topics.map(topic => ({ id: topic.id, title: topic.title, current: topic.current,
@@ -54,6 +58,11 @@ export async function resolveIntent(command: Command, session: WecomSession, mod
         userGoal: topic.activeTask?.prompt.slice(0, 600) })),
       linkedTopicId: command.topicId, selectionTopicId: selection ? contextSession.conversation_id : undefined };
     const result = await routeConversation(payload, model);
+    if (result.intent === "off-topic") {
+      return { action: "chat", reply: PROJECT_ONLY_REPLY, scopeRejected: true };
+    }
+    // Explicit task types remain authoritative after the scope check; model output cannot change them.
+    if (explicit && result.intent !== "uncertain") return command;
     if (result.intent === "chat" || result.intent === "uncertain") {
       if (!result.reply.trim()) throw new Error("Empty reply");
       return { action: "chat", reply: result.reply.trim() };
