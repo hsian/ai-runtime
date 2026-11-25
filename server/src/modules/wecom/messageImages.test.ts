@@ -145,6 +145,24 @@ test("image failure stops routing and dispatch instead of submitting text alone"
   } finally { handler.stop(); }
 });
 
+test("an attached image does not replace an intent routing error with a question", async () => {
+  const { resolveIntent } = await import("./intentRouter.js");
+  const detail = "Intent connection unavailable";
+  const replies: string[] = [];
+  const client = { async downloadFile() { return { buffer: png }; },
+    async replyStream(_frame: unknown, _id: string, text: string, finished: boolean) {
+      if (finished) replies.push(text);
+    } } as unknown as WSClient;
+  const handler = createMessageHandler(client, options,
+    (command, session) => resolveIntent(command, session, async () => { throw new Error(detail); }),
+    async (_session, content) => ({ command: parseCommand(content) }));
+  try {
+    handler.handle(frame("intent-error-image", "请检查截图里的登录按钮"));
+    for (let count = 0; count < 100 && !replies.length; count++) await new Promise(resolve => setTimeout(resolve, 10));
+    assert.deepEqual(replies, [detail]);
+  } finally { handler.stop(); }
+});
+
 test("job bridge persists image attachments independently of the message temporary directory", async () => {
   const session = store.getSession(options.botId, "bridge", "alice", options.projectId);
   const temporary = "12345678-1234-1234-1234-123456789abc";

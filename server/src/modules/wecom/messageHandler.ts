@@ -85,8 +85,9 @@ export function createMessageHandler(client: WSClient, options: WecomConfig, rou
             if (stopped) return;
             const imageBuffers = await downloadMessageImages(client, extracted.images);
             let resolved = await routeIntent(prepared.command, session);
+            const preserveChatReply = resolved.action === "chat" && (resolved.scopeRejected || resolved.routingFailed);
             // A text-only classifier cannot answer an image question itself.
-            if (imageBuffers.length && resolved.action === "chat" && !resolved.scopeRejected) {
+            if (imageBuffers.length && resolved.action === "chat" && !preserveChatReply) {
               const prefixes = parseTaskPrefixes(content);
               resolved = { action: "question", text: prefixes.text,
                 projectId: prefixes.projectId, topicId: resolved.topicId, topicTitle: resolved.topicTitle };
@@ -97,10 +98,10 @@ export function createMessageHandler(client: WSClient, options: WecomConfig, rou
               throw new Error(VOICE_CONFIRMATION_REQUIRED);
             }
             if (imageBuffers.length && !["plan", "question", "test-case", "clarify"].includes(command.action)
-              && !(command.action === "chat" && command.scopeRejected)) {
+              && !preserveChatReply) {
               throw new Error("图片需与问题或修改说明一起发送；执行、取消等操作请单独发送文字命令。");
             }
-            imageDirectory = imageBuffers.length ? randomUUID() : undefined;
+            imageDirectory = imageBuffers.length && !preserveChatReply ? randomUUID() : undefined;
             const attachments = imageDirectory ? saveImageBuffers(imageDirectory, imageBuffers, WECOM_IMAGE_MAX_BYTES) : [];
             text = await dispatch(session, command, messageKey, taskOptions, responses ? jobId => {
               trackedJob = jobId;

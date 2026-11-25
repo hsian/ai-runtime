@@ -109,14 +109,13 @@ test("natural change follow-ups use the linked TAPD topic and keep the default e
   assert.equal(calls, 1);
 });
 
-test("connection failure does not blame user wording or request command syntax", async () => {
+test("connection failure returns the underlying error and masks credentials", async () => {
   const result = await resolveIntent(parseCommand("复制合同页也要修改"), session,
-    async () => { throw new Error("Intent connection unavailable"); });
-  assert.equal(result.action, "chat");
-  if (result.action === "chat") {
-    assert.match(result.reply, /消息处理失败/);
-    assert.doesNotMatch(result.reply, /问答：|修改：|没判断清楚/);
-  }
+    async () => { throw new Error("Intent connection unavailable: https://example.com?token=private"); });
+  assert.deepEqual(result, {
+    action: "chat", historySource: "task", routingFailed: true,
+    reply: "Intent connection unavailable: https://example.com?token=[REDACTED]",
+  });
 });
 
 test("one understanding call receives topic summaries but never pending plan bodies or statuses", async () => {

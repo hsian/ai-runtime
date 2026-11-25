@@ -9,6 +9,7 @@ import { formatJob } from "./replies.js";
 import { classifyWithAgent, routeConversation, type IntentModel } from "../../services/conversationIntent.js";
 export { classifyWithAgent, type IntentModel } from "../../services/conversationIntent.js";
 import { chatQuickReply } from "../../services/chatQuickReply.js";
+import { redactSensitiveText } from "../../services/operationLog.js";
 
 export const PROJECT_ONLY_REPLY = "我主要协助处理项目需求、代码、问题排查、测试用例和任务流程。这个问题与项目无关，暂不回答。请告诉我需要处理的项目问题。";
 
@@ -117,7 +118,9 @@ export async function resolveIntent(command: Command, session: WecomSession, mod
       ...(command.projectId ? { projectId: command.projectId } : {}),
       ...(result.topicId ? { topicId: result.topicId, topicTitle: result.topicTitle ?? "" } : {}) };
   } catch (error) {
-    console.warn("[WeCom] 意图识别失败：", error instanceof Error ? error.message : "Unknown error");
-    return { action: "chat", historySource: "task", reply: "抱歉，这次消息处理失败了，不是你表达的问题。请稍后重试，刚才关联的需求资料仍然保留。" };
+    const detail = error instanceof Error ? error.message || error.name : String(error);
+    const reply = redactSensitiveText(detail.trim() || "意图识别失败，未返回错误详情。");
+    console.warn("[WeCom] 意图识别失败：", reply);
+    return { action: "chat", historySource: "task", routingFailed: true, reply };
   }
 }
