@@ -11,7 +11,7 @@ import type { WecomConfig } from "./config.js";
 import type { WecomSession } from "./types.js";
 import type { Command } from "./commands.js";
 import { bindJob, getBinding, listBindings, rememberMessage, resetSession, silenceJobNotices } from "./sessionStore.js";
-import { listTopics, selectTopic } from "./topicStore.js";
+import { listSessionJobs, listTopics, selectTopic } from "./topicStore.js";
 import { formatJob, formatProgress, latestAgentActivity, questionChangeInstructions, withEngineFooter, HELP } from "./replies.js";
 import { isNonActionablePlanInput } from "../../services/agent/planInputGuard.js";
 import { getTopicTapd } from "./tapdStore.js";
@@ -23,6 +23,7 @@ import { canModifyCode, requireCommandPermission } from "./permissions.js";
 import { releaseConversationJob } from "./releaseMerge.js";
 import { requestTaskMerge } from "../../services/taskOperations.js";
 import { runTestCaseJob } from "../../services/testCases/testCaseJobService.js";
+import { getTaskState } from "@ai-runtime/shared/task-state";
 
 function acknowledgeMilestone(job: Job, session: WecomSession): void {
   const signature = milestoneSignature(job);
@@ -95,6 +96,37 @@ export async function dispatchCommand(session: WecomSession, command: Command, m
 async function dispatchCommandBody(session: WecomSession, command: Command, messageKey: string, options: WecomConfig,
   onJob?: (jobId: string) => void, messageAttachments: JobAttachment[] = []): Promise<string> {
   requireCommandPermission(session, command, options);
+  if (command.action === "cancel-all") {
+    const selected = new Set(command.jobIds);
+    const jobs = listSessionJobs(session).filter(job => selected.has(job.jobId) && getTaskState(job).busy);
+    if (!jobs.length) {
+      rememberMessage(messageKey);
+      return "当前会话没有正在处理或排队的任务。";
+    }
+    let cancelled = 0;
+    const failures: string[] = [];
+    for (const job of jobs) {
+      try {
+        requireCommandPermission(session, { action: "cancel", jobId: job.jobId }, options);
+        const current = getJob(job.jobId);
+        if (!current || !getTaskState(current).busy) {
+          failures.push(`「${job.prompt.slice(0, 80)}」状态已变化。`);
+          continue;
+        }
+        await cancelOwnedJob(job.jobId, session.owner_id);
+        cancelled++;
+      } catch (error) {
+        failures.push(`「${job.prompt.slice(0, 80)}」${error instanceof Error ? error.message : "取消失败"}`);
+      }
+      const current = getJob(job.jobId);
+      if (current?.status === "cancelled") {
+        try { acknowledgeMilestone(current, session); }
+        catch { console.warn("[WeCom] 无法记录任务取消通知"); }
+      }
+    }
+    rememberMessage(messageKey);
+    return [`已取消 ${cancelled} 项任务。`, ...(failures.length ? ["以下任务未取消。", ...failures] : [])].join("\n");
+  }
   if (command.action === "plan" || command.action === "question") {
     const previous = session.active_job_id ? getJob(session.active_job_id) : undefined;
     if (previous) await cleanupObsoletePlan(session, previous);
@@ -119,7 +151,7 @@ async function dispatchCommandBody(session: WecomSession, command: Command, mess
     rememberMessage(messageKey);
     return session.target_id === session.user_id
       ? `你的企微用户 ID：\`${session.user_id}\`\n当前权限：${canModifyCode(options, session.user_id) ? "问答和修改代码" : "仅问答"}`
-      : "请私聊机器人发送「我的ID」，避免在群内公开你的用户标识。";
+      : "请私聊机器人发送「/我的ID」，避免在群内公开你的用户标识。";
   }
   if (command.action === "execute" && !command.topicId && !command.jobId) {
     const active = session.active_job_id ? getJob(session.active_job_id) : undefined;
@@ -156,7 +188,7 @@ async function dispatchCommandBody(session: WecomSession, command: Command, mess
     if (!source) throw new Error("这个话题没有可撤回的已合并修改，请说明要撤回哪次修改。");
     setDialogue(session, { step: "revert_confirm", sourceJobId: source.jobId });
     rememberMessage(messageKey);
-    return `将使用 Git revert 撤回「${source.prompt.slice(0, 120)}」，生成反向提交并沿用原合并分支，不会重新改代码模拟撤回。\n\n回复「执行」确认撤回，或「取消」保留原修改。`;
+    return `将使用 Git revert 撤回「${source.prompt.slice(0, 120)}」，生成反向提交并沿用原合并分支，不会重新改代码模拟撤回。\n\n回复「/执行」确认撤回，或「/取消」保留原修改。`;
   }
   if (dialogue?.step === "reverting" && ["execute", "cancel", "status"].includes(command.action)) {
     rememberMessage(messageKey);
@@ -167,7 +199,7 @@ async function dispatchCommandBody(session: WecomSession, command: Command, mess
     const source = currentJob(session, dialogue.sourceJobId);
     if (command.action === "status") {
       rememberMessage(messageKey);
-      return "正在等待撤回确认，将使用 Git revert。回复「执行」确认，或「取消」。";
+      return "正在等待撤回确认，将使用 Git revert。回复「/执行」确认，或「/取消」。";
     }
     if (command.action === "cancel") {
       setDialogue(session);
@@ -254,7 +286,7 @@ async function dispatchCommandBody(session: WecomSession, command: Command, mess
     if (active && !["completed", "failed", "cancelled"].includes(active.status)
       && !(command.action === "plan" && active.requiresConfirm && ["planning", "awaiting_input", "awaiting_confirm"].includes(active.status))
       && !(["question", "test-case"].includes(command.action) && ["awaiting_input", "awaiting_confirm"].includes(active.status))) {
-      throw new Error(`当前任务尚未结束：${active.jobId}。请回复「状态」「执行」或「取消」。`);
+      throw new Error(`当前任务尚未结束：${active.jobId}。请回复「/状态」「/执行」或「/取消」。`);
     }
     const question = command.action === "question";
     const testCase = command.action === "test-case";

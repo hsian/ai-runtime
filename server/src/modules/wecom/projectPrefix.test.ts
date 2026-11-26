@@ -61,8 +61,8 @@ test("project prefixes support whitespace and colons without matching embedded t
     assert.deepEqual(parseCommand(`${prefix} 问答：登录逻辑`),
       { action: "question", text: "登录逻辑", projectId: mini });
   }
-  assert.deepEqual(parseCommand("#小程序 状态"), { action: "status", jobId: undefined, projectId: mini });
-  assert.deepEqual(parseCommand("#小程序：执行"), { action: "execute", jobId: undefined, projectId: mini });
+  assert.deepEqual(parseCommand("#小程序 /状态"), { action: "status", jobId: undefined, projectId: mini });
+  assert.deepEqual(parseCommand("#小程序：/执行"), { action: "execute", jobId: undefined, projectId: mini });
   assert.equal(parseCommand("#小程序").action, "chat");
   assert.equal(parseCommand("解释 #小程序 标识").projectId, undefined);
   assert.equal(parseCommand("#小程序员 问题").projectId, undefined);
@@ -133,7 +133,7 @@ test("message routing isolates project history and locates numbered tasks only i
     const job = createJob({ prompt: "Mini task", projectId: mini, ownerId: session.owner_id,
       conversationId: session.conversation_id, taskMode: "question" });
     store.bindJob(session, job.jobId);
-    await send(`#小程序 状态`);
+    await send(`#小程序 /状态`);
     assert.equal(seen.at(-1)!.project, mini);
     await send(`状态 ${job.jobId}`);
     assert.equal(seen.at(-1)!.project, mini);

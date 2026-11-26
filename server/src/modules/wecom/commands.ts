@@ -1,12 +1,13 @@
 export type Command = ({ action: "execute" | "status" | "cancel" | "merge" | "discard"; jobId?: string }
   | { action: "new" | "help" | "topics" | "identity" }
+  | { action: "cancel-all"; jobIds: string[] }
   | { action: "question" | "plan" | "test-case" | "clarify" | "auto"; text: string; jobId?: string }
   | { action: "revert"; jobId?: string }
   | { action: "release"; targetBranch: string; jobId?: string }
   | { action: "chat"; reply: string; historySource?: "task"; scopeRejected?: boolean; routingFailed?: boolean }) & { topicId?: string; topicTitle?: string; projectId?: string };
 
 export function requiresTextConfirmation(command: Command): boolean {
-  return ["execute", "cancel", "merge", "discard", "revert", "release"].includes(command.action);
+  return ["execute", "cancel", "cancel-all", "merge", "discard", "revert", "release"].includes(command.action);
 }
 
 export function parseTaskPrefixes(raw: string): { text: string; projectId?: string } {
@@ -29,16 +30,16 @@ export function parseCommand(raw: string): Command {
 }
 
 function parseCommandText(text: string): Command {
-  if (/^我的\s*id$/i.test(text)) return { action: "identity" };
-  const control = /^(执行|确认执行|状态|进度|取消|合并|重试合并|放弃合并)(?:\s+([a-f0-9-]{36}))?$/.exec(text);
-  if (control) {
+  const control = /^(\/?)(执行|确认执行|状态|进度|取消|合并|重试合并|放弃合并)(?:\s+([a-f0-9-]{36}))?$/.exec(text);
+  if (control && (control[1] || control[3])) {
     const actions = { 执行: "execute", 确认执行: "execute", 状态: "status", 进度: "status", 取消: "cancel",
       合并: "merge", 重试合并: "merge", 放弃合并: "discard" } as const;
-    return { action: actions[control[1] as keyof typeof actions], jobId: control[2] };
+    return { action: actions[control[2] as keyof typeof actions], jobId: control[3] };
   }
-  if (text === "新会话") return { action: "new" };
-  if (text === "帮助") return { action: "help" };
-  if (text === "话题" || text === "话题列表") return { action: "topics" };
+  if (/^\/我的id$/i.test(text)) return { action: "identity" };
+  if (text === "/新会话") return { action: "new" };
+  if (text === "/帮助") return { action: "help" };
+  if (text === "/话题" || text === "/话题列表") return { action: "topics" };
   const answer = /^补充\s+([a-f0-9-]{36})\s*[:：]\s*([\s\S]+)$/.exec(text);
   if (answer) return { action: "clarify", jobId: answer[1], text: answer[2] };
   const testCase = /^(?:生成)?测试用例\s*[:：]\s*([\s\S]+)$/.exec(text);

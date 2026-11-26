@@ -90,7 +90,7 @@ test("execution targets the current plan while ambiguous cancellation still requ
   const { session, a, b } = makeTopics("controls", true);
   const stopBeforeExecution = new Error("Stop before external execution");
   let selected = "";
-  await assert.rejects(dispatchCommand(session, parseCommand("执行"), "execute-current", options,
+  await assert.rejects(dispatchCommand(session, parseCommand("/执行"), "execute-current", options,
     id => { selected = id; throw stopBeforeExecution; }), error => error === stopBeforeExecution);
   assert.equal(selected, b.jobId);
   await assert.rejects(dispatchCommand(session, { action: "cancel" }, "ambiguous-cancel", options), /有多个任务/);
@@ -105,7 +105,7 @@ test("execution targets the current plan while ambiguous cancellation still requ
 test("execution stays ambiguous without a current plan and an explicit ID overrides the current topic", async () => {
   const { session, a, b } = makeTopics("controls", true);
   topics.selectTopic(session, "new", "没有待执行计划的话题");
-  await assert.rejects(dispatchCommand(session, parseCommand("执行"), "ambiguous-execute", options), /有多个任务/);
+  await assert.rejects(dispatchCommand(session, parseCommand("/执行"), "ambiguous-execute", options), /有多个任务/);
   topics.selectTopic(session, b.topicId);
   const stopBeforeExecution = new Error("Stop before external execution");
   let selected = "";
@@ -128,12 +128,12 @@ test("a unique pending task remains controllable after switching to another comp
 
 test("a new plan discards previous drafts in the same chat while preserving other members and executing jobs", async () => {
   const { session, a, b } = makeTopics("topic-list", true);
-  const reply = await dispatchCommand(session, parseCommand("话题"), "list-topics", options);
+  const reply = await dispatchCommand(session, parseCommand("/话题"), "list-topics", options);
   assert.match(reply, /账套列表标题颜色/);
   assert.match(reply, /登录按钮报错/);
   assert.ok(reply.includes(a.jobId) && reply.includes(b.jobId));
   const other = store.getSession("bot", "topic-list", "other-member", options.projectId);
-  const otherReply = await dispatchCommand(other, parseCommand("话题"), "other-list", options);
+  const otherReply = await dispatchCommand(other, parseCommand("/话题"), "other-list", options);
   assert.ok(!otherReply.includes(a.jobId));
   jobs.updateJob(a.jobId, { requiresConfirm: true });
   jobs.updateJob(b.jobId, { requiresConfirm: true, status: "awaiting_input" });

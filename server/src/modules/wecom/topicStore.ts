@@ -3,6 +3,7 @@ import { getDatabase } from "../../services/database.js";
 import { getJob } from "../../services/jobStore.js";
 import type { WecomSession } from "./types.js";
 import { getTopicTapd } from "./tapdStore.js";
+import type { Job } from "../../types.js";
 
 interface TopicRow {
   conversation_id: string;
@@ -91,4 +92,18 @@ export function topicCandidates(session: WecomSession) {
     && !["completed", "failed", "cancelled"].includes(topic.activeTask.status)));
   return [...important.sort((a, b) => Number(b.current) - Number(a.current)),
     ...topics.filter(topic => !important.includes(topic)).slice(0, 8)].slice(0, 12);
+}
+
+export function listSessionJobs(session: WecomSession): Job[] {
+  const rows = getDatabase().prepare(`SELECT b.job_id, MIN(t.conversation_id) AS topic_id FROM wecom_job_bindings b
+    JOIN jobs j ON j.job_id = b.job_id
+    JOIN wecom_topics t ON t.session_key = b.session_key AND t.archived = 0
+      AND (t.conversation_id = j.conversation_id OR (j.conversation_id IS NULL
+        AND (t.active_job_id = j.job_id OR t.last_job_id = j.job_id)))
+    WHERE b.session_key = ? AND j.owner_id = ?
+    GROUP BY b.job_id ORDER BY j.updated_at DESC, j.job_id`).all(session.session_key, session.owner_id) as { job_id: string; topic_id: string }[];
+  return rows.flatMap(row => {
+    const job = getJob(row.job_id);
+    return job ? [{ ...job, conversationId: row.topic_id }] : [];
+  });
 }

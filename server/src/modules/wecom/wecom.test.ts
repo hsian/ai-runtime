@@ -25,7 +25,7 @@ store.initWecomStore();
 after(() => { closeDatabase(); rmSync(directory, { recursive: true, force: true }); });
 
 test("control commands must occupy the entire message", () => {
-  assert.deepEqual(parseCommand("执行"), { action: "execute", jobId: undefined });
+  assert.deepEqual(parseCommand("/执行"), { action: "execute", jobId: undefined });
   assert.equal(parseCommand("请修改执行按钮并合并样式").action, "auto");
   assert.deepEqual(parseCommand("问答：登录在哪里实现？"), { action: "question", text: "登录在哪里实现？" });
   const id = "a22aa4b4-bbba-4555-8222-123456789abc";
@@ -35,7 +35,7 @@ test("control commands must occupy the entire message", () => {
 test("identity is an exact command, bypasses the Agent and exposes only the sender ID in private chat", async () => {
   const { resolveIntent } = await import("./intentRouter.js");
   const options = { botId: "bot-identity", secret: "test", projectId: "b2b-composite" };
-  for (const text of ["我的ID", "我的id", " 我的 ID "]) assert.deepEqual(parseCommand(text), { action: "identity" });
+  for (const text of ["/我的ID", "/我的id", " /我的ID "]) assert.deepEqual(parseCommand(text), { action: "identity" });
   assert.equal(parseCommand("我的ID字段需要改一下").action, "auto");
   const calls: { text: string; finish: boolean }[] = [];
   const fake = { async replyStream(_frame: unknown, _id: string, text: string, finish: boolean) { calls.push({ text, finish }); },
@@ -47,7 +47,7 @@ test("identity is an exact command, bypasses the Agent and exposes only the send
     for (const [msgid, target] of [["identity-private", "alice-actual-id"], ["identity-group", "group-id"]]) {
       handler.handle({ headers: { req_id: msgid }, body: { aibotid: options.botId, msgid,
         chattype: target === "group-id" ? "group" : "single", chatid: target,
-        from: { userid: "alice-actual-id" }, msgtype: "text", text: { content: "我的ID" } } } as MessageFrame);
+        from: { userid: "alice-actual-id" }, msgtype: "text", text: { content: "/我的ID" } } } as MessageFrame);
     }
     await new Promise(resolve => setTimeout(resolve, 50));
     assert.equal(calls.length, 2);
@@ -190,7 +190,7 @@ test("repeated callbacks are processed once, including after database reopen", a
   const options = { botId: "bot-callback", secret: "test", projectId: "b2b-composite" };
   const handler = createMessageHandler(fake, options);
   const frame = { headers: { req_id: "req" }, body: { aibotid: options.botId, msgid: "msg-1",
-    chattype: "single", from: { userid: "alice" }, msgtype: "text", text: { content: "帮助" } } } as MessageFrame;
+    chattype: "single", from: { userid: "alice" }, msgtype: "text", text: { content: "/帮助" } } } as MessageFrame;
   handler.handle(frame);
   handler.handle(frame);
   await new Promise(resolve => setTimeout(resolve, 30));
@@ -203,23 +203,34 @@ test("repeated callbacks are processed once, including after database reopen", a
 });
 
 test("same-session commands observe changes made by the previous command", async () => {
+  const { resolveIntent } = await import("./intentRouter.js");
   const options = { botId: "bot-order", secret: "test", projectId: "b2b-composite", codeAllowedUserIds: ["alice"] };
   const session = store.getSession(options.botId, "alice", "alice", options.projectId);
   const job = createJob({ prompt: "test", ownerId: session.owner_id });
   updateJob(job.jobId, { status: "awaiting_confirm", planSummary: "修改按钮颜色" });
   store.bindJob(session, job.jobId);
   const replies: string[] = [];
-  const fake = { async replyStream(_frame: unknown, _id: string, text: string) { replies.push(text); },
+  const fake = { async replyStream(_frame: unknown, _id: string, text: string, finished: boolean) { if (finished) replies.push(text); },
     async sendMessage() {} } as unknown as WSClient;
-  const handler = createMessageHandler(fake, options);
-  for (const [msgid, content] of [["cancel", "取消"], ["status", "状态"]]) {
+  const handler = createMessageHandler(fake, options, (command, current) => resolveIntent(command, current, async input => {
+    const payload = JSON.parse(input);
+    const candidate = payload.taskCandidates.find((item: { jobId: string }) => item.jobId === job.jobId);
+    assert.ok(candidate);
+    if (payload.message === "取消任务") {
+      assert.equal(candidate.status, "待确认执行");
+      return JSON.stringify({ intent: "cancel", jobId: job.jobId, reply: "", prompt: "" });
+    }
+    assert.equal(candidate.status, "已取消");
+    return JSON.stringify({ intent: "task-status", jobId: job.jobId, reply: "", prompt: "" });
+  }));
+  for (const [msgid, content] of [["cancel", "取消任务"], ["status", "取消了吗？"]]) {
     handler.handle({ headers: { req_id: msgid }, body: { aibotid: options.botId, msgid,
       chattype: "single", from: { userid: "alice" }, msgtype: "text", text: { content } } } as MessageFrame);
   }
   await new Promise(resolve => setTimeout(resolve, 100));
   assert.equal(getJob(job.jobId)?.status, "cancelled");
   assert.equal(replies.length, 2);
-  assert.match(replies[1], /任务已取消/);
+  assert.match(replies[1], /「test」已取消/);
   handler.stop();
 });
 

@@ -71,8 +71,8 @@ test("duplicate names and conflicting display/TAPD mappings never send or consum
   } }, async target => { sent.push(target); }, undefined, id => { received.push(id); });
   bridge.reconcile(); await bridge.flush();
   assert.deepEqual(sent, []);
-  assert.match((await bridge.reply("shared-wecom", "待补充"))!, /尚未绑定/);
-  assert.match((await bridge.reply("carol-wecom", "待补充"))!, /尚未绑定/);
+  assert.match((await bridge.reply("shared-wecom", "/待补充"))!, /尚未绑定/);
+  assert.match((await bridge.reply("carol-wecom", "/待补充"))!, /尚未绑定/);
   assert.deepEqual(received, []);
 });
 test("TAPD name fallback is available while an explicit username mapping takes precedence", async () => {

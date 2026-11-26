@@ -235,21 +235,89 @@ test("workflow status renders the recorded plan and engine, never the classifier
     planSummary: "Actual recorded plan" });
   store.bindJob(local, old.jobId);
   const command = await resolveIntent(parseCommand("现在是什么状态？"), local, async () => JSON.stringify({
-    intent: "workflow", reply: "Invented plan", prompt: "", topicId: local.conversation_id }));
+    intent: "workflow", showDetails: true, reply: "Invented plan", prompt: "", topicId: local.conversation_id }));
   assert.equal(command.action, "chat");
   if (command.action === "chat") {
-    assert.match(command.reply, /不是本次新生成/);
     assert.match(command.reply, /Actual recorded plan/);
     assert.match(command.reply, /Powered by Pro$/);
     assert.doesNotMatch(command.reply, /Invented plan/);
   }
 });
 
-test("greetings, thanks and capabilities never invoke the model or create jobs", async () => {
+test("natural cancellation and follow-up resolve through the model and affect only active jobs in the current session", async () => {
+  const local = store.getSession("bot", "cancel-scope", "alice", "b2b-composite");
+  const elsewhere = store.getSession("bot", "elsewhere", "alice", "b2b-composite");
+  const otherMember = store.getSession("bot", "cancel-scope", "bob", "b2b-composite");
+  const create = (session: typeof local, prompt: string, status: "running" | "pending" | "completed" | "awaiting_confirm") => {
+    const job = jobs.createJob({ prompt, ownerId: session.owner_id, conversationId: session.conversation_id, taskMode: "question" });
+    jobs.updateJob(job.jobId, { status, message: "旧方案正文" });
+    store.bindJob(session, job.jobId);
+    return job.jobId;
+  };
+  const running = create(local, "合同页", "running");
+  const queued = create(local, "登录页", "pending");
+  const completed = create(local, "账户页", "completed");
+  const awaiting = create(local, "设置页", "awaiting_confirm");
+  const outside = create(elsewhere, "其他会话", "running");
+  const other = create(otherMember, "其他用户", "running");
+
+  for (const text of ["取消", "取消任务"]) {
+    const command = parseCommand(text);
+    assert.equal(command.action, "auto");
+    const result = await resolveIntent(command, local, async input => {
+      const payload = JSON.parse(input);
+      assert.equal(payload.message, text);
+      assert.ok(payload.taskCandidates.some((item: { jobId: string }) => item.jobId === running));
+      assert.doesNotMatch(input, new RegExp(`${outside}|${other}`));
+      return JSON.stringify({ intent: "cancel", taskScope: "one", relation: "uncertain", reply: "", prompt: "" });
+    });
+    assert.equal(result.action, "chat");
+    if (result.action === "chat") {
+      assert.match(result.reply, /要取消哪项任务/);
+      store.recordChatExchange(local, text, result.reply);
+    }
+  }
+
+  const selected = await resolveIntent(parseCommand("全部"), local, async input => {
+    const payload = JSON.parse(input);
+    assert.ok(payload.history.some((turn: { content: string }) => turn.content.includes("要取消哪项任务")));
+    return JSON.stringify({ intent: "cancel", taskScope: "all", reply: "", prompt: "" });
+  });
+  assert.equal(selected.action, "cancel-all");
+  if (selected.action === "cancel-all") assert.deepEqual(new Set(selected.jobIds), new Set([running, queued]));
+  const direct = await resolveIntent(parseCommand("把正在进行的任务都取消"), local, async input => {
+    assert.equal(JSON.parse(input).message, "把正在进行的任务都取消");
+    return JSON.stringify({ intent: "cancel", taskScope: "all", reply: "", prompt: "" });
+  });
+  assert.deepEqual(direct, selected);
+  const { dispatchCommand } = await import("./jobBridge.js");
+  assert.match(await dispatchCommand(local, selected, "cancel-scope-test", {
+    botId: "bot", secret: "test", projectId: "b2b-composite",
+  }), /已取消 2 项任务/);
+  for (const id of [running, queued]) assert.equal(jobs.getJob(id)?.status, "cancelled");
+  assert.equal(jobs.getJob(completed)?.status, "completed");
+  assert.equal(jobs.getJob(awaiting)?.status, "awaiting_confirm");
+  for (const id of [outside, other]) assert.equal(jobs.getJob(id)?.status, "running");
+
+  const status = await resolveIntent(parseCommand("任务都取消了吗"), local, async () => JSON.stringify({
+    intent: "task-status", taskScope: "all", reply: "", prompt: "",
+  }));
+  assert.equal(status.action, "chat");
+  if (status.action === "chat") {
+    assert.match(status.reply, /「合同页」已取消/);
+    assert.match(status.reply, /「设置页」待确认执行/);
+    assert.doesNotMatch(status.reply, /旧方案正文/);
+  }
+});
+
+test("greetings, thanks and capabilities use semantic routing without creating jobs", async () => {
   const before = jobs.listJobs(session.owner_id).length;
   for (const text of ["你好", "你好！", "Hello", "谢谢你", "你能做什么"]) {
-    const result = await resolveIntent(parseCommand(text), session, async () => { throw new Error("Should not call model"); });
-    assert.equal(result.action, "chat");
+    const result = await resolveIntent(parseCommand(text), session, async input => {
+      assert.equal(JSON.parse(input).message, text);
+      return JSON.stringify({ intent: "chat", reply: "收到", prompt: "" });
+    });
+    assert.deepEqual(result, { action: "chat", reply: "收到" });
   }
   assert.equal(jobs.listJobs(session.owner_id).length, before);
 });
@@ -277,7 +345,7 @@ test("uncertain, failed, invalid or empty classifications never become a change 
 });
 
 test("control and clarification commands bypass semantic routing and cannot be invented by the model", async () => {
-  for (const text of ["执行", "取消", "状态", "新会话", "补充：蓝色"]) {
+  for (const text of ["/执行", "/取消", "/状态", "/新会话", "补充：蓝色"]) {
     const command = parseCommand(text);
     assert.deepEqual(await resolveIntent(command, session, async () => { throw new Error("Should not call model"); }), command);
   }
@@ -333,7 +401,9 @@ test("classification receives scoped history and current clarification context",
   });
   assert.equal(result.action, "clarify");
   assert.equal(result.topicId, current.conversation_id);
-  assert.equal((await resolveIntent(parseCommand("你好"), current)).action, "chat");
+  assert.equal((await resolveIntent(parseCommand("你好"), current, async () => JSON.stringify({
+    intent: "chat", reply: "你好", prompt: "",
+  }))).action, "chat");
   assert.equal(jobs.getJob(job.jobId)?.status, "awaiting_input");
   store.resetSession(current);
   assert.deepEqual(store.getChatHistory(store.getSession("bot", "group", "alice", "b2b-composite")), []);
@@ -347,11 +417,12 @@ test("chat history is bounded and retained across database reopen", () => {
   assert.equal(store.getChatHistory(local).at(-1)?.content, "reply-9");
 });
 
-test("greeting callbacks send one conversational reply and no job metadata", async () => {
+test("greeting callbacks send one final conversational reply and no job metadata", async () => {
   const replies: string[] = [];
-  const client = { async replyStream(_frame: unknown, _id: string, text: string) { replies.push(text); },
+  const client = { async replyStream(_frame: unknown, _id: string, text: string, finished: boolean) { if (finished) replies.push(text); },
     async sendMessage() {} } as unknown as WSClient;
-  const handler = createMessageHandler(client, { botId: "chat-bot", secret: "test", projectId: "b2b-composite" });
+  const handler = createMessageHandler(client, { botId: "chat-bot", secret: "test", projectId: "b2b-composite" },
+    (command, current) => resolveIntent(command, current, async () => JSON.stringify({ intent: "chat", prompt: "", reply: "你好，我在。" })));
   const frame = { headers: { req_id: "hello" }, body: { aibotid: "chat-bot", msgid: "hello",
     from: { userid: "alice" }, chattype: "single", msgtype: "text", text: { content: "你好" } } } as MessageFrame;
   handler.handle(frame); handler.handle(frame);

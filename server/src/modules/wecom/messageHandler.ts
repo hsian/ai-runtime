@@ -7,7 +7,7 @@ import { getJob } from "../../services/jobStore.js";
 import { getProject } from "../../services/projectRegistry.js";
 import { parseCommand, parseTaskPrefixes, requiresTextConfirmation } from "./commands.js";
 import { dispatchCommand } from "./jobBridge.js";
-import { resolveIntent, quickReply } from "./intentRouter.js";
+import { resolveIntent } from "./intentRouter.js";
 import { randomUUID } from "node:crypto";
 import { THINKING, withEngineFooter } from "./replies.js";
 import { prepareTapdMessage, extractTapdLink } from "./tapdBridge.js";
@@ -77,7 +77,7 @@ export function createMessageHandler(client: WSClient, options: WecomConfig, rou
             if (voice && requiresTextConfirmation(voiceCommand)) {
               throw new Error(VOICE_CONFIRMATION_REQUIRED);
             }
-            if ((parsed.action === "auto" && !quickReply(parsed.text)) || ["question", "plan", "test-case"].includes(parsed.action) || extractTapdLink(content)) {
+            if (["auto", "question", "plan", "test-case"].includes(parsed.action) || extractTapdLink(content)) {
               try { await client.replyStream(frame, streamId, THINKING, false); }
               catch { console.warn("[WeCom] 初始回复发送失败"); }
             }
@@ -110,6 +110,13 @@ export function createMessageHandler(client: WSClient, options: WecomConfig, rou
             if (command.action === "cancel") {
               const cancelledId = command.jobId ?? session.active_job_id;
               if (cancelledId) await responses?.finish(cancelledId, "任务已取消。");
+            }
+            if (command.action === "cancel-all") {
+              for (const id of command.jobIds) {
+                if (getJob(id)?.status === "cancelled") {
+                  await responses?.finish(id, "任务已取消。").catch(() => console.warn("[WeCom] 取消结果流发送失败"));
+                }
+              }
             }
             if (prepared.prefix) text = `${prepared.prefix}\n\n${text}`;
             recordChatExchange(getSession(options.botId, target, body.from.userid, projectId), content, trackedJob ? undefined : text,
