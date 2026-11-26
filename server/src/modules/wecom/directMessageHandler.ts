@@ -7,7 +7,7 @@ import { reply, type MessageFrame } from "./client.js";
 import { parseTaskPrefixes } from "./commands.js";
 import type { WecomConfig } from "./config.js";
 import { createConversationActions } from "./conversationActions.js";
-import { runDirectConversation } from "./directConversation.js";
+import { ProjectReadPreparationError, runDirectConversation } from "./directConversation.js";
 import { downloadMessageImages, extractMessageContent, WECOM_IMAGE_MAX_BYTES } from "./messageImages.js";
 import type { ResponseCoordinator } from "./responseCoordinator.js";
 import { getSession, hasMessage, recordChatExchange, rememberMessage } from "./sessionStore.js";
@@ -117,7 +117,7 @@ export function createDirectMessageHandler(client: WSClient, options: WecomConfi
           logOperation({ action: "wecom_conversation", status: "success", durationMs: Date.now() - started });
         } catch (error) {
           logOperation({ action: "wecom_conversation", status: "failed", error: String(error), durationMs: Date.now() - started });
-          if (!stopped) await send(failure).catch(() => undefined);
+          if (!stopped) await send(error instanceof ProjectReadPreparationError ? error.message : failure).catch(() => undefined);
         } finally {
           clearTimeout(progressTimer);
           if (imageDirectory) await deleteJobAttachments(imageDirectory).catch(() => console.warn("[WeCom] 临时图片清理失败"));

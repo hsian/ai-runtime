@@ -491,6 +491,14 @@ export class GitService {
     return git;
   }
 
+  async prepareRepositoryRead(): Promise<string> {
+    const git = await this.getGit();
+    if ((await git.revparse(["--abbrev-ref", "HEAD"])).trim() !== this.project.defaultBranch) {
+      await this.checkoutBaseBranch(git);
+    }
+    return this.repoPath;
+  }
+
   async createBranch(branchName: string): Promise<void> {
     const git = await this.prepareBaseBranch();
     await git.checkoutLocalBranch(branchName);

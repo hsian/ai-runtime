@@ -55,16 +55,23 @@ await writeFile(cli, process.platform === "win32"
 Object.assign(process.env, { GIT_ACCESS_TOKEN: "test-only", CODEX_CLI_PATH: cli, CODEX_MODEL: "", CODEX_PROFILE: "",
   CODEX_ENABLE_SYSTEM_PROXY: "false", CODEX_DISABLE_WEBSOCKETS: "false", CODEX_TIMEOUT_MS: "10000" });
 const { runCodexAgent } = await import("./codexAgentService.js");
+const { config } = await import("../../config.js");
 after(() => rm(root, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 }));
 
-test("direct conversation enables repository reads without inheriting write approval or user tools", async () => {
-  const result = await runCodexAgent(root, "CASE_DIRECT_READ_ONLY", undefined, undefined,
-    { mode: "conversation", conversationRepoTools: true });
+test("direct conversation uses the configured profile and remains read-only", async () => {
+  const profile = config.CODEX_PROFILE;
+  config.CODEX_PROFILE = "repository-profile";
+  let result;
+  try {
+    result = await runCodexAgent(root, "CASE_DIRECT_READ_ONLY", undefined, undefined,
+      { mode: "conversation", conversationRepoTools: true });
+  } finally { config.CODEX_PROFILE = profile; }
   const args = JSON.parse(result.summary) as string[];
   assert.equal(args[args.indexOf("--sandbox") + 1], "read-only");
   assert.ok(args.includes("approval_policy=never"));
-  assert.ok(args.includes("--ignore-user-config"));
-  assert.ok(args.includes("--ignore-rules"));
+  assert.equal(args[args.indexOf("--profile") + 1], "repository-profile");
+  assert.ok(!args.includes("--ignore-user-config"));
+  assert.ok(!args.includes("shell_environment_policy.inherit=core"));
   assert.ok(!args.includes("--dangerously-bypass-approvals-and-sandbox"));
   assert.ok(!args.includes("--approve-for-me"));
   assert.ok(!args.includes("shell_tool"));

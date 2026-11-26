@@ -424,7 +424,7 @@ export async function runClaudeAgent(
     permissionMode,
     "--no-session-persistence",
     "--setting-sources",
-    isConversation && options?.conversationRepoTools ? "" : config.CLAUDE_SETTING_SOURCES,
+    config.CLAUDE_SETTING_SOURCES,
     "--system-prompt",
     systemPrompt,
     "--output-format",

@@ -6,7 +6,7 @@
 也不再接收工作台斜杠命令、任务控制口令或问答/修改前缀。普通回答保留 Agent 原文，
 状态问题参考实际任务记录，不自动附上已有方案。会话、任务和最近几轮上下文按机器人、聊天、发送人和项目隔离。
 
-会话优先读取本地已有的项目检出，不为每条消息拉取仓库；未初始化仓库时仍能聊天，但不能验证仓库内容。
+会话从 `server/projects.json` 选择仓库目录和默认分支，复用运行时的托管仓库初始化；已位于默认分支的有效检出不为每条消息重新拉取。仓库准备失败时明确报告，不在空目录里查代码。
 小迪始终只处理工作相关请求：同一轮 Agent 对话结合上下文判断，不设开关，不增加分类调用。
 独立招呼礼貌接一句；带工作内容的消息和工作追问正常处理，明确无关的闲聊不展开。
 工作台的任务列表、补充、审查和指定分支发版仍在 Web。
@@ -169,9 +169,9 @@ are renumbered with their matching body references before passing to the Agent.
 The saved body is bounded to 30,000 characters; chat shows only a short excerpt.
 
 `directConversation.ts` assembles a small context and runs a single read-only Agent
-turn. For this entry, Codex uses its read-only sandbox without loading the user
-configuration, rules or profile; authentication and a server-provided
-`CODEX_MODEL` are still used. Configuration for other Agent modes is unchanged.
+turn. Codex loads the service account's usual CLI configuration, including the
+server-provided `CODEX_MODEL` and `CODEX_PROFILE` when set. The conversation still
+forces the read-only sandbox and never requests elevated approvals.
 `conversationActions.ts` validates the separate confirmation events before calling
 the shared task execution and merge services.
 

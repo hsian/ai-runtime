@@ -14,10 +14,14 @@ const store = await import("./sessionStore.js");
 const { closeDatabase } = await import("../../services/database.js");
 const { createJob, getJob, updateJob } = await import("../../services/jobStore.js");
 const { getProject } = await import("../../services/projectRegistry.js");
-const { parseConversationAnswer, runDirectConversation } = await import("./directConversation.js");
+const { parseConversationAnswer, ProjectReadPreparationError, runDirectConversation } = await import("./directConversation.js");
 const { createDirectMessageHandler } = await import("./directMessageHandler.js");
 const { createConversationActions } = await import("./conversationActions.js");
 const options = { botId: "direct-test", secret: "test", projectId: "b2b-composite", codeAllowedUserIds: ["alice"] };
+const prepareFixtureRepository = async (id: string) => {
+  assert.equal(id, options.projectId);
+  return getProject(id).workspaceDir;
+};
 store.initWecomStore();
 after(() => { closeDatabase(); rmSync(directory, { recursive: true, force: true }); });
 
@@ -37,15 +41,17 @@ test("the conversation calls one read-only agent with concise, owned task facts"
   store.recordChatExchange(session, "前一句", "上轮回复");
   let calls = 0;
   const result = await runDirectConversation(session, options.projectId, "改好没？", [],
-    async (_cwd, input, _context, _event, request) => {
+    async (cwd, input, _context, _event, request) => {
       calls++;
+      assert.equal(cwd, getProject(options.projectId).workspaceDir);
       assert.equal(request?.mode, "conversation");
+      assert.equal(request?.conversationRepoTools, true);
       assert.equal(request?.jsonSchema, undefined);
       assert.match(input, /方案待确认，还未开始修改/);
       assert.match(input, /前一句/);
       assert.doesNotMatch(input, /不能泄露的任务|不要复述这份长方案/);
       return { summary: "还没改，方案在等确认。" };
-    });
+    }, prepareFixtureRepository);
   assert.equal(calls, 1);
   assert.deepEqual(result, { text: "还没改，方案在等确认。" });
 });
@@ -64,9 +70,16 @@ test("the same work-only policy sees the latest message and context in one agent
       assert.match(request!.systemPrompt!, /简短追问先联系工作上文/);
       assert.match(request!.systemPrompt!, /明确无关.*不用工具查找.*不附加操作提议/);
       return { summary: "测试回复" };
-    });
+    }, prepareFixtureRepository);
     assert.equal(calls, 1);
   }
+});
+
+test("repository preparation failures do not query an empty directory or invoke the agent", async () => {
+  const session = store.getSession(options.botId, "no-checkout", "alice", options.projectId);
+  await assert.rejects(runDirectConversation(session, options.projectId, "列表字是什么颜色？", [],
+    async () => assert.fail("must not invoke the agent"),
+    async () => { throw new Error("checkout failed"); }), ProjectReadPreparationError);
 });
 
 test("ordinary messages are forwarded verbatim once, including former command strings", { timeout: 3000 }, async () => {

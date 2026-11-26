@@ -354,8 +354,7 @@ export async function runCodexAgent(
     args.push("--skip-git-repo-check", "--disable", "code_mode",
       "--disable", "apps", "--disable", "browser_use", "--disable", "computer_use");
     if (options?.conversationRepoTools) {
-      args.push("--ignore-user-config", "--ignore-rules", "--disable", "plugins",
-        "-c", "approval_policy=never", "-c", "shell_environment_policy.inherit=core");
+      args.push("--disable", "plugins", "-c", "approval_policy=never");
     } else args.push("--disable", "shell_tool", "--disable", "unified_exec");
   }
 
@@ -397,7 +396,7 @@ export async function runCodexAgent(
     args.push("--model", config.CODEX_MODEL);
   }
 
-  if (config.CODEX_PROFILE && !(isConversation && options?.conversationRepoTools)) {
+  if (config.CODEX_PROFILE) {
     args.push("--profile", config.CODEX_PROFILE);
   }
 
