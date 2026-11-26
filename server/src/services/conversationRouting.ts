@@ -50,7 +50,7 @@ const jsonSchema = {
 export function routingAgentOptions() {
   return { mode: "conversation" as const,
     systemPrompt: `${routingPrompt}\n输出 JSON schema：${JSON.stringify(jsonSchema)}`,
-    disableTools: true, timeoutMs: 45_000 };
+    disableTools: true, timeoutMs: 120_000 };
 }
 
 export function parseRoutingResult(raw: string) {
