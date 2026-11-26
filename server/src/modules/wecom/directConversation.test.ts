@@ -36,7 +36,7 @@ test("the conversation calls one read-only agent with concise, owned task facts"
   updateJob(own.jobId, { status: "awaiting_confirm", planSummary: "不要复述这份长方案" });
   store.recordChatExchange(session, "前一句", "上轮回复");
   let calls = 0;
-  const result = await runDirectConversation(session, options.projectId, "改好没？", [], undefined,
+  const result = await runDirectConversation(session, options.projectId, "改好没？", [],
     async (_cwd, input, _context, _event, request) => {
       calls++;
       assert.equal(request?.mode, "conversation");
@@ -48,6 +48,25 @@ test("the conversation calls one read-only agent with concise, owned task facts"
     });
   assert.equal(calls, 1);
   assert.deepEqual(result, { text: "还没改，方案在等确认。" });
+});
+
+test("the same work-only policy sees the latest message and context in one agent call", async () => {
+  const session = store.getSession(options.botId, "scope-group", "alice", options.projectId);
+  store.recordChatExchange(session, "合同变更执行失败了。", "这个任务上次没执行完。");
+  for (const message of ["你好，帮我看看合同变更", "再试下", "讲个笑话"]) {
+    let calls = 0;
+    await runDirectConversation(session, options.projectId, message, [], async (_cwd, input, _context, _event, request) => {
+      calls++;
+      assert.equal(JSON.parse(input).message, message);
+      assert.match(input, /合同变更执行失败/);
+      assert.match(request!.systemPrompt!, /只处理工作相关请求.*不按关键词拦截/);
+      assert.match(request!.systemPrompt!, /招呼里带着工作请求就直接处理/);
+      assert.match(request!.systemPrompt!, /简短追问先联系工作上文/);
+      assert.match(request!.systemPrompt!, /明确无关.*不用工具查找.*不附加操作提议/);
+      return { summary: "测试回复" };
+    });
+    assert.equal(calls, 1);
+  }
 });
 
 test("ordinary messages are forwarded verbatim once, including former command strings", { timeout: 3000 }, async () => {

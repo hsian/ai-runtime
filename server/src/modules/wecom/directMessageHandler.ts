@@ -93,7 +93,7 @@ export function createDirectMessageHandler(client: WSClient, options: WecomConfi
           if (stopped) return;
           failure = "这次没能完成回复，请稍后再试。";
           const agentStarted = Date.now();
-          const result = await converse(session, projectId, message, attachments, options.conversationScopeInstruction);
+          const result = await converse(session, projectId, message, attachments);
           logOperation({ action: "wecom_conversation_agent", status: "success", durationMs: Date.now() - agentStarted });
           if (stopped) return;
           const action = result.proposal ? actions.offer(session, projectId, result.proposal) : undefined;
