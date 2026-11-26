@@ -105,7 +105,7 @@ test("job snapshots keep their body and copied images when the topic is refreshe
   assert.equal(job.requiresConfirm, true);
   assert.equal(job.tapdContext?.description, "旧需求正文 [配图1]");
   assert.notEqual(job.attachments![0].path, sourceImage);
-  await bridge.prepareTapdMessage(current, "/重新读取需求", async link => snapshot(link, "新需求正文", "new-image"));
+  await bridge.prepareTapdMessage(current, "重新读取需求", async link => snapshot(link, "新需求正文", "new-image"));
   assert.equal(tapd.getTopicTapd(current)?.context.description, "新需求正文");
   assert.equal(jobs.getJob(job.jobId)?.tapdContext?.description, "旧需求正文 [配图1]");
   assert.equal(readFileSync(job.attachments![0].path, "utf8"), "old-image");
@@ -123,7 +123,7 @@ test("failed loading preserves the old topic and snapshot and a non-linked topic
   assert.equal(session.conversation_id, original);
   assert.equal(tapd.getTopicTapd(session)?.context.description, "已关联资料");
   topics.selectTopic(session, "new", "普通话题");
-  await assert.rejects(bridge.prepareTapdMessage(session, "/重新读取需求", async () => { throw new Error("Must not run"); }), /还没有关联/);
+  await assert.rejects(bridge.prepareTapdMessage(session, "重新读取需求", async () => { throw new Error("Must not run"); }), /还没有关联/);
 });
 
 test("snapshot loader limits workspaces and keeps failed image markers with contiguous successful attachments", async () => {

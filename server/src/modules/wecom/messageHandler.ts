@@ -7,7 +7,7 @@ import { getJob } from "../../services/jobStore.js";
 import { getProject } from "../../services/projectRegistry.js";
 import { parseCommand, parseTaskPrefixes, requiresTextConfirmation } from "./commands.js";
 import { dispatchCommand } from "./jobBridge.js";
-import { resolveIntent } from "./intentRouter.js";
+import { resolveIntent, quickReply } from "./intentRouter.js";
 import { randomUUID } from "node:crypto";
 import { THINKING, withEngineFooter } from "./replies.js";
 import { prepareTapdMessage, extractTapdLink } from "./tapdBridge.js";
@@ -77,7 +77,7 @@ export function createMessageHandler(client: WSClient, options: WecomConfig, rou
             if (voice && requiresTextConfirmation(voiceCommand)) {
               throw new Error(VOICE_CONFIRMATION_REQUIRED);
             }
-            if (["auto", "question", "plan", "test-case"].includes(parsed.action) || extractTapdLink(content)) {
+            if ((parsed.action === "auto" && !quickReply(parsed.text)) || extractTapdLink(content)) {
               try { await client.replyStream(frame, streamId, THINKING, false); }
               catch { console.warn("[WeCom] 初始回复发送失败"); }
             }
@@ -85,9 +85,8 @@ export function createMessageHandler(client: WSClient, options: WecomConfig, rou
             if (stopped) return;
             const imageBuffers = await downloadMessageImages(client, extracted.images);
             let resolved = await routeIntent(prepared.command, session);
-            const preserveChatReply = resolved.action === "chat" && (resolved.scopeRejected || resolved.routingFailed);
             // A text-only classifier cannot answer an image question itself.
-            if (imageBuffers.length && resolved.action === "chat" && !preserveChatReply) {
+            if (imageBuffers.length && resolved.action === "chat") {
               const prefixes = parseTaskPrefixes(content);
               resolved = { action: "question", text: prefixes.text,
                 projectId: prefixes.projectId, topicId: resolved.topicId, topicTitle: resolved.topicTitle };
@@ -97,11 +96,10 @@ export function createMessageHandler(client: WSClient, options: WecomConfig, rou
             if (voice && requiresTextConfirmation(command)) {
               throw new Error(VOICE_CONFIRMATION_REQUIRED);
             }
-            if (imageBuffers.length && !["plan", "question", "test-case", "clarify"].includes(command.action)
-              && !preserveChatReply) {
+            if (imageBuffers.length && !["plan", "question", "test-case", "clarify"].includes(command.action)) {
               throw new Error("图片需与问题或修改说明一起发送；执行、取消等操作请单独发送文字命令。");
             }
-            imageDirectory = imageBuffers.length && !preserveChatReply ? randomUUID() : undefined;
+            imageDirectory = imageBuffers.length ? randomUUID() : undefined;
             const attachments = imageDirectory ? saveImageBuffers(imageDirectory, imageBuffers, WECOM_IMAGE_MAX_BYTES) : [];
             text = await dispatch(session, command, messageKey, taskOptions, responses ? jobId => {
               trackedJob = jobId;
@@ -110,13 +108,6 @@ export function createMessageHandler(client: WSClient, options: WecomConfig, rou
             if (command.action === "cancel") {
               const cancelledId = command.jobId ?? session.active_job_id;
               if (cancelledId) await responses?.finish(cancelledId, "任务已取消。");
-            }
-            if (command.action === "cancel-all") {
-              for (const id of command.jobIds) {
-                if (getJob(id)?.status === "cancelled") {
-                  await responses?.finish(id, "任务已取消。").catch(() => console.warn("[WeCom] 取消结果流发送失败"));
-                }
-              }
             }
             if (prepared.prefix) text = `${prepared.prefix}\n\n${text}`;
             recordChatExchange(getSession(options.botId, target, body.from.userid, projectId), content, trackedJob ? undefined : text,

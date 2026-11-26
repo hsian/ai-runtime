@@ -101,8 +101,8 @@ test("the progress command shows the latest real phase without invoking Agent or
   updateJob(job.jobId, { status: "running" });
   bindJob(session, job.jobId);
   appendJobEvent(job.jobId, { type: "stage", phase: "question" });
-  assert.equal(parseCommand("/进度").action, "status");
-  const text = await dispatchCommand({ ...session, active_job_id: job.jobId }, parseCommand("/进度"), "progress-command", options);
+  assert.equal(parseCommand("进度").action, "status");
+  const text = await dispatchCommand({ ...session, active_job_id: job.jobId }, parseCommand("进度"), "progress-command", options);
   assert.equal(text, "正在读取项目代码\n\nPowered by Pro");
   assert.doesNotMatch(text, new RegExp(getJob(job.jobId)!.jobId));
 });

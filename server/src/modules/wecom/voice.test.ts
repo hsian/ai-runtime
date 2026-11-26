@@ -34,16 +34,14 @@ function fakeClient() {
 
 test("voice greetings reuse text conversation history, isolate group sessions and deduplicate callbacks", async () => {
   const { client, calls } = fakeClient();
-  const { resolveIntent } = await import("./intentRouter.js");
-  const handler = createMessageHandler(client, options, (command, session) => resolveIntent(command, session,
-    async () => JSON.stringify({ intent: "chat", prompt: "", reply: "你好！" })));
+  const handler = createMessageHandler(client, options);
   try {
     const single = frame("greeting", "reader", "你好");
     handler.handle(single); handler.handle(single);
     handler.handle(frame("group-greeting", "reader", "你好", true));
     await delay();
-    assert.equal(calls.filter(call => call.finish).length, 2);
-    assert.ok(calls.filter(call => call.finish).every(call => call.text.includes("你好")));
+    assert.equal(calls.length, 2);
+    assert.ok(calls.every(call => call.finish && call.text.includes("你好") && !call.text.includes("Thinking")));
     for (const target of ["reader", "voice-group"]) {
       const session = store.getSession(options.botId, target, "reader", options.projectId);
       assert.equal(store.getChatHistory(session)[0].content, "你好");
@@ -84,11 +82,11 @@ test("missing, invalid and excessive transcriptions ask for another message with
   } finally { handler.stop(); }
 });
 
-test("spoken slash commands are blocked before semantic routing, including transcription punctuation", async () => {
+test("spoken control commands are blocked before semantic routing, including transcription punctuation", async () => {
   const { client, calls } = fakeClient();
   const handler = createMessageHandler(client, options, async () => { throw new Error("spoken controls must not route"); });
   try {
-    for (const [index, content] of ["/执行", "/确认执行。", "/取消！", "/合并", "/重试合并", "/放弃合并"].entries()) {
+    for (const [index, content] of ["执行", "确认执行。", "取消！", "合并", "重试合并", "放弃合并"].entries()) {
       handler.handle(frame(`control-${index}`, "developer", content));
     }
     await delay();
@@ -98,13 +96,9 @@ test("spoken slash commands are blocked before semantic routing, including trans
 });
 
 test("semantic voice actions cannot request revert or bypass the text confirmation guard", async () => {
-  for (const action of ["execute", "cancel", "cancel-all", "merge", "discard", "revert", "release"] as const) {
+  for (const action of ["execute", "cancel", "merge", "discard", "revert", "release"] as const) {
     const { client, calls } = fakeClient();
-    const handler = createMessageHandler(client, options, async () => {
-      if (action === "release") return { action, targetBranch: "20260930" };
-      if (action === "cancel-all") return { action, jobIds: [] };
-      return { action };
-    });
+    const handler = createMessageHandler(client, options, async () => action === "release" ? { action, targetBranch: "20260930" } : { action });
     try {
       handler.handle(frame(`resolved-${action}`, "developer", "撤回刚才那次改动"));
       await delay();
@@ -115,7 +109,7 @@ test("semantic voice actions cannot request revert or bypass the text confirmati
 
 test("voice change requests still enforce the allowlist, while allowed requests create plans only", async () => {
   const { client, calls } = fakeClient();
-  const handler = createMessageHandler(client, options, async command => command);
+  const handler = createMessageHandler(client, options);
   try {
     handler.handle(frame("denied-plan", "plan-reader", "修改：你好"));
     handler.handle(frame("allowed-plan", "developer", "修改：你好"));
@@ -149,6 +143,6 @@ test("voice follow-up receives existing topic history and cannot execute a pendi
     await delay();
     assert.ok(calls.some(call => call.text === "继续当前话题。"));
     assert.equal(getJob(pending.jobId)?.status, "awaiting_confirm");
-    assert.equal(parseCommand("/执行").action, "execute");
+    assert.equal(parseCommand("执行").action, "execute");
   } finally { handler.stop(); }
 });

@@ -40,19 +40,20 @@ function localDateKey(date = new Date()): string {
   return `${year}-${month}-${day}`;
 }
 
-export function redactSensitiveText(value: string): string {
+function redact(value: string): string {
   return value
     .replace(/(authorization\s*[:=]\s*bearer\s+)[^\s,;]+/gi, "$1[REDACTED]")
     .replace(/([?&](?:access_token|token|api_key|apikey|secret|password)=)[^&\s]+/gi, "$1[REDACTED]")
     .replace(/(https?:\/\/)[^\s/@:]+:[^\s/@]+@/gi, "$1[REDACTED]@")
-    .replace(/\b(?:ghp_|github_pat_|glpat-|sk-)[A-Za-z0-9_-]{12,}\b/g, "[REDACTED]");
+    .replace(/\b(?:ghp_|github_pat_|glpat-|sk-)[A-Za-z0-9_-]{12,}\b/g, "[REDACTED]")
+    .slice(0, 2_000);
 }
 
 function sanitizeEntry(entry: OperationLogEntry): Record<string, unknown> {
   return Object.fromEntries(
     Object.entries(entry)
       .filter(([, value]) => value !== undefined)
-      .map(([key, value]) => [key, typeof value === "string" ? redactSensitiveText(value).slice(0, 2_000) : value])
+      .map(([key, value]) => [key, typeof value === "string" ? redact(value) : value])
   );
 }
 

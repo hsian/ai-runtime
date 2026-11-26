@@ -154,34 +154,25 @@ QWECHAT_BOT_DEFAULT_PROJECT=b2b-composite
 QWECHAT_BOT_PREVIEW_HOST=192.168.1.10
 ```
 
-小迪仅处理项目需求、代码、缺陷排查、测试用例和任务流程。无关常识、新闻、生活咨询及闲聊
-返回固定的职责说明，不回答问题本身、不创建任务。问候、感谢和能力询问仍可简短回应。
-`问答：`、`修改：`、`测试用例：` 也先进行范围识别，但不会被模型改成其他任务类型。
-结合需求上下文判断业务术语，不使用关键词黑名单。运行
-`node server/scripts/verify-wecom-intent.mjs --scope` 可验证真实模型的范围判断，
-包括截图中的 APEC 问题、前缀绕过和正常项目问题；不发送企微消息、不创建真实任务。
-
-The configured Agent interprets greetings, read-only project questions, change
-requests and clarification answers. Greetings create no jobs. Unclear requests
-ask a short follow-up instead of creating a plan.
+Messages are routed by intent: greetings reply immediately without creating
+jobs; other natural-language messages use the configured Agent to distinguish
+conversation, read-only project questions, change requests and clarification
+answers. Unclear requests ask a short follow-up instead of creating a plan.
 One model call understands the latest goal and selects relevant context together.
 It receives up to 12 topic candidates with bounded user-goal/TAPD summaries and
-two recent user messages per candidate, plus scoped conversation history. For task
-management it also receives task IDs, titles and short status labels for the
-sender's current session. It does not receive pending plans or historical task results.
+two recent user messages per candidate, plus scoped conversation history. It never
+receives pending plan bodies, task statuses or historical task-result replies.
 Independent goals start a clean topic; linked TAPD references and option choices
 stay bound to their source topic. Ambiguous references ask a specific follow-up.
 It runs in a temporary directory, with no Git preparation,
 Claude tools disabled and Codex in read-only mode with execution tools disabled.
-Each classification call times out after two minutes. Invalid JSON/schema output
+Each classification call times out after 45 seconds. Invalid JSON/schema output
 is repaired once from the original input; transport failures are not retried.
 Failed classification creates no task and is excluded from conversation memory.
-Ordinary messages are classified semantically, including greetings, status checks,
-and cancellation. A clear request to cancel all running tasks cancels the sender's
-running and queued tasks in the current session. Ambiguous targets prompt a clarification.
-Ownership and permission checks run in the program. Slash commands, job-ID commands
-and the explicit `补充：` syntax bypass classification.
-`问答：` / `修改：` / `测试用例：` retain their explicit task type after a scope check.
+Only explicit control commands can authorize execution; model output cannot
+produce execute/cancel/merge actions, and task ownership/confirmation checks remain
+in the program rather than the model.
+Explicit control commands and `问答：` / `修改：` / `补充：` bypass classification.
 `node server/scripts/verify-wecom-intent.mjs` checks classification against
 three synthetic messages using the configured Agent; it creates no project jobs
 and sends no WeChat messages.
@@ -189,7 +180,7 @@ Add `--topics` to check interleaved topic selection and ambiguous references;
 this creates synthetic completed records only in an isolated temporary database.
 `--tapd` checks analysis versus implementation of a synthetic linked requirement,
 without contacting TAPD or creating real jobs.
-Only a change request generates a plan. Reply `/执行` to execute that plan.
+Only a change request generates a plan. Reply `执行` to execute that plan.
 Execution uses the existing project `autoMerge` setting, including automatic
 merge into `test` and the existing preview service for `b2b-composite`.
 `问答：...` runs the shared read-only project question workflow.
@@ -230,18 +221,17 @@ across restarts.
 Explicit `问答：` / `修改：` messages without a TAPD link start a fresh topic. Natural-language
 follow-ups select an existing topic semantically. Unknown topic IDs are rejected;
 ambiguous references ask the user to name the page or feature instead of guessing.
-Ask for status or cancellation in natural language. `/状态`, `/取消`, `/新会话`,
-and `/帮助` are direct commands.
+`状态`, `取消`, `新会话`, and `帮助` manage the current session.
 For clarification, answer numbered questions on separate lines (`1. ...`,
 `2. ...`); a single question accepts an unnumbered answer. `补充：...` is optional.
-After merge failures, `/重试合并` and `/放弃合并` use existing merge services.
+After merge failures, `重试合并` and `放弃合并` use existing merge services.
 Control commands accept a complete job UUID after a space.
 When several tasks can accept a command, a bare command never chooses one.
 Use `执行 <job-id>`, `取消 <job-id>`, or `补充 <job-id>：<answers>`.
 `状态 <job-id>` selects the task's topic. `新会话` archives previous topic
 candidates (without deleting local history) after all unfinished tasks are handled.
-`/话题` lists recent topics and their task IDs. A slash command can find a unique
-actionable task even after switching to another completed topic.
+`话题` lists recent topics and their task IDs; unique actionable tasks can still
+use bare control commands even after switching to another completed topic.
 
 Session scope is bot + chat + sender + project. Each member can control only
 their own tasks in that session. Bot visibility is configured in WeChat.

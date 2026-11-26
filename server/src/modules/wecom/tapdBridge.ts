@@ -100,7 +100,7 @@ export async function prepareTapdMessage(session: WecomSession, text: string, lo
   const prefixed = parseTaskPrefixes(text);
   text = prefixed.text;
   const link = extractTapdLink(text);
-  const refresh = text.trim() === "/重新读取需求";
+  const refresh = /^(重新读取需求|重新读取|刷新需求)$/.test(text.trim());
   if (!link && !refresh) return { command: parseCommand(raw) };
   const previous = getTopicTapd(session);
   if (refresh && !previous) throw new Error("当前话题还没有关联 TAPD 条目，请先发送详情链接。");

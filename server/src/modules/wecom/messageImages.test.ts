@@ -117,20 +117,6 @@ test("handler passes actual image bytes with project selection and cleans tempor
   } finally { handler.stop(); }
 });
 
-test("an attached image cannot turn a scope refusal into a project question", async () => {
-  const dispatched: Command[] = [];
-  const client = { async downloadFile() { return { buffer: png }; }, async replyStream() {} } as unknown as WSClient;
-  const handler = createMessageHandler(client, options,
-    async () => ({ action: "chat", reply: "只处理项目相关问题", scopeRejected: true }),
-    async (_session, content) => ({ command: parseCommand(content) }), undefined,
-    async (_session, command) => { dispatched.push(command); return "只处理项目相关问题"; });
-  try {
-    handler.handle(frame("off-topic-image", "介绍下深圳的APEC会议"));
-    for (let count = 0; count < 100 && !dispatched.length; count++) await new Promise(resolve => setTimeout(resolve, 10));
-    assert.deepEqual(dispatched, [{ action: "chat", reply: "只处理项目相关问题", scopeRejected: true }]);
-  } finally { handler.stop(); }
-});
-
 test("image failure stops routing and dispatch instead of submitting text alone", async () => {
   const calls: string[] = [];
   const client = { async downloadFile() { throw new Error("secret download URL and key"); },
@@ -142,24 +128,6 @@ test("image failure stops routing and dispatch instead of submitting text alone"
     for (let count = 0; count < 100 && !calls.some(text => text.includes("读取失败")); count++) await new Promise(resolve => setTimeout(resolve, 10));
     assert.match(calls.at(-1)!, /图片读取失败.*下载或解密.*未提交任务/);
     assert.doesNotMatch(calls.at(-1)!, /secret|must not route/);
-  } finally { handler.stop(); }
-});
-
-test("an attached image does not replace an intent routing error with a question", async () => {
-  const { resolveIntent } = await import("./intentRouter.js");
-  const detail = "Intent connection unavailable";
-  const replies: string[] = [];
-  const client = { async downloadFile() { return { buffer: png }; },
-    async replyStream(_frame: unknown, _id: string, text: string, finished: boolean) {
-      if (finished) replies.push(text);
-    } } as unknown as WSClient;
-  const handler = createMessageHandler(client, options,
-    (command, session) => resolveIntent(command, session, async () => { throw new Error(detail); }),
-    async (_session, content) => ({ command: parseCommand(content) }));
-  try {
-    handler.handle(frame("intent-error-image", "请检查截图里的登录按钮"));
-    for (let count = 0; count < 100 && !replies.length; count++) await new Promise(resolve => setTimeout(resolve, 10));
-    assert.deepEqual(replies, [detail]);
   } finally { handler.stop(); }
 });
 

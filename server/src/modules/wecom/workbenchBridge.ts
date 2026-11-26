@@ -141,7 +141,7 @@ export function createWorkbenchBridge(options: WecomConfig, send: (target: strin
       if (stopped) return;
       const fixed = await fixedCommands(sender, content, context);
       if (fixed !== undefined) return fixed;
-      const listRequested = content.trim() === "/待补充";
+      const listRequested = /^(?:工作台)?待补充(?:任务)?$/.test(content.trim());
       const command = parseCommand(content);
       const explicit = command.action === "clarify";
       // A delivered notification is not authorization to consume the user's next chat.
