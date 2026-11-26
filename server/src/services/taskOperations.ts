@@ -10,6 +10,7 @@ type Worker = (jobId: string) => Promise<void>;
 /** Entry points authorize identity; this service owns operation rules and queueing. */
 export function requestTaskMerge(jobId: string, options: {
   createMergeRequest?: boolean; discard?: boolean;
+  confirmedVersion?: { commit: string; targetBranch: string };
   enqueue?: (id: string, worker: Worker) => number;
 } = {}): number {
   const job = getJob(jobId);
@@ -23,7 +24,7 @@ export function requestTaskMerge(jobId: string, options: {
     try {
       if (options.discard) await discardJobMerge(id);
       else if (createMergeRequest) await createJobMergeRequest(id);
-      else await confirmJobMerge(id);
+      else await confirmJobMerge(id, options.confirmedVersion);
     } catch (cause) {
       const latest = getJob(id);
       const error = cause instanceof Error ? cause.message : String(cause);

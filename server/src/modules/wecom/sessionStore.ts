@@ -96,7 +96,8 @@ export function getConversationHistory(session: WecomSession): { role: "user" | 
     { role: "user" | "assistant"; content: string }[]).reverse();
 }
 
-export function recordChatExchange(session: WecomSession, user: string, assistant?: string, source: "conversation" | "task" = "conversation"): void {
+export function recordChatExchange(session: WecomSession, user: string, assistant?: string,
+  source: "conversation" | "task" = "conversation", trackChoices = true): void {
   const db = getDatabase();
   db.transaction(() => {
     const insert = db.prepare("INSERT INTO wecom_chat_history (session_key, conversation_id, role, content, source) VALUES (?, ?, ?, ?, ?)");
@@ -106,7 +107,7 @@ export function recordChatExchange(session: WecomSession, user: string, assistan
       (SELECT id FROM wecom_chat_history WHERE session_key = ? AND conversation_id = ? ORDER BY id DESC LIMIT 12)`)
       .run(session.session_key, session.conversation_id, session.session_key, session.conversation_id);
   })();
-  if (assistant) rememberChoices(session, assistant);
+  if (assistant && trackChoices) rememberChoices(session, assistant);
 }
 
 export function recordFinalAnswer(jobId: string, answer: string): void {

@@ -424,7 +424,7 @@ export async function runClaudeAgent(
     permissionMode,
     "--no-session-persistence",
     "--setting-sources",
-    config.CLAUDE_SETTING_SOURCES,
+    isConversation && options?.conversationRepoTools ? "" : config.CLAUDE_SETTING_SOURCES,
     "--system-prompt",
     systemPrompt,
     "--output-format",
@@ -439,7 +439,7 @@ export async function runClaudeAgent(
   }
 
   if (isConversation) {
-    args.push("--tools", "", "--strict-mcp-config");
+    args.push("--tools", options?.conversationRepoTools ? "Read,Grep,Glob" : "", "--strict-mcp-config");
   } else if (isTestCase) {
     args.push(
       "--safe-mode",

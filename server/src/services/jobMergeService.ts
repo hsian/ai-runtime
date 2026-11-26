@@ -9,7 +9,7 @@ import { getProject } from "./projectRegistry.js";
 import { getProjectGitService } from "./projectRuntime.js";
 import { syncWorkbenchTask } from "./tapd/taskStatusSync.js";
 
-export async function confirmJobMerge(jobId: string): Promise<void> {
+export async function confirmJobMerge(jobId: string, confirmedVersion?: { commit: string; targetBranch: string }): Promise<void> {
   const job = getJob(jobId);
   if (!job) throw new Error("任务不存在");
   if (job.status !== "awaiting_merge" && job.status !== "pending") {
@@ -22,6 +22,11 @@ export async function confirmJobMerge(jobId: string): Promise<void> {
   const project = getProject(job.projectId);
   const gitService = getProjectGitService(job.projectId);
   const defaultBranch = project.defaultBranch;
+  if (confirmedVersion && ((job.sourceCommitSha ?? job.commitSha) !== confirmedVersion.commit
+    || defaultBranch !== confirmedVersion.targetBranch)) {
+    if (job.status === "pending") updateJob(jobId, { status: "awaiting_merge", message: "待合并版本已变化，请重新确认。" });
+    throw new Error("待合并版本或目标分支已变化，请重新确认");
+  }
   updateJob(jobId, { status: "running", message: `正在合并到 ${defaultBranch}...` });
   appendJobEvent(jobId, {
     type: "stage",
@@ -35,7 +40,7 @@ export async function confirmJobMerge(jobId: string): Promise<void> {
       jobId
     );
     const mergeSha = await gitService.mergeIntoDefaultBranch(
-      job.branch,
+      confirmedVersion?.commit ?? job.branch,
       mergeMessage,
       createJobConflictResolver(jobId)
     );

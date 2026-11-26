@@ -14,7 +14,9 @@ const fs = require('node:fs'); let input = '';
 process.stdin.on('data', chunk => input += chunk);
 process.stdin.on('end', () => {
   const emit = event => console.log(JSON.stringify(event));
-  if (input.includes('CASE_COMPLETED_LINGER')) {
+  if (input.includes('CASE_DIRECT_READ_ONLY')) {
+    emit({type:'item.completed',item:{type:'agent_message',text: JSON.stringify(process.argv.slice(2))}});
+  } else if (input.includes('CASE_COMPLETED_LINGER')) {
     console.error('ERROR codex_models_manager::manager: failed to refresh available models: request timed out');
     emit({type:'item.completed',item:{type:'agent_message',text:'过程说明，不是最终答案'}});
     emit({type:'item.completed',item:{type:'agent_message',text:'{"intent":"chat","reply":"最终回答"}'}});
@@ -54,6 +56,20 @@ Object.assign(process.env, { GIT_ACCESS_TOKEN: "test-only", CODEX_CLI_PATH: cli,
   CODEX_ENABLE_SYSTEM_PROXY: "false", CODEX_DISABLE_WEBSOCKETS: "false", CODEX_TIMEOUT_MS: "10000" });
 const { runCodexAgent } = await import("./codexAgentService.js");
 after(() => rm(root, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 }));
+
+test("direct conversation enables repository reads without inheriting write approval or user tools", async () => {
+  const result = await runCodexAgent(root, "CASE_DIRECT_READ_ONLY", undefined, undefined,
+    { mode: "conversation", conversationRepoTools: true });
+  const args = JSON.parse(result.summary) as string[];
+  assert.equal(args[args.indexOf("--sandbox") + 1], "read-only");
+  assert.ok(args.includes("approval_policy=never"));
+  assert.ok(args.includes("--ignore-user-config"));
+  assert.ok(args.includes("--ignore-rules"));
+  assert.ok(!args.includes("--dangerously-bypass-approvals-and-sandbox"));
+  assert.ok(!args.includes("--approve-for-me"));
+  assert.ok(!args.includes("shell_tool"));
+  assert.ok(!args.includes("--output-schema"));
+});
 
 test("JSON quota errors trigger continuation even with a zero process exit code", async () => {
   let calls = 0;

@@ -351,8 +351,12 @@ export async function runCodexAgent(
   ];
 
   if (isConversation) {
-    args.push("--skip-git-repo-check", "--disable", "shell_tool", "--disable", "unified_exec", "--disable", "code_mode",
+    args.push("--skip-git-repo-check", "--disable", "code_mode",
       "--disable", "apps", "--disable", "browser_use", "--disable", "computer_use");
+    if (options?.conversationRepoTools) {
+      args.push("--ignore-user-config", "--ignore-rules", "--disable", "plugins",
+        "-c", "approval_policy=never", "-c", "shell_environment_policy.inherit=core");
+    } else args.push("--disable", "shell_tool", "--disable", "unified_exec");
   }
 
   // Capture the final answer for every mode. JSON event output also contains
@@ -393,7 +397,7 @@ export async function runCodexAgent(
     args.push("--model", config.CODEX_MODEL);
   }
 
-  if (config.CODEX_PROFILE) {
+  if (config.CODEX_PROFILE && !(isConversation && options?.conversationRepoTools)) {
     args.push("--profile", config.CODEX_PROFILE);
   }
 

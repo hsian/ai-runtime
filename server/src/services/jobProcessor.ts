@@ -354,7 +354,7 @@ export async function processJob(jobId: string): Promise<void> {
     let finalBranch = branchName;
     let mergeSha = commitSha;
 
-    if (!project.autoMerge || job.workbenchSession) {
+    if (!project.autoMerge || job.workbenchSession || job.requireMergeConfirmation) {
       const readyMessage = `代码修改已完成，等待确认是否合并到 ${defaultBranch}`;
       updateJob(jobId, { status: "awaiting_merge", message: readyMessage, sourceBranch: branchName, sourceCommitSha: commitSha, worktreePath: repoPath, branch: branchName, commitSha, previewUrl, previewFilter, previewMessage: previewNotice, mergeRetryable: false, implementationSummary: result.summary });
       appendJobEvent(jobId, { type: "stage", phase: "execute_ready", text: readyMessage, branch: branchName, commitSha, previewUrl, previewMessage: previewNotice });

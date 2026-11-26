@@ -60,6 +60,7 @@ export function parseCodeAllowedUserIds(value: string): string[] {
 }
 
 export interface WecomConfig {
+  conversationScopeInstruction?: string;
   workbenchRecipients?: Record<string, string>;
   workbenchNameRecipients?: Record<string, string>;
   workbenchUrl?: string;

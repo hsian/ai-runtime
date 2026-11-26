@@ -117,6 +117,7 @@ export type JobStatus =
   | "cancelled";
 
 export interface Job {
+  requireMergeConfirmation?: boolean;
   /** 独立工作台会话；原 Web 的 Job 流程不使用这些字段。 */
   workbenchSession?: boolean;
   workbenchUserId?: string;

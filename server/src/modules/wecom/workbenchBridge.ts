@@ -95,7 +95,7 @@ export function createWorkbenchBridge(options: WecomConfig, send: (target: strin
         if (!target || accountForSender(options, target)?.id !== job.workbenchUserId) continue;
         const text = review
           ? `**代码已完成，请进行 Review**\n${title(job)}\n任务编号：\`${job.jobId}\`\n\n请到任务工作台查看代码 Diff。需要调整可继续对话；审查通过后点击「完成」合并代码。${link(job)}`
-          : `**任务需要你补充信息**\n${title(job)}\n任务编号：\`${job.jobId}\`\n\n${question(job)}${link(job)}\n\n可在工作台回复，也可私聊小迪发送「补充 ${job.jobId}：答案」。使用 /list 获取 T编号后，也可发送「/reply T编号 答案」。`;
+          : `**任务需要你补充信息**\n${title(job)}\n任务编号：\`${job.jobId}\`\n\n${question(job)}${link(job)}\n\n请在工作台的任务对话中补充。`;
         getDatabase().prepare(`INSERT OR IGNORE INTO wecom_workbench_notices
           (bot_id, job_id, signature, target_id, chunks) VALUES (?, ?, ?, ?, ?)`)
           .run(options.botId, job.jobId, review || workbenchQuestionSignature(job), target, JSON.stringify(splitMessage(text)));

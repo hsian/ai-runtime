@@ -34,6 +34,7 @@ export interface AgentRunOptions {
   conversationHistory?: ConversationHistoryMessage[];
   jsonSchema?: Record<string, unknown>;
   disableTools?: boolean;
+  conversationRepoTools?: boolean;
   apiDocAccess?: boolean;
   questionChangeInstructions?: string;
 }

@@ -1,6 +1,6 @@
 import { getWecomConfig } from "./config.js";
 import { createWecomClient } from "./client.js";
-import { createMessageHandler } from "./messageHandler.js";
+import { createDirectMessageHandler } from "./directMessageHandler.js";
 import { initWecomStore, listBindings, queueNotice, pendingNotices, acknowledgeChunk, areJobNoticesSilent, recordFinalAnswer } from "./sessionStore.js";
 import { getJob } from "../../services/jobStore.js";
 import { subscribeJobEvents } from "../../services/jobEvents.js";
@@ -12,6 +12,16 @@ import type { WecomSession } from "./types.js";
 import type { WecomConfig } from "./config.js";
 import { startTapdCompletionMonitor } from "./tapdCompletion.js";
 import { createWorkbenchBridge } from "./workbenchBridge.js";
+import type { Job } from "../../types.js";
+import { getProject } from "../../services/projectRegistry.js";
+
+function formatNotice(job: Job): string {
+  if (job.status === "failed") return "这次任务没完成。你可以继续问我具体进度，或说明要不要再试。";
+  if (job.status === "awaiting_merge") return `代码已修改，尚未合并到 ${getProject(job.projectId).defaultBranch}。`
+    + (job.mergeRetryable ? "上次合并没有成功。" : "")
+    + (job.previewUrl ? `\n预览：${job.previewUrl}` : "");
+  return formatJob(job);
+}
 
 export function startWecomBot(options: WecomConfig | undefined = getWecomConfig(), clientFactory = createWecomClient): () => void {
   if (!options) return () => {};
@@ -21,7 +31,7 @@ export function startWecomBot(options: WecomConfig | undefined = getWecomConfig(
   const workbench = createWorkbenchBridge(options,
     (target, content) => client.sendMessage(target, { msgtype: "markdown", markdown: { content } }),
     target => authenticated && !stopped && !responses.blocked(target));
-  const handler = createMessageHandler(client, options, undefined, undefined, responses, undefined, workbench);
+  const handler = createDirectMessageHandler(client, options, responses);
   const subscriptions = new Map<string, () => void>();
   const retryAfter = new Map<string, number>();
   let authenticated = false;
@@ -45,7 +55,7 @@ export function startWecomBot(options: WecomConfig | undefined = getWecomConfig(
         if (flow?.sourceJobId === job.jobId && flow.step === "reverting") return;
         const signature = milestoneSignature(job);
         if (signature) queueNotice(job.jobId, signature, binding.target_id,
-          splitMessage(formatJob(job)));
+           splitMessage(formatNotice(job)));
       };
       notice();
       const job = getJob(binding.job_id);
@@ -78,7 +88,7 @@ export function startWecomBot(options: WecomConfig | undefined = getWecomConfig(
           continue;
         }
         try {
-          const text = formatJob(job);
+          const text = formatNotice(job);
           if (await responses.finish(notice.job_id, text)) {
             recordFinalAnswer(job.jobId, text);
             acknowledgeChunk(notice.id, chunks.length, chunks.length);
@@ -113,6 +123,7 @@ export function startWecomBot(options: WecomConfig | undefined = getWecomConfig(
   client.on("disconnected", () => { authenticated = false; });
   client.on("error", () => { console.error("[WeCom] 连接异常，请检查网络和机器人配置"); });
   client.on("message", frame => handler.handle(frame));
+  client.on("event.template_card_event", frame => handler.handleConfirmation(frame));
   const timer = setInterval(() => {
     if (stopped) return;
     try { reconcile(); workbench.reconcile(); void workbench.flush(); void flush(); }

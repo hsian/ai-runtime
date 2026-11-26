@@ -198,7 +198,7 @@ test("explicit revert confirmation queues the original job once without starting
   } finally { jobQueue.enqueue = original; setDialogue(session); }
 });
 
-test("bot notification integration replaces the waiting stream and drops obsolete progress on reconnect", async () => {
+test("bot notification integration sends a concise failure and drops obsolete progress on reconnect", async () => {
   const target = "integration-user";
   const calls: { target: string; id?: string; text: string; finish?: boolean }[] = [];
   class FakeClient extends EventEmitter {
@@ -210,26 +210,21 @@ test("bot notification integration replaces the waiting stream and drops obsolet
     async sendMessage(target: string, message: { markdown: { content: string } }) { calls.push({ target, text: message.markdown.content }); }
   }
   const client = new FakeClient();
+  const session = store.getSession(options.botId, target, target, options.projectId);
+  const job = createJob({ prompt: "合同变更", ownerId: session.owner_id, conversationId: session.conversation_id });
+  store.bindJob(session, job.jobId);
+  updateJob(job.jobId, { status: "failed", error: "raw-agent-stderr" });
+  store.queueNotice(job.jobId, "progress:legacy", target, ["旧进度 Thinking... 发起人：raw-id"]);
   const stop = startWecomBot(options, () => client as unknown as WSClient);
   try {
-    client.emit("message", { headers: { req_id: "integration" }, body: { aibotid: options.botId, msgid: "integration",
-      chattype: "single", from: { userid: target }, msgtype: "text", text: { content: "修改：你好" } } } as MessageFrame);
-    await new Promise(resolve => setTimeout(resolve, 30));
-    const session = store.getSession(options.botId, target, target, options.projectId);
-    const job = getJob(session.active_job_id!)!;
-    store.queueNotice(job.jobId, "progress:legacy", target, ["旧进度 Thinking... 发起人：raw-id"]);
-    client.emit("authenticated");
     await new Promise(resolve => setTimeout(resolve, 50));
     const own = calls.filter(call => call.target === target);
-    assert.equal(own.length, 2);
-    assert.equal(own[0].finish, false);
-    assert.equal(own[1].finish, true);
-    assert.equal(own[1].id, own[0].id);
-    assert.doesNotMatch(own[1].text, /Thinking|发起人|任务：|raw-id/);
+    assert.equal(own.length, 1);
+    assert.match(own[0].text, /这次任务没完成/);
+    assert.doesNotMatch(own[0].text, /Thinking|发起人|raw-id|raw-agent-stderr/);
     assert.ok(!store.pendingNotices().some(notice => notice.job_id === job.jobId));
-    assert.match(store.getChatHistory({ ...session, conversation_id: job.conversationId! }).at(-1)!.content, /请说明要修改/);
     client.emit("authenticated");
     await new Promise(resolve => setTimeout(resolve, 20));
-    assert.equal(calls.filter(call => call.target === target).length, 2);
+    assert.equal(calls.filter(call => call.target === target).length, 1);
   } finally { stop(); }
 });
