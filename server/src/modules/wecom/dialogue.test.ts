@@ -228,3 +228,28 @@ test("bot notification integration sends a concise failure and drops obsolete pr
     assert.equal(calls.filter(call => call.target === target).length, 1);
   } finally { stop(); }
 });
+
+test("bot result uses the completed job title, not the older chat topic, and omits previews", async () => {
+  const target = "notice-title-test";
+  const sent: string[] = [];
+  class FakeClient extends EventEmitter {
+    connect() { this.emit("authenticated"); }
+    disconnect() {}
+    async sendMessage(_target: string, message: { markdown: { content: string } }) { sent.push(message.markdown.content); }
+  }
+  const session = store.getSession(options.botId, target, target, options.projectId);
+  selectTopic(session, "new", "发布交易公告竞投时间段名额改为20");
+  const job = createJob({ prompt: "账套列表颜色改为 #333", ownerId: session.owner_id,
+    conversationId: session.conversation_id, taskMode: "code" });
+  store.bindJob(session, job.jobId);
+  updateJob(job.jobId, { status: "completed", implementationSummary: "只修改账套列表的颜色。",
+    mergedToDefaultBranch: "test", previewUrl: "http://localhost:5173/example", previewMessage: "预览地址不可用" });
+  const stop = startWecomBot(options, () => new FakeClient() as unknown as WSClient);
+  try {
+    await new Promise(resolve => setTimeout(resolve, 50));
+    const result = sent.find(text => text.includes("只修改账套列表的颜色"))!;
+    assert.match(result, /^\*\*账套列表颜色改为 #333\*\*/);
+    assert.match(result, /已合并到：test/);
+    assert.doesNotMatch(result, /竞投时间段|预览|localhost/);
+  } finally { stop(); }
+});

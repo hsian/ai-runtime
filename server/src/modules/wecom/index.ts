@@ -4,7 +4,7 @@ import { createDirectMessageHandler } from "./directMessageHandler.js";
 import { initWecomStore, listBindings, queueNotice, pendingNotices, acknowledgeChunk, areJobNoticesSilent, recordFinalAnswer } from "./sessionStore.js";
 import { getJob } from "../../services/jobStore.js";
 import { subscribeJobEvents } from "../../services/jobEvents.js";
-import { formatJob, milestoneSignature, splitMessage } from "./replies.js";
+import { formatJob, jobNoticeTitle, milestoneSignature, splitMessage } from "./replies.js";
 import { ResponseCoordinator } from "./responseCoordinator.js";
 import { getDatabase } from "../../services/database.js";
 import { getDialogue } from "./dialogueStore.js";
@@ -16,11 +16,12 @@ import type { Job } from "../../types.js";
 import { getProject } from "../../services/projectRegistry.js";
 
 function formatNotice(job: Job): string {
-  if (job.status === "failed") return "这次任务没完成。你可以继续问我具体进度，或说明要不要再试。";
-  if (job.status === "awaiting_merge") return `代码已修改，尚未合并到 ${getProject(job.projectId).defaultBranch}。`
-    + (job.mergeRetryable ? "上次合并没有成功。" : "")
-    + (job.previewUrl ? `\n预览：${job.previewUrl}` : "");
-  return formatJob(job);
+  const title = jobNoticeTitle(job);
+  const text = job.status === "failed" ? "这次任务没完成。你可以继续问我具体进度，或说明要不要再试。"
+    : job.status === "awaiting_merge" ? `代码已修改，尚未合并到 ${getProject(job.projectId).defaultBranch}。`
+      + (job.mergeRetryable ? "上次合并没有成功。" : "")
+      : formatJob({ ...job, previewUrl: undefined, previewMessage: undefined });
+  return title ? `**${title}**\n\n${text}` : text;
 }
 
 export function startWecomBot(options: WecomConfig | undefined = getWecomConfig(), clientFactory = createWecomClient): () => void {
@@ -94,9 +95,7 @@ export function startWecomBot(options: WecomConfig | undefined = getWecomConfig(
             acknowledgeChunk(notice.id, chunks.length, chunks.length);
             continue;
           }
-          const topic = job.conversationId ? getDatabase().prepare("SELECT title FROM wecom_topics WHERE conversation_id = ?")
-            .get(job.conversationId) as { title: string } | undefined : undefined;
-          const compactChunks = splitMessage(topic ? `**${topic.title}**\n\n${text}` : text);
+          const compactChunks = splitMessage(text);
           if (notice.sent_chunks >= compactChunks.length) acknowledgeChunk(notice.id, compactChunks.length, compactChunks.length);
           for (let i = notice.sent_chunks; i < compactChunks.length; i++) {
             if (stopped || !authenticated) return;

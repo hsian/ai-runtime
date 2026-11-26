@@ -1,14 +1,14 @@
 import type { WSClient } from "@wecom/aibot-node-sdk";
 import { reply, type MessageFrame } from "./client.js";
 import { progressStage, milestoneSignature, latestAgentActivity, withEngineFooter } from "./replies.js";
+import { logOperation } from "../../services/operationLog.js";
 import { getJob } from "../../services/jobStore.js";
 import { getJobEvents } from "../../services/jobEvents.js";
 import { areJobNoticesSilent } from "./sessionStore.js";
 import { isJobReverting } from "./dialogueStore.js";
 
 interface LiveResponse {
-  frame: MessageFrame;
-  streamId: string;
+  stream: { frame: MessageFrame; id: string };
   target: string;
   started: number;
   tail: Promise<void>;
@@ -32,8 +32,20 @@ export class ResponseCoordinator {
   }
   blocked(target: string): boolean { return (this.blocks.get(target) ?? 0) > 0; }
   track(jobId: string, frame: MessageFrame, streamId: string, target: string, started = this.now()): void {
-    this.live.set(jobId, { frame, streamId, target, started, tail: Promise.resolve(),
+    this.live.set(jobId, { stream: { frame, id: streamId }, target, started, tail: Promise.resolve(),
       closed: false, lastUpdate: -Infinity, lastStage: "", lastActivity: "" });
+  }
+  start(jobId: string, frame: MessageFrame, streamId: string, target: string, started: number, text: string,
+    ready: Promise<void>): void {
+    this.track(jobId, frame, streamId, target, started);
+    const live = this.live.get(jobId)!;
+    live.lastUpdate = this.now();
+    live.tail = ready.then(async () => { await this.client.replyStream(frame, streamId, text, false); }).catch(error => {
+      live.closed = true;
+      const detail = error && typeof error === "object" && "errcode" in error
+        ? `${error.errcode}: ${"errmsg" in error ? error.errmsg : ""}` : String(error);
+      logOperation({ action: "wecom_progress_stream", status: "failed", jobId, error: detail });
+    });
   }
   async finish(jobId: string, text: string): Promise<boolean> {
     const live = this.live.get(jobId);
@@ -41,8 +53,12 @@ export class ResponseCoordinator {
     this.live.delete(jobId);
     await live.tail;
     if (live.closed || this.now() - live.started >= this.lifetimeMs) return false;
-    await reply(this.client, live.frame, withEngineFooter(getJob(jobId), text), live.streamId);
-    return true;
+    try {
+      await reply(this.client, live.stream.frame, withEngineFooter(getJob(jobId), text), live.stream.id);
+      return true;
+    } catch {
+      return false;
+    }
   }
   async refresh(): Promise<void> {
     for (const [jobId, live] of this.live) {
@@ -64,12 +80,13 @@ export class ResponseCoordinator {
       if (now - live.lastUpdate < 10_000 || (!changed && now - live.started < this.lifetimeMs)) continue;
       live.lastUpdate = now;
       live.tail = live.tail.then(async () => {
-        if (this.live.get(jobId) !== live || this.blocked(live.target) || areJobNoticesSilent(jobId)) return;
+        if (this.live.get(jobId) !== live || live.closed || this.blocked(live.target) || areJobNoticesSilent(jobId)) return;
+        const stream = live.stream;
         if (now - live.started >= this.lifetimeMs) {
           // Close before WeCom's stream deadline; only the final result is sent separately.
           live.closed = true;
-          await reply(this.client, live.frame, withEngineFooter(job, `${body}\n结果稍后通知你。`), live.streamId);
-        } else await this.client.replyStream(live.frame, live.streamId, text, false);
+          await reply(this.client, stream.frame, withEngineFooter(job, `${body}\n结果稍后通知你。`), stream.id);
+        } else await this.client.replyStream(stream.frame, stream.id, text, false);
         live.lastStage = stage;
         live.lastActivity = activity;
       }).catch(() => {});

@@ -5,6 +5,10 @@ import { commandActivity } from "../../services/agent/commandActivity.js";
 
 export const THINKING = "Thinking...";
 
+export function jobNoticeTitle(job: Pick<Job, "prompt">): string {
+  return job.prompt.trim().split(/\r?\n/)[0].replace(/[\x60*<>]/g, "").slice(0, 100);
+}
+
 export function questionChangeInstructions(job: Pick<Job, "projectId" | "agentProvider">, canModifyCode: boolean): string {
   const context = "这是企业微信对话，没有网页模式选择器。不要提示用户切换到功能修改、编码、Plan 等模式，不要要求打开 Web 页面或重新提交到网页。";
   if (!canModifyCode) return context + "当前用户没有代码修改权限。若其要求实际修改，说明需要联系管理员开通权限；不要让其发送执行命令。";

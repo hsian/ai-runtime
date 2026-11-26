@@ -409,7 +409,7 @@ export async function runCodexAgent(
   console.log(
     `[AI Runtime] Codex CLI，模式: ${
       isConversation
-        ? "conversation（意图识别与闲聊）"
+        ? (options?.conversationRepoTools ? "conversation（企微只读对话）" : "conversation（会话处理）")
         : isPlan
         ? "plan（读仓库出方案）"
         : isTestCase

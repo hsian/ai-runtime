@@ -66,6 +66,33 @@ test("stream updates are throttled, reuse the message and ignore raw Agent logs"
   } finally { context.coordinator.stop(); }
 });
 
+test("card-triggered jobs update the original stream until the final result", async () => {
+  const context = setup();
+  try {
+    await context.coordinator.finish(context.job.jobId, "关闭旧流");
+    context.calls.length = 0;
+    const frame = { headers: { req_id: "original-message" }, body: { chattype: "single", from: { userid: "alice" } } } as MessageFrame;
+    context.coordinator.start(context.job.jobId, frame, "original-stream", "alice", 0, "已确认执行。", Promise.resolve());
+    await Promise.resolve();
+    appendJobEvent(context.job.jobId, { type: "stage", phase: "agent" });
+    assert.equal(context.calls.length, 1);
+    context.time(10_000);
+    await context.coordinator.refresh();
+    assert.match(context.calls[1].text, /正在分析并修改代码/);
+    appendJobEvent(context.job.jobId, { type: "stage", phase: "merge" });
+    context.time(20_000);
+    await context.coordinator.refresh();
+    assert.match(context.calls[2].text, /正在合并改动/);
+    updateJob(context.job.jobId, { status: "completed" });
+    context.time(40_000);
+    await context.coordinator.refresh();
+    assert.equal(context.calls.length, 3);
+    assert.equal(await context.coordinator.finish(context.job.jobId, "已完成"), true);
+    assert.ok(context.calls.every(call => call.streamId === "original-stream"));
+    assert.deepEqual(context.calls.map(call => call.finish), [false, false, false, true]);
+  } finally { context.coordinator.stop(); }
+});
+
 test("long tasks never send more progress messages after stream closure", async () => {
   const context = setup(0);
   try {
@@ -92,6 +119,20 @@ test("long tasks never send more progress messages after stream closure", async 
     assert.equal(context.calls.length, 1);
     assert.equal(await context.coordinator.finish(context.job.jobId, "已完成"), false);
   } finally { context.coordinator.stop(); }
+});
+
+test("a rejected progress stream leaves the final result to the notification queue", async () => {
+  let attempts = 0;
+  const client = { async replyStream() { attempts++; throw { errcode: 846605, errmsg: "invalid req_id" }; },
+    async sendMessage() { assert.fail("must not push progress as a separate message"); } } as unknown as WSClient;
+  const job = createJob({ prompt: "fixture", ownerId: "rejected-progress", taskMode: "code" });
+  const coordinator = new ResponseCoordinator(client);
+  try {
+    coordinator.start(job.jobId, { headers: { req_id: "original-request" } } as MessageFrame, "new-stream",
+      "alice", Date.now(), "已确认执行。", Promise.resolve());
+    assert.equal(await coordinator.finish(job.jobId, "已完成"), false);
+    assert.equal(attempts, 1);
+  } finally { coordinator.stop(); }
 });
 
 test("the progress command shows the latest real phase without invoking Agent or exposing IDs", async () => {

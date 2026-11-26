@@ -12,7 +12,27 @@ import { bindJob, getBinding, getSession } from "./sessionStore.js";
 import type { WecomSession } from "./types.js";
 
 const CONFIRMATION_KEY = "confirm";
+const CANCEL_KEY = "cancel";
 const CONFIRMATION_TTL_MS = 10 * 60_000;
+
+export function readConfirmationClick(event: EventMessage) {
+  if (event.event?.eventtype !== "template_card_event") return;
+  const payload = event.event as typeof event.event & {
+    template_card_event?: { event_key?: string; task_id?: string };
+  };
+  const nested = payload.template_card_event;
+  if (nested && ((nested.event_key && payload.event_key && nested.event_key !== payload.event_key)
+    || (nested.task_id && payload.task_id && nested.task_id !== payload.task_id))) return;
+  return {
+    eventKey: nested?.event_key ?? payload.event_key,
+    taskId: nested?.task_id ?? payload.task_id,
+  };
+}
+
+export function parseConfirmationButton(key: string | undefined) {
+  const match = key?.match(/^(confirm|cancel)_([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})$/);
+  return match ? { action: match[1], id: match[2] } : undefined;
+}
 
 function ownedJob(session: WecomSession, projectId: string, jobId: string) {
   const job = getJob(jobId);
@@ -32,7 +52,8 @@ export function createConversationActions(options: WecomConfig, operations = { e
       const job = draft ? undefined : ownedJob(session, projectId, proposal.jobId);
       const plan = draft ? proposal.plan : job?.planSummary;
       const commit = job?.sourceCommitSha ?? job?.commitSha;
-      const branch = merge ? getProject(projectId).defaultBranch : undefined;
+      const project = getProject(projectId);
+      const branch = merge ? project.defaultBranch : undefined;
       if (!draft && (!job || (merge ? job.status !== "awaiting_merge" || !job.branch
         || !commit || !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(commit) : job.status !== "awaiting_confirm" || !plan))) {
         return { text: "这个任务现在不能执行该操作，请确认任务和当前状态。" };
@@ -45,53 +66,77 @@ export function createConversationActions(options: WecomConfig, operations = { e
       const title = merge ? "确认合并" : "确认执行";
       const target = draft ? plan!.slice(0, 100) : job!.prompt.slice(0, 80);
       const text = merge ? `待确认：将「${target}」的提交 \`${commit!.slice(0, 12)}\` 合并到 \`${branch}\`。`
-        : `**待确认的修改范围**\n\n${plan}`;
+        : `**待确认的修改范围**\n\n${plan}${project.autoMerge ? `\n\n执行成功后会自动合并到 \`${project.defaultBranch}\`。` : ""}`;
       return { text, card: {
         card_type: "button_interaction", task_id: id,
         main_title: { title, desc: (merge ? `${commit!.slice(0, 12)} → ${branch}` : target).slice(0, 30) },
-        button_list: [{ text: title, style: 1, key: CONFIRMATION_KEY }],
+        button_list: [
+          { text: title, style: 1, key: `${CONFIRMATION_KEY}_${id}` },
+          { text: "取消", style: 2, key: `${CANCEL_KEY}_${id}` },
+        ],
       } };
     },
     clear() { pending.clear(); },
     discard(id: string) { pending.delete(id); },
-    confirm(event: EventMessage): string | undefined {
-      if (event.aibotid !== options.botId || event.event.eventtype !== "template_card_event"
-        || event.event.event_key !== CONFIRMATION_KEY || !event.event.task_id) return;
-      const id = event.event.task_id;
+    confirm(event: EventMessage, onIgnored?: (reason: string) => void,
+      onStarted?: (jobId: string, target: string) => void): string | undefined {
+      const ignore = (reason: string) => { onIgnored?.(reason); return undefined; };
+      if (event.event?.eventtype !== "template_card_event") return ignore("unexpected_event");
+      if (event.aibotid && event.aibotid !== options.botId) return ignore("bot_mismatch");
+      const click = readConfirmationClick(event);
+      if (!click) return ignore("conflicting_card_payload");
+      const button = parseConfirmationButton(click.eventKey);
+      if (!button) return ignore(click.eventKey ? "unknown_button_key" : "missing_button_key");
+      const { action, id } = button;
       const item = pending.get(id);
-      if (!item) return;
+      if (!item) return ignore("confirmation_not_pending");
+      const eventCardId = click.taskId;
+      if (eventCardId && eventCardId !== id && pending.has(eventCardId)) return ignore("card_id_conflict");
       const sender = event.from?.userid;
-      const target = event.chattype === "group" ? event.chatid : sender;
-      if (sender !== item.session.user_id || target !== item.session.target_id) return;
+      if (sender !== item.session.user_id) return ignore(sender ? "sender_mismatch" : "missing_sender");
+      const target = item.session.target_id;
+      const isGroup = target !== item.session.user_id;
+      if (isGroup ? event.chattype === "single" || event.chatid !== target
+        : event.chattype === "group" || (!event.chattype && event.chatid && event.chatid !== sender)) {
+        return ignore("chat_mismatch");
+      }
       pending.delete(id);
       if (item.expires <= now()) return "这张确认卡已过期，请重新说明要处理的事项。";
+      if (action === CANCEL_KEY) return item.proposal.action === "merge"
+        ? "已取消本次确认，没有开始合并。" : "已取消本次确认，没有开始执行。";
       if (!canModifyCode(options, sender)) return "当前账号没有代码执行或合并权限。";
       const { projectId, proposal } = item;
       const session = getSession(options.botId, target, sender, projectId);
       if (session.conversation_id !== item.session.conversation_id) return "当前话题已变更，请重新确认操作。";
+      const project = getProject(projectId);
+      const executionReply = project.autoMerge ? "已确认执行。"
+        : "已确认执行。改完后会通知你，合并需要另外确认。";
       if (proposal.action === "change") {
         const job = getDatabase().transaction(() => {
           const created = createJob({ prompt: proposal.plan, projectId, ownerId: session.owner_id,
             conversationId: session.conversation_id, submittedBy: sender, taskMode: "code" });
           updateJob(created.jobId, { status: "awaiting_confirm", requiresConfirm: true, planSummary: proposal.plan,
-            requireMergeConfirmation: true, previewHost: options.previewHost });
+            conversationHistory: undefined, requireMergeConfirmation: !project.autoMerge });
           bindJob(session, created.jobId);
           return created;
         })();
         operations.executePlannedJob(job.jobId, session.owner_id);
-        return "已确认执行。改完后会通知你，合并需要另外确认。";
+        onStarted?.(job.jobId, target);
+        return executionReply;
       }
       const job = ownedJob(session, projectId, proposal.jobId);
       if (proposal.action === "merge") {
         if (job?.status !== "awaiting_merge" || (job.sourceCommitSha ?? job.commitSha) !== item.commit
           || getProject(projectId).defaultBranch !== item.branch) return "任务状态、提交或目标分支已变化，请重新确认。";
         operations.requestTaskMerge(job.jobId, { confirmedVersion: { commit: item.commit!, targetBranch: item.branch! } });
+        onStarted?.(job.jobId, target);
         return `已确认合并到 ${item.branch}，结果稍后通知你。`;
       }
       if (job?.status !== "awaiting_confirm" || job.planSummary !== item.plan) return "任务或方案已变化，请重新确认。";
-      updateJob(job.jobId, { requireMergeConfirmation: true });
+      updateJob(job.jobId, { requireMergeConfirmation: !project.autoMerge });
       operations.executePlannedJob(job.jobId, session.owner_id);
-      return "已确认执行。改完后会通知你，合并需要另外确认。";
+      onStarted?.(job.jobId, target);
+      return executionReply;
     },
   };
 }

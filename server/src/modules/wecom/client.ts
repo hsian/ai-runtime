@@ -1,5 +1,6 @@
-import { WSClient, type WsFrame, type BaseMessage } from "@wecom/aibot-node-sdk";
+import { WSClient, type WsFrame, type BaseMessage, type TemplateCard } from "@wecom/aibot-node-sdk";
 import { randomUUID } from "node:crypto";
+import { logOperation } from "../../services/operationLog.js";
 import type { WecomConfig } from "./config.js";
 import { splitMessage } from "./replies.js";
 
@@ -14,11 +15,19 @@ export function createWecomClient(options: WecomConfig): WSClient {
     } });
 }
 
-export async function reply(client: WSClient, frame: MessageFrame, text: string, streamId: string = randomUUID()): Promise<void> {
+export async function reply(client: WSClient, frame: MessageFrame, text: string, streamId: string = randomUUID(), card?: TemplateCard): Promise<void> {
   const chunks = splitMessage(text);
   const target = frame.body?.chattype === "group" ? frame.body.chatid : frame.body?.from.userid;
-  await client.replyStream(frame, streamId, chunks[0] ?? "", true);
+  const first = chunks[0] ?? "";
+  await client.replyStream(frame, streamId, first, !card);
   if (target) for (const chunk of chunks.slice(1)) {
     await client.sendMessage(target, { msgtype: "markdown", markdown: { content: chunk } });
+  }
+  if (card) {
+    await client.replyTemplateCard(frame, card);
+    logOperation({ action: "wecom_confirmation_card", status: "success" });
+    await client.replyStream(frame, streamId, first, true).catch(error => {
+      logOperation({ action: "wecom_confirmation_stream_end", status: "failed", error: String(error) });
+    });
   }
 }

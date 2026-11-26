@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, test } from "node:test";
-import { EventType, type EventMessage, type WSClient } from "@wecom/aibot-node-sdk";
+import { EventType, type EventMessage, type TemplateCard, type WSClient } from "@wecom/aibot-node-sdk";
 import type { MessageFrame } from "./client.js";
 
 const directory = mkdtempSync(join(tmpdir(), "wecom-direct-"));
@@ -17,6 +17,7 @@ const { getProject } = await import("../../services/projectRegistry.js");
 const { parseConversationAnswer, ProjectReadPreparationError, runDirectConversation } = await import("./directConversation.js");
 const { createDirectMessageHandler } = await import("./directMessageHandler.js");
 const { createConversationActions } = await import("./conversationActions.js");
+const { ResponseCoordinator } = await import("./responseCoordinator.js");
 const options = { botId: "direct-test", secret: "test", projectId: "b2b-composite", codeAllowedUserIds: ["alice"] };
 const prepareFixtureRepository = async (id: string) => {
   assert.equal(id, options.projectId);
@@ -25,10 +26,10 @@ const prepareFixtureRepository = async (id: string) => {
 store.initWecomStore();
 after(() => { closeDatabase(); rmSync(directory, { recursive: true, force: true }); });
 
-function callback(taskId: string, sender = "alice", target = "alice"): EventMessage {
+function callback(taskId: string, sender = "alice", target = "alice", key = "confirm"): EventMessage {
   return { aibotid: options.botId, msgid: "click", create_time: 0, chattype: target === sender ? "single" : "group",
     chatid: target, from: { userid: sender }, msgtype: "event",
-    event: { eventtype: EventType.TemplateCardEvent, task_id: taskId, event_key: "confirm" } };
+    event: { eventtype: EventType.TemplateCardEvent, task_id: taskId, event_key: `${key}_${taskId}` } };
 }
 
 test("the conversation calls one read-only agent with concise, owned task facts", async () => {
@@ -108,27 +109,170 @@ test("ordinary messages are forwarded verbatim once, including former command st
   } finally { handler.stop(); }
 });
 
-test("a proposal requires a scoped, single-use button click and execution does not approve merging", () => {
+test("a slow reply sends one progress message and replaces it in the same stream", { timeout: 5000 }, async () => {
+  const replies: { id: string; text: string; finish: boolean }[] = [];
+  let finishConversation!: () => void;
+  const waiting = new Promise<void>(resolve => { finishConversation = resolve; });
+  let finishReply!: () => void;
+  const completed = new Promise<void>(resolve => { finishReply = resolve; });
+  const fake = { async replyStream(_frame: unknown, id: string, text: string, finish: boolean) {
+    replies.push({ id, text, finish });
+    if (finish) finishReply();
+    else finishConversation();
+  } } as unknown as WSClient;
+  const handler = createDirectMessageHandler(fake, options, undefined, async () => {
+    await waiting;
+    return { text: "最终回复" };
+  });
+  try {
+    handler.handle({ headers: { req_id: "slow-progress" }, body: { aibotid: options.botId, msgid: "slow-progress",
+      chattype: "single", from: { userid: "alice" }, msgtype: "text", text: { content: "查一下合同变更" } } } as MessageFrame);
+    await completed;
+    assert.equal(replies.length, 2);
+    assert.equal(replies[0].finish, false);
+    assert.ok(replies[0].text.trim());
+    assert.notEqual(replies[0].text, "最终回复");
+    assert.deepEqual(replies[1], { id: replies[0].id, text: "最终回复", finish: true });
+  } finally {
+    handler.stop();
+    finishConversation();
+  }
+});
+
+test("execution keeps the proposal above the card and uses a separate progress stream", { timeout: 3000 }, async () => {
+  let cardSent!: (card: TemplateCard) => void;
+  const sent = new Promise<TemplateCard>(resolve => { cardSent = resolve; });
+  let finishProposal!: () => void;
+  const proposalFinished = new Promise<void>(resolve => { finishProposal = resolve; });
+  const executed: string[] = [];
+  const sentParts: string[] = [];
+  const streamIds: string[] = [];
+  const fake = {
+    async replyStream(frame: MessageFrame, stream: string, text: string, finish: boolean) {
+      assert.equal(frame.headers.req_id, "card-reply");
+      streamIds.push(stream);
+      if (text.includes("待确认的修改范围")) {
+        sentParts.push(finish ? "scope-final" : "scope");
+        if (finish) finishProposal();
+      } else if (finish) {
+        assert.match(text, /改好了/);
+        sentParts.push("final");
+      } else {
+        assert.equal(text, "已确认执行。");
+        sentParts.push("execution");
+      }
+    },
+    async replyTemplateCard(frame: MessageFrame, card: TemplateCard) {
+      assert.equal(frame.headers.req_id, "card-reply");
+      assert.deepEqual(sentParts, ["scope"]);
+      sentParts.push("card");
+      cardSent(card);
+    },
+    async sendMessage() { assert.fail("must not send an unsolicited card"); },
+    async updateTemplateCard() { assert.fail("execution must not reply using the click callback"); },
+  } as unknown as WSClient;
+  const responses = new ResponseCoordinator(fake);
+  const actions = createConversationActions(options, {
+    executePlannedJob(jobId) { executed.push(jobId); },
+    requestTaskMerge() { assert.fail("must not merge"); },
+  });
+  const handler = createDirectMessageHandler(fake, options, responses,
+    async () => ({ text: "可以改。", proposal: { action: "change", plan: "只改账套列表文字颜色" } }), actions);
+  try {
+    handler.handle({ headers: { req_id: "card-reply" }, body: { aibotid: options.botId, msgid: "card-reply",
+      chattype: "single", from: { userid: "alice" }, msgtype: "text", text: { content: "改一下账套标题颜色" } } } as MessageFrame);
+    const card = await sent;
+    await proposalFinished;
+    assert.deepEqual(sentParts, ["scope", "card", "scope-final"]);
+    assert.deepEqual(executed, []);
+    assert.deepEqual(card.button_list?.map(button => button.text), ["确认执行", "取消"]);
+    const body = {
+      ...callback(card.task_id!),
+      event: {
+        eventtype: EventType.TemplateCardEvent as const,
+        template_card_event: {
+          card_type: "button_interaction",
+          event_key: card.button_list![0].key,
+          task_id: card.task_id,
+        },
+      },
+    };
+    const frame = { headers: { req_id: "card-click" }, body };
+    handler.handleConfirmation(frame);
+    handler.handleConfirmation(frame);
+    assert.equal(executed.length, 1);
+    assert.equal(await responses.finish(executed[0], "改好了"), true);
+    assert.deepEqual(sentParts, ["scope", "card", "scope-final", "execution", "final"]);
+    assert.equal(streamIds[0], streamIds[1]);
+    assert.equal(streamIds[2], streamIds[3]);
+    assert.notEqual(streamIds[0], streamIds[2]);
+  } finally { handler.stop(); responses.stop(); }
+});
+
+test("only the requester can cancel a confirmation and neither button can be used again", () => {
+  const session = store.getSession(options.botId, "cancel-card-group", "alice", options.projectId);
+  const actions = createConversationActions(options, {
+    executePlannedJob() { assert.fail("cancel must not execute"); },
+    requestTaskMerge() { assert.fail("cancel must not merge"); },
+  });
+  const count = store.listBindings().length;
+  const execution = actions.offer(session, options.projectId, { action: "change", plan: "改字色" });
+  const executionCardId = execution.card!.task_id!;
+  const reasons: string[] = [];
+  const ignored = (reason: string) => { reasons.push(reason); };
+  assert.equal(actions.confirm(callback(executionCardId, "bob", "cancel-card-group", "cancel"), ignored), undefined);
+  assert.equal(actions.confirm(callback(executionCardId, "alice", "other-group", "cancel"), ignored), undefined);
+  assert.deepEqual(reasons, ["sender_mismatch", "chat_mismatch"]);
+  const nestedCancelEvent = {
+    ...callback(executionCardId, "alice", "cancel-card-group"),
+    event: {
+      eventtype: EventType.TemplateCardEvent as const,
+      template_card_event: { event_key: execution.card!.button_list![1].key, task_id: executionCardId },
+    },
+  };
+  const conflictingEvent = { ...nestedCancelEvent, event: { ...nestedCancelEvent.event, event_key: execution.card!.button_list![0].key } };
+  assert.equal(actions.confirm(conflictingEvent, ignored), undefined);
+  assert.equal(reasons.at(-1), "conflicting_card_payload");
+  assert.match(actions.confirm(nestedCancelEvent)!, /没有开始执行/);
+  assert.equal(actions.confirm(callback(executionCardId, "alice", "cancel-card-group")), undefined);
+  assert.equal(store.listBindings().length, count);
+
+  const job = createJob({ prompt: "合同变更", ownerId: session.owner_id, projectId: options.projectId, taskMode: "code" });
+  store.bindJob(session, job.jobId);
+  updateJob(job.jobId, { status: "awaiting_merge", branch: "feature", sourceCommitSha: "a".repeat(40) });
+  const merge = actions.offer(session, options.projectId, { action: "merge", jobId: job.jobId });
+  assert.deepEqual(merge.card!.button_list?.map(button => button.text), ["确认合并", "取消"]);
+  const mergeCardId = merge.card!.task_id!;
+  assert.match(actions.confirm(callback(mergeCardId, "alice", "cancel-card-group", "cancel"))!, /没有开始合并/);
+  assert.equal(actions.confirm(callback(mergeCardId, "alice", "cancel-card-group")), undefined);
+  assert.equal(getJob(job.jobId)?.status, "awaiting_merge");
+});
+
+test("a proposal starts only after a scoped, single-use click and follows project auto-merge settings", () => {
   const session = store.getSession(options.botId, "alice", "alice", options.projectId);
   const executed: string[] = [];
   const actions = createConversationActions(options, {
     executePlannedJob(jobId, ownerId) {
       const job = getJob(jobId)!;
       assert.equal(job.ownerId, ownerId);
-      assert.equal(job.requireMergeConfirmation, true);
+      assert.equal(job.requireMergeConfirmation, false);
+      assert.equal(job.conversationHistory, undefined);
       executed.push(jobId);
     },
-    requestTaskMerge() { assert.fail("must not merge on execution approval"); },
+    requestTaskMerge() { assert.fail("the execution worker handles automatic merging after modification"); },
   });
   const parsed = parseConversationAnswer('我准备改这里。\nXIAODI_PROPOSAL {"action":"change","plan":"只改合同变更页并验证两种合同类型"}');
   assert.equal(parsed.text, "我准备改这里。");
   const offer = actions.offer(session, options.projectId, parsed.proposal!);
   assert.match(offer.text, /只改合同变更页/);
+  assert.match(offer.text, /自动合并到 `test`/);
   assert.equal(executed.length, 0);
   const cardId = offer.card!.task_id!;
+  const rewritten = callback(cardId);
+  if (rewritten.event.eventtype === EventType.TemplateCardEvent) rewritten.event.task_id = "platform-card-id";
   assert.equal(actions.confirm(callback(cardId, "bob", "alice")), undefined);
   assert.equal(actions.confirm(callback(cardId, "alice", "other-group")), undefined);
-  assert.match(actions.confirm(callback(cardId))!, /已确认执行/);
+  assert.equal(actions.confirm(rewritten), "已确认执行。");
   assert.equal(actions.confirm(callback(cardId)), undefined);
   assert.equal(executed.length, 1);
 });
