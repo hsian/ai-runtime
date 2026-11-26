@@ -122,7 +122,7 @@ export function startWecomBot(options: WecomConfig | undefined = getWecomConfig(
   client.on("disconnected", () => { authenticated = false; });
   client.on("error", () => { console.error("[WeCom] 连接异常，请检查网络和机器人配置"); });
   client.on("message", frame => handler.handle(frame));
-  client.on("event.template_card_event", frame => handler.handleConfirmation(frame));
+  client.on("event.template_card_event", frame => { void handler.handleConfirmation(frame); });
   const timer = setInterval(() => {
     if (stopped) return;
     try { reconcile(); workbench.reconcile(); void workbench.flush(); void flush(); }

@@ -1,6 +1,6 @@
 import type { WSClient } from "@wecom/aibot-node-sdk";
 import { reply, type MessageFrame } from "./client.js";
-import { progressStage, milestoneSignature, latestAgentActivity, withEngineFooter } from "./replies.js";
+import { formatProgress, progressStage, milestoneSignature, latestAgentActivity } from "./replies.js";
 import { logOperation } from "../../services/operationLog.js";
 import { getJob } from "../../services/jobStore.js";
 import { getJobEvents } from "../../services/jobEvents.js";
@@ -54,7 +54,7 @@ export class ResponseCoordinator {
     await live.tail;
     if (live.closed || this.now() - live.started >= this.lifetimeMs) return false;
     try {
-      await reply(this.client, live.stream.frame, withEngineFooter(getJob(jobId), text), live.stream.id);
+      await reply(this.client, live.stream.frame, text, live.stream.id);
       return true;
     } catch {
       return false;
@@ -75,8 +75,7 @@ export class ResponseCoordinator {
       const stage = progressStage(job, phase);
       const activity = latestAgentActivity(events);
       const changed = stage !== live.lastStage || activity !== live.lastActivity;
-      const body = stage + (activity ? `\n当前：${activity}` : "");
-      const text = withEngineFooter(job, body);
+      const text = formatProgress(job, phase, activity);
       if (now - live.lastUpdate < 10_000 || (!changed && now - live.started < this.lifetimeMs)) continue;
       live.lastUpdate = now;
       live.tail = live.tail.then(async () => {
@@ -85,7 +84,7 @@ export class ResponseCoordinator {
         if (now - live.started >= this.lifetimeMs) {
           // Close before WeCom's stream deadline; only the final result is sent separately.
           live.closed = true;
-          await reply(this.client, stream.frame, withEngineFooter(job, `${body}\n结果稍后通知你。`), stream.id);
+          await reply(this.client, stream.frame, `${text}\n结果稍后通知你。`, stream.id);
         } else await this.client.replyStream(stream.frame, stream.id, text, false);
         live.lastStage = stage;
         live.lastActivity = activity;

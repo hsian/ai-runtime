@@ -241,7 +241,7 @@ test("workflow status renders the recorded plan and engine, never the classifier
   if (command.action === "chat") {
     assert.match(command.reply, /不是本次新生成/);
     assert.match(command.reply, /Actual recorded plan/);
-    assert.match(command.reply, /Powered by Pro$/);
+    assert.doesNotMatch(command.reply, /Powered by Pro/);
     assert.doesNotMatch(command.reply, /Invented plan/);
   }
 });

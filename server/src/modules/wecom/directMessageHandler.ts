@@ -43,17 +43,19 @@ export function createDirectMessageHandler(client: WSClient, options: WecomConfi
       actions.clear();
       for (const id of cardStreams.keys()) takeCardStream(id);
     },
-    handleConfirmation(frame: WsFrame<EventMessage>): void {
+    async handleConfirmation(frame: WsFrame<EventMessage>): Promise<void> {
       if (stopped || !frame.body) return;
       console.info("[WeCom] 收到确认卡点击回调");
       logOperation({ action: "wecom_confirmation", status: "started" });
       let text: string | undefined;
       let started: { jobId: string; target: string } | undefined;
       try {
-        text = actions.confirm(frame.body, reason => {
+        const result = actions.confirm(frame.body, reason => {
           console.info(`[WeCom] 未处理确认卡：${reason}`);
           logOperation({ action: "wecom_confirmation", status: "cancelled", message: reason });
         }, (jobId, target) => { started = { jobId, target }; });
+        if (typeof result === "string") text = result;
+        else if (result) await result;
       }
       catch (error) {
         logOperation({ action: "wecom_confirmation", status: "failed", error: String(error) });

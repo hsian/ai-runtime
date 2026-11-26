@@ -26,7 +26,7 @@ const { saveImageBuffers } = await import("../../services/uploadService.js");
 const { resolveIntent } = await import("./intentRouter.js");
 const { dispatchCommand } = await import("./jobBridge.js");
 const { requireCommandPermission } = await import("./permissions.js");
-const { formatJob, progressStage, formatProgress, withEngineFooter } = await import("./replies.js");
+const { formatJob, progressStage, formatProgress } = await import("./replies.js");
 const { testCaseDownloadUrl, authorizeTestCaseDownload } = await import("../../services/testCases/testCaseDownloadService.js");
 const { testCaseDownloadsRouter, testCasesRouter } = await import("../../routes/testCases.js");
 store.initWecomStore();
@@ -194,35 +194,23 @@ test("completion includes Excel link; credentials reject tampering, expiry and o
   process.env.QWECHAT_BOT_PREVIEW_HOST = "192.168.1.10:5173";
 });
 
-test("all Codex task replies carry one footer regardless of status, mode or old prefix metadata", () => {
+test("task replies do not include an engine footer", () => {
   const created = createJob({ prompt: "#codex is just text here", taskMode: "question", agentProvider: "codex" });
   assert.equal(created.agentProvider, "claude", "tasks use the configured provider");
   const completed = updateJob(created.jobId, { status: "completed", message: "Answer", agentProvider: "claude" })!;
   assert.doesNotMatch(formatJob(completed), /本次回答执行引擎/);
   assert.doesNotMatch(formatJob({ ...completed, projectId: "yuenongjiao-mini" }), /本次回答执行引擎/);
   const explicit = { ...completed, agentProvider: "codex" as const };
-  assert.match(formatJob(explicit), /Powered by Pro$/);
-  for (const status of ["awaiting_confirm", "awaiting_input"] as const) {
-    assert.match(formatJob({ ...explicit, status, planSummary: "Plan" }), /Powered by Pro$/);
-    assert.doesNotMatch(formatJob({ ...completed, status, planSummary: "Plan" }), /本次回答执行引擎/);
-  }
-  assert.match(formatJob({ ...explicit, taskMode: "code", implementationSummary: "Done",
-    previewUrl: "http://192.168.1.10:5173" }), /Powered by Pro$/);
   const cases = formatJob({ ...explicit, taskMode: "test-case", testCaseDocument: document });
   assert.match(cases, /下载 Excel/);
-  assert.match(cases, /Powered by Pro$/);
-  assert.doesNotMatch(formatJob({ ...explicit, agentProvider: undefined }), /本次回答执行引擎/);
   for (const status of ["pending", "planning", "running", "awaiting_input", "awaiting_confirm", "awaiting_merge", "completed", "failed", "cancelled"] as const) {
     for (const taskMode of ["question", "code", "test-case"] as const) {
       const text = formatJob({ ...explicit, status, taskMode });
-      assert.match(text, /Powered by Pro$/);
-      assert.equal(text.split("Powered by Pro").length, 2);
+      assert.doesNotMatch(text, /Powered by Pro|本次回答执行引擎/);
       assert.doesNotMatch(formatJob({ ...completed, status, taskMode }), /本次回答执行引擎/);
     }
   }
-  assert.match(formatJob({ ...explicit, revertedFromDefaultAt: new Date().toISOString() }), /Powered by Pro$/);
-  assert.match(formatProgress(explicit, "agent", "读取文件"), /当前：读取文件\n\nPowered by Pro$/);
-  assert.equal(withEngineFooter(explicit, formatJob(explicit)), formatJob(explicit));
+  assert.equal(formatProgress(explicit, "agent", "读取文件"), "正在分析并修改代码\n当前：读取文件");
 });
 
 test("signed download works without login while the normal Web route stays protected", async () => {

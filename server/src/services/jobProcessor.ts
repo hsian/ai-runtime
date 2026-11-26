@@ -177,6 +177,7 @@ export async function processJob(jobId: string): Promise<void> {
 
   try {
     const initialWorkspaceDirtyPaths = await gitService.listUncommittedPaths();
+    if (isCancelled(jobId)) return;
     if (initialWorkspaceDirtyPaths.length > 0 && !job.workbenchSession) {
       finishJob(jobId, {
         status: "failed",
@@ -209,9 +210,11 @@ export async function processJob(jobId: string): Promise<void> {
     emitStage(jobId, "agent", "正在分析并修改代码...");
 
     const executionPrompt = buildPromptWithTapdContext(job.workbenchLatestPrompt || job.prompt, job.tapdContext);
+    const agentPrompt = job.workbenchSession ? executionPrompt : await withApiDocContext(executionPrompt);
+    if (await abortIfCancelled(jobId, "agent", gitService, repoPath)) return;
     const result = await runAgent(
       repoPath,
-      job.workbenchSession ? executionPrompt : await withApiDocContext(executionPrompt),
+      agentPrompt,
       job.pageContext,
       (event) => emitAgentEvent(jobId, event),
       {

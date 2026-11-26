@@ -12,7 +12,7 @@ import type { WecomSession } from "./types.js";
 import type { Command } from "./commands.js";
 import { bindJob, getBinding, listBindings, rememberMessage, resetSession, silenceJobNotices } from "./sessionStore.js";
 import { listTopics, selectTopic } from "./topicStore.js";
-import { formatJob, formatProgress, latestAgentActivity, questionChangeInstructions, withEngineFooter, HELP } from "./replies.js";
+import { formatJob, formatProgress, latestAgentActivity, questionChangeInstructions, HELP } from "./replies.js";
 import { isNonActionablePlanInput } from "../../services/agent/planInputGuard.js";
 import { getTopicTapd } from "./tapdStore.js";
 import { copyJobAttachments, deleteJobAttachments } from "../../services/uploadService.js";
@@ -83,16 +83,6 @@ export function parseAnswers(job: Job, text: string): { questionId: string; valu
 }
 
 export async function dispatchCommand(session: WecomSession, command: Command, messageKey: string, options: WecomConfig,
-  onJob?: (jobId: string) => void, messageAttachments: JobAttachment[] = []): Promise<string> {
-  const revertSource = getDialogue(session)?.sourceJobId;
-  const text = await dispatchCommandBody(session, command, messageKey, options, onJob, messageAttachments);
-  if (!["execute", "cancel", "status", "merge", "discard", "revert", "release"].includes(command.action)) return text;
-  const id = ("jobId" in command ? command.jobId : undefined) ?? revertSource ?? session.active_job_id;
-  const job = id ? getJob(id) : undefined;
-  return job?.ownerId === session.owner_id && getBinding(job.jobId, session.session_key) ? withEngineFooter(job, text) : text;
-}
-
-async function dispatchCommandBody(session: WecomSession, command: Command, messageKey: string, options: WecomConfig,
   onJob?: (jobId: string) => void, messageAttachments: JobAttachment[] = []): Promise<string> {
   requireCommandPermission(session, command, options);
   if (command.action === "plan" || command.action === "question") {

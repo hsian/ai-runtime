@@ -1,7 +1,8 @@
 import { randomUUID } from "node:crypto";
 import type { EventMessage, TemplateCard } from "@wecom/aibot-node-sdk";
 import { getDatabase } from "../../services/database.js";
-import { executePlannedJob } from "../../services/jobActions.js";
+import { cancelOwnedJob, executePlannedJob } from "../../services/jobActions.js";
+import { getJobEvents } from "../../services/jobEvents.js";
 import { createJob, getJob, updateJob } from "../../services/jobStore.js";
 import { getProject } from "../../services/projectRegistry.js";
 import { requestTaskMerge } from "../../services/taskOperations.js";
@@ -40,9 +41,13 @@ function ownedJob(session: WecomSession, projectId: string, jobId: string) {
     && getBinding(jobId, session.session_key) ? job : undefined;
 }
 
-export function createConversationActions(options: WecomConfig, operations = { executePlannedJob, requestTaskMerge }, now = Date.now) {
+export function createConversationActions(options: WecomConfig, operations: {
+  executePlannedJob: typeof executePlannedJob;
+  requestTaskMerge: typeof requestTaskMerge;
+  cancelOwnedJob?: typeof cancelOwnedJob;
+} = { executePlannedJob, requestTaskMerge }, now = Date.now) {
   const pending = new Map<string, { session: WecomSession; projectId: string; proposal: ConversationProposal; expires: number;
-    plan?: string; commit?: string; branch?: string }>();
+    plan?: string; commit?: string; branch?: string; startedJobId?: string }>();
 
   return {
     offer(session: WecomSession, projectId: string, proposal: ConversationProposal): { card?: TemplateCard; text: string } {
@@ -60,7 +65,10 @@ export function createConversationActions(options: WecomConfig, operations = { e
       }
       const id = randomUUID();
       for (const [key, value] of pending) {
-        if (value.expires <= now() || value.session.session_key === session.session_key) pending.delete(key);
+        if (value.startedJobId) {
+          const status = getJob(value.startedJobId)?.status;
+          if (status !== "pending" && status !== "running") pending.delete(key);
+        } else if (value.expires <= now() || value.session.session_key === session.session_key) pending.delete(key);
       }
       pending.set(id, { session: { ...session }, projectId, proposal, expires: now() + CONFIRMATION_TTL_MS, plan, commit, branch });
       const title = merge ? "确认合并" : "确认执行";
@@ -79,7 +87,7 @@ export function createConversationActions(options: WecomConfig, operations = { e
     clear() { pending.clear(); },
     discard(id: string) { pending.delete(id); },
     confirm(event: EventMessage, onIgnored?: (reason: string) => void,
-      onStarted?: (jobId: string, target: string) => void): string | undefined {
+      onStarted?: (jobId: string, target: string) => void): string | Promise<void> | undefined {
       const ignore = (reason: string) => { onIgnored?.(reason); return undefined; };
       if (event.event?.eventtype !== "template_card_event") return ignore("unexpected_event");
       if (event.aibotid && event.aibotid !== options.botId) return ignore("bot_mismatch");
@@ -99,6 +107,20 @@ export function createConversationActions(options: WecomConfig, operations = { e
       if (isGroup ? event.chattype === "single" || event.chatid !== target
         : event.chattype === "group" || (!event.chattype && event.chatid && event.chatid !== sender)) {
         return ignore("chat_mismatch");
+      }
+      if (item.startedJobId) {
+        if (action !== CANCEL_KEY) return ignore("execution_already_started");
+        if (!canModifyCode(options, sender)) return "当前账号没有代码执行权限。";
+        const job = ownedJob(item.session, item.projectId, item.startedJobId);
+        if (!job || (job.status !== "pending" && job.status !== "running")) {
+          pending.delete(id);
+          return "这次执行已经结束，不能再取消。";
+        }
+        if (getJobEvents(job.jobId).some(entry => entry.type === "stage" && (entry.phase === "commit" || entry.phase === "merge"))) {
+          return "已进入提交或合并阶段，不能再取消。";
+        }
+        pending.delete(id);
+        return (operations.cancelOwnedJob ?? cancelOwnedJob)(job.jobId, item.session.owner_id, { workerOwnsCleanup: true });
       }
       pending.delete(id);
       if (item.expires <= now()) return "这张确认卡已过期，请重新说明要处理的事项。";
@@ -121,6 +143,7 @@ export function createConversationActions(options: WecomConfig, operations = { e
           return created;
         })();
         operations.executePlannedJob(job.jobId, session.owner_id);
+        pending.set(id, { ...item, startedJobId: job.jobId });
         onStarted?.(job.jobId, target);
         return executionReply;
       }
@@ -135,6 +158,7 @@ export function createConversationActions(options: WecomConfig, operations = { e
       if (job?.status !== "awaiting_confirm" || job.planSummary !== item.plan) return "任务或方案已变化，请重新确认。";
       updateJob(job.jobId, { requireMergeConfirmation: !project.autoMerge });
       operations.executePlannedJob(job.jobId, session.owner_id);
+      pending.set(id, { ...item, startedJobId: job.jobId });
       onStarted?.(job.jobId, target);
       return executionReply;
     },

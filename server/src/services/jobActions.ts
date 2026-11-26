@@ -417,7 +417,7 @@ export function executePlannedJob(jobId: string, ownerId: string, body?: { planS
   void processJob(jobId);
 }
 
-export async function cancelOwnedJob(jobId: string, ownerId: string): Promise<void> {
+export async function cancelOwnedJob(jobId: string, ownerId: string, options?: { workerOwnsCleanup?: boolean }): Promise<void> {
   const job = requireOwnedJob(jobId, ownerId);
   const gitService = getProjectGitService(job.projectId);
 
@@ -451,6 +451,11 @@ export async function cancelOwnedJob(jobId: string, ownerId: string): Promise<vo
 
   if (job.status === "planning" || job.status === "running") {
     killAgentForJob(jobId);
+  }
+
+  if (options?.workerOwnsCleanup) {
+    appendJobEvent(jobId, { type: "cancelled", message: "任务已取消", text: "任务已取消" });
+    return;
   }
 
   if (job.status === "running" && !job.requiresConfirm) {

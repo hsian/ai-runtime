@@ -13,6 +13,7 @@ process.env.OPERATION_LOG_ENABLED = "false";
 const store = await import("./sessionStore.js");
 const { closeDatabase } = await import("../../services/database.js");
 const { createJob, getJob, updateJob } = await import("../../services/jobStore.js");
+const { appendJobEvent } = await import("../../services/jobEvents.js");
 const { getProject } = await import("../../services/projectRegistry.js");
 const { parseConversationAnswer, ProjectReadPreparationError, runDirectConversation } = await import("./directConversation.js");
 const { createDirectMessageHandler } = await import("./directMessageHandler.js");
@@ -233,7 +234,7 @@ test("only the requester can cancel a confirmation and neither button can be use
   const conflictingEvent = { ...nestedCancelEvent, event: { ...nestedCancelEvent.event, event_key: execution.card!.button_list![0].key } };
   assert.equal(actions.confirm(conflictingEvent, ignored), undefined);
   assert.equal(reasons.at(-1), "conflicting_card_payload");
-  assert.match(actions.confirm(nestedCancelEvent)!, /没有开始执行/);
+  assert.equal(actions.confirm(nestedCancelEvent), "已取消本次确认，没有开始执行。");
   assert.equal(actions.confirm(callback(executionCardId, "alice", "cancel-card-group")), undefined);
   assert.equal(store.listBindings().length, count);
 
@@ -243,9 +244,58 @@ test("only the requester can cancel a confirmation and neither button can be use
   const merge = actions.offer(session, options.projectId, { action: "merge", jobId: job.jobId });
   assert.deepEqual(merge.card!.button_list?.map(button => button.text), ["确认合并", "取消"]);
   const mergeCardId = merge.card!.task_id!;
-  assert.match(actions.confirm(callback(mergeCardId, "alice", "cancel-card-group", "cancel"))!, /没有开始合并/);
+  assert.equal(actions.confirm(callback(mergeCardId, "alice", "cancel-card-group", "cancel")), "已取消本次确认，没有开始合并。");
   assert.equal(actions.confirm(callback(mergeCardId, "alice", "cancel-card-group")), undefined);
   assert.equal(getJob(job.jobId)?.status, "awaiting_merge");
+});
+
+test("the card cancels only its own running execution and cannot execute it twice", async () => {
+  const session = store.getSession(options.botId, "running-card-group", "alice", options.projectId);
+  const executed: string[] = [];
+  const unrelated = createJob({ prompt: "另一项任务", projectId: options.projectId, ownerId: session.owner_id, taskMode: "code" });
+  store.bindJob(session, unrelated.jobId);
+  updateJob(unrelated.jobId, { status: "running" });
+  const actions = createConversationActions(options, {
+    executePlannedJob(jobId) {
+      executed.push(jobId);
+      updateJob(jobId, { status: "running" });
+    },
+    requestTaskMerge() { assert.fail("must not merge"); },
+  });
+  const card = actions.offer(session, options.projectId, { action: "change", plan: "只改账套标题" }).card!;
+  const cardId = card.task_id!;
+  const click = (key: string, sender = "alice") => callback(cardId, sender, "running-card-group", key);
+  assert.equal(actions.confirm(click("confirm")), "已确认执行。");
+  assert.equal(actions.confirm(click("confirm")), undefined);
+  assert.equal(actions.confirm(click("cancel", "bob")), undefined);
+  assert.equal(executed.length, 1);
+  assert.equal(getJob(executed[0])?.status, "running");
+  const cancellation = actions.confirm(click("cancel"));
+  assert.ok(cancellation instanceof Promise);
+  await cancellation;
+  assert.equal(getJob(executed[0])?.status, "cancelled");
+  assert.equal(getJob(unrelated.jobId)?.status, "running");
+  assert.equal(actions.confirm(click("cancel")), undefined);
+});
+
+test("a running card cannot cancel once commit or merge has started", () => {
+  const session = store.getSession(options.botId, "committing-card-group", "alice", options.projectId);
+  for (const phase of ["commit", "merge"]) {
+    let runningJobId: string | undefined;
+    const actions = createConversationActions(options, {
+      executePlannedJob(jobId) {
+        runningJobId = jobId;
+        updateJob(jobId, { status: "running" });
+        appendJobEvent(jobId, { type: "stage", phase });
+      },
+      requestTaskMerge() { assert.fail("must not merge"); },
+      async cancelOwnedJob() { assert.fail("must not cancel after commit or merge begins"); },
+    });
+    const card = actions.offer(session, options.projectId, { action: "change", plan: "改账套标题颜色" }).card!;
+    assert.equal(actions.confirm(callback(card.task_id!, "alice", "committing-card-group")), "已确认执行。");
+    assert.equal(actions.confirm(callback(card.task_id!, "alice", "committing-card-group", "cancel")), "已进入提交或合并阶段，不能再取消。");
+    assert.equal(getJob(runningJobId!)?.status, "running");
+  }
 });
 
 test("a proposal starts only after a scoped, single-use click and follows project auto-merge settings", () => {
@@ -295,13 +345,13 @@ test("merge approval expires, is bound to the exact version, and requires an all
   assert.equal(actions.offer(foreign, options.projectId, proposal).card, undefined);
   const expired = actions.offer(session, options.projectId, proposal).card!.task_id!;
   now += 10 * 60_000;
-  assert.match(actions.confirm(callback(expired))!, /已过期/);
+  assert.equal(actions.confirm(callback(expired)), "这张确认卡已过期，请重新说明要处理的事项。");
   const stale = actions.offer(session, options.projectId, proposal).card!.task_id!;
   updateJob(job.jobId, { sourceCommitSha: secondCommit });
-  assert.match(actions.confirm(callback(stale))!, /已变化/);
+  assert.equal(actions.confirm(callback(stale)), "任务状态、提交或目标分支已变化，请重新确认。");
   assert.deepEqual(merges, []);
   const current = actions.offer(session, options.projectId, proposal).card!.task_id!;
-  assert.match(actions.confirm(callback(current))!, /已确认合并/);
+  assert.equal(actions.confirm(callback(current)), `已确认合并到 ${getProject(options.projectId).defaultBranch}，结果稍后通知你。`);
   assert.deepEqual(merges, [{ id: job.jobId,
     confirmedVersion: { commit: secondCommit, targetBranch: getProject(options.projectId).defaultBranch } }]);
 });

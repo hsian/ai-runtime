@@ -36,14 +36,8 @@ export function progressStage(job: Job | undefined, phase?: string): string {
   return "正在处理";
 }
 
-export function withEngineFooter(job: Pick<Job, "agentProvider"> | undefined, text: string): string {
-  const footer = "Powered by Pro";
-  if (job?.agentProvider !== "codex") return text;
-  return text.trimEnd().endsWith(footer) ? text.trimEnd() : `${text.trimEnd()}\n\n${footer}`;
-}
-
 export function formatProgress(job: Job | undefined, phase?: string, activity?: string): string {
-  return withEngineFooter(job, progressStage(job, phase) + (activity ? `\n当前：${activity}` : ""));
+  return progressStage(job, phase) + (activity ? `\n当前：${activity}` : "");
 }
 
 export function latestAgentActivity(events: JobEvent[]): string {
@@ -122,10 +116,6 @@ export function splitMessage(text: string, maxBytes = 3500): string[] {
 }
 
 export function formatJob(job: Job, details = false): string {
-  return withEngineFooter(job, formatJobBody(job, details));
-}
-
-function formatJobBody(job: Job, details: boolean): string {
   const header = details ? `**项目：${job.projectId}**\n任务：\`${job.jobId}\`\n` : "";
   if (job.status === "awaiting_confirm") return `${header}\n${job.planSummary ?? job.message}\n\n回复「执行」开始修改，回复「取消」取消任务。`;
   if (job.status === "awaiting_input") {
