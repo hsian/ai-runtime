@@ -7,7 +7,7 @@ import { reply, type MessageFrame } from "./client.js";
 import { parseTaskPrefixes } from "./commands.js";
 import type { WecomConfig } from "./config.js";
 import { createConversationActions, parseConfirmationButton, readConfirmationClick } from "./conversationActions.js";
-import { ProjectReadPreparationError, runDirectConversation } from "./directConversation.js";
+import { parseCurrentReleaseRequest, ProjectReadPreparationError, runDirectConversation } from "./directConversation.js";
 import { downloadMessageImages, extractMessageContent, WECOM_IMAGE_MAX_BYTES } from "./messageImages.js";
 import type { ResponseCoordinator } from "./responseCoordinator.js";
 import { getSession, hasMessage, recordChatExchange, rememberMessage } from "./sessionStore.js";
@@ -49,11 +49,13 @@ export function createDirectMessageHandler(client: WSClient, options: WecomConfi
       logOperation({ action: "wecom_confirmation", status: "started" });
       let text: string | undefined;
       let started: { jobId: string; target: string } | undefined;
+      let release: { target: string; completion: Promise<string> } | undefined;
       try {
         const result = actions.confirm(frame.body, reason => {
           console.info(`[WeCom] 未处理确认卡：${reason}`);
           logOperation({ action: "wecom_confirmation", status: "cancelled", message: reason });
-        }, (jobId, target) => { started = { jobId, target }; });
+        }, (jobId, target) => { started = { jobId, target }; },
+        (target, completion) => { release = { target, completion }; });
         if (typeof result === "string") text = result;
         else if (result) await result;
       }
@@ -71,14 +73,20 @@ export function createDirectMessageHandler(client: WSClient, options: WecomConfi
       if (text && frame.body.event.eventtype === "template_card_event") {
         if (button) takeCardStream(button.id);
         const event = frame.body;
-        const target = event.chattype === "single" ? event.from.userid : event.chatid ?? event.from.userid;
+        const target = release?.target ?? (event.chattype === "single" ? event.from.userid : event.chatid ?? event.from.userid);
         const cardId = click?.taskId || button?.id;
-        void client.updateTemplateCard(frame, { card_type: "text_notice", task_id: cardId,
+        const acknowledgement = client.updateTemplateCard(frame, { card_type: "text_notice", task_id: cardId,
           main_title: { title: "任务确认", desc: text.slice(0, 30) }, sub_title_text: text })
           .catch(async error => {
             logOperation({ action: "wecom_confirmation_card_update", status: "failed", error: String(error) });
             if (target) await client.sendMessage(target, { msgtype: "markdown", markdown: { content: text } });
           }).catch(() => console.warn("[WeCom] 确认回复发送失败"));
+        if (release) {
+          const result = release;
+          void acknowledgement.then(() => result.completion).then(async content => {
+            if (!stopped) await client.sendMessage(result.target, { msgtype: "markdown", markdown: { content } });
+          }).catch(error => logOperation({ action: "wecom_release_notice", status: "failed", error: String(error) }));
+        }
       }
     },
     handle(frame: MessageFrame): void {
@@ -128,21 +136,29 @@ export function createDirectMessageHandler(client: WSClient, options: WecomConfi
           }
           const projectId = getProject(input.projectId ?? options.projectId).id;
           const session = getSession(options.botId, target, sender, projectId);
-          if (extractTapdLink(message)) {
-            failure = "这次没读到 TAPD 资料，请检查链接后再试。";
-            await prepareTapd(session, message);
+          const branch = body.msgtype === "text" ? parseCurrentReleaseRequest(message) : undefined;
+          let result: Awaited<ReturnType<typeof runDirectConversation>>;
+          if (branch) {
+            result = session.active_job_id
+              ? { text: "", proposal: { action: "release", jobId: session.active_job_id, targetBranch: branch } }
+              : { text: "当前会话没有选中的任务。你想把哪次修改合并过去？" };
+          } else {
+            if (extractTapdLink(message)) {
+              failure = "这次没读到 TAPD 资料，请检查链接后再试。";
+              await prepareTapd(session, message);
+            }
+            failure = "这次没能读取你发的图片，请重发一下。";
+            const images = await downloadMessageImages(client, extracted.images);
+            imageDirectory = images.length ? randomUUID() : undefined;
+            const attachments = imageDirectory ? saveImageBuffers(imageDirectory, images, WECOM_IMAGE_MAX_BYTES) : [];
+            if (stopped) return;
+            failure = "这次没能完成回复，请稍后再试。";
+            const agentStarted = Date.now();
+            result = await converse(session, projectId, message, attachments);
+            logOperation({ action: "wecom_conversation_agent", status: "success", durationMs: Date.now() - agentStarted });
           }
-          failure = "这次没能读取你发的图片，请重发一下。";
-          const images = await downloadMessageImages(client, extracted.images);
-          imageDirectory = images.length ? randomUUID() : undefined;
-          const attachments = imageDirectory ? saveImageBuffers(imageDirectory, images, WECOM_IMAGE_MAX_BYTES) : [];
           if (stopped) return;
-          failure = "这次没能完成回复，请稍后再试。";
-          const agentStarted = Date.now();
-          const result = await converse(session, projectId, message, attachments);
-          logOperation({ action: "wecom_conversation_agent", status: "success", durationMs: Date.now() - agentStarted });
-          if (stopped) return;
-          const action = result.proposal ? actions.offer(session, projectId, result.proposal) : undefined;
+          const action = result.proposal ? actions.offer(session, projectId, result.proposal, message) : undefined;
           const text = [result.text, action?.text].filter(Boolean).join("\n\n");
           recordChatExchange(session, message, result.text, "conversation", false);
           const cardId = action?.card?.task_id;

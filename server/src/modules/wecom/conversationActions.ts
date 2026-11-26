@@ -5,10 +5,13 @@ import { cancelOwnedJob, executePlannedJob } from "../../services/jobActions.js"
 import { getJobEvents } from "../../services/jobEvents.js";
 import { createJob, getJob, updateJob } from "../../services/jobStore.js";
 import { getProject } from "../../services/projectRegistry.js";
+import { logOperation } from "../../services/operationLog.js";
 import { requestTaskMerge } from "../../services/taskOperations.js";
+import type { Job } from "../../types.js";
 import type { WecomConfig } from "./config.js";
 import type { ConversationProposal } from "./directConversation.js";
 import { canModifyCode } from "./permissions.js";
+import { ReleaseBranchNotFoundError, releaseConversationJob } from "./releaseMerge.js";
 import { bindJob, getBinding, getSession } from "./sessionStore.js";
 import type { WecomSession } from "./types.js";
 
@@ -41,25 +44,45 @@ function ownedJob(session: WecomSession, projectId: string, jobId: string) {
     && getBinding(jobId, session.session_key) ? job : undefined;
 }
 
+function releaseReady(job: Job | undefined, defaultBranch: string): job is Job {
+  return Boolean(job && job.status === "completed" && job.mergedToDefaultAt && job.mergedToDefaultBranch === defaultBranch
+    && job.branch === defaultBranch && job.conversationId && job.sourceBranch && !job.revertedFromDefaultAt
+    && /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(job.sourceCommitSha ?? ""));
+}
+
 export function createConversationActions(options: WecomConfig, operations: {
   executePlannedJob: typeof executePlannedJob;
   requestTaskMerge: typeof requestTaskMerge;
   cancelOwnedJob?: typeof cancelOwnedJob;
+  releaseConversationJob?: typeof releaseConversationJob;
 } = { executePlannedJob, requestTaskMerge }, now = Date.now) {
   const pending = new Map<string, { session: WecomSession; projectId: string; proposal: ConversationProposal; expires: number;
     plan?: string; commit?: string; branch?: string; startedJobId?: string }>();
+  const releasesInFlight = new Set<string>();
 
   return {
-    offer(session: WecomSession, projectId: string, proposal: ConversationProposal): { card?: TemplateCard; text: string } {
+    offer(session: WecomSession, projectId: string, proposal: ConversationProposal, message = ""): { card?: TemplateCard; text: string } {
       if (!canModifyCode(options, session.user_id)) return { text: "当前账号没有代码执行或合并权限。" };
       const draft = proposal.action === "change";
-      const merge = proposal.action === "merge";
+      const release = proposal.action === "release";
+      const merge = proposal.action === "merge" || release;
       const job = draft ? undefined : ownedJob(session, projectId, proposal.jobId);
       const plan = draft ? proposal.plan : job?.planSummary;
       const commit = job?.sourceCommitSha ?? job?.commitSha;
       const project = getProject(projectId);
-      const branch = merge ? project.defaultBranch : undefined;
-      if (!draft && (!job || (merge ? job.status !== "awaiting_merge" || !job.branch
+      const branch = release ? proposal.targetBranch : merge ? project.defaultBranch : undefined;
+      if (release) {
+        const mentioned: string[] = message.match(/[a-zA-Z0-9_./-]+/g) ?? [];
+        if (!mentioned.includes(proposal.targetBranch) || !/^[a-zA-Z0-9][a-zA-Z0-9_./-]*$/.test(proposal.targetBranch)) {
+          return { text: "请在这条消息中写出要合并到的完整分支名。" };
+        }
+        if (!releaseReady(job, project.defaultBranch)) return { text: "这项任务尚未合并到默认分支，或已撤回，不能合并到其他分支。" };
+        if (proposal.targetBranch === project.defaultBranch || job.releaseMerges?.some(record =>
+          record.targetBranch === proposal.targetBranch && record.status === "completed")) {
+          return { text: `这次修改已合并到 ${proposal.targetBranch}，无需重复合并。` };
+        }
+        if (proposal.targetBranch === job.sourceBranch) return { text: "目标不能是本次改动的任务分支。" };
+      } else if (!draft && (!job || (merge ? job.status !== "awaiting_merge" || !job.branch
         || !commit || !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(commit) : job.status !== "awaiting_confirm" || !plan))) {
         return { text: "这个任务现在不能执行该操作，请确认任务和当前状态。" };
       }
@@ -71,7 +94,7 @@ export function createConversationActions(options: WecomConfig, operations: {
         } else if (value.expires <= now() || value.session.session_key === session.session_key) pending.delete(key);
       }
       pending.set(id, { session: { ...session }, projectId, proposal, expires: now() + CONFIRMATION_TTL_MS, plan, commit, branch });
-      const title = merge ? "确认合并" : "确认执行";
+      const title = release ? "确认合并到指定分支" : merge ? "确认合并" : "确认执行";
       const target = draft ? plan!.slice(0, 100) : job!.prompt.slice(0, 80);
       const text = merge ? `待确认：将「${target}」的提交 \`${commit!.slice(0, 12)}\` 合并到 \`${branch}\`。`
         : `**待确认的修改范围**\n\n${plan}${project.autoMerge ? `\n\n执行成功后会自动合并到 \`${project.defaultBranch}\`。` : ""}`;
@@ -79,7 +102,7 @@ export function createConversationActions(options: WecomConfig, operations: {
         card_type: "button_interaction", task_id: id,
         main_title: { title, desc: (merge ? `${commit!.slice(0, 12)} → ${branch}` : target).slice(0, 30) },
         button_list: [
-          { text: title, style: 1, key: `${CONFIRMATION_KEY}_${id}` },
+          { text: merge ? "确认合并" : title, style: 1, key: `${CONFIRMATION_KEY}_${id}` },
           { text: "取消", style: 2, key: `${CANCEL_KEY}_${id}` },
         ],
       } };
@@ -87,7 +110,8 @@ export function createConversationActions(options: WecomConfig, operations: {
     clear() { pending.clear(); },
     discard(id: string) { pending.delete(id); },
     confirm(event: EventMessage, onIgnored?: (reason: string) => void,
-      onStarted?: (jobId: string, target: string) => void): string | Promise<void> | undefined {
+      onStarted?: (jobId: string, target: string) => void,
+      onRelease?: (target: string, completion: Promise<string>) => void): string | Promise<void> | undefined {
       const ignore = (reason: string) => { onIgnored?.(reason); return undefined; };
       if (event.event?.eventtype !== "template_card_event") return ignore("unexpected_event");
       if (event.aibotid && event.aibotid !== options.botId) return ignore("bot_mismatch");
@@ -124,7 +148,7 @@ export function createConversationActions(options: WecomConfig, operations: {
       }
       pending.delete(id);
       if (item.expires <= now()) return "这张确认卡已过期，请重新说明要处理的事项。";
-      if (action === CANCEL_KEY) return item.proposal.action === "merge"
+      if (action === CANCEL_KEY) return item.proposal.action === "merge" || item.proposal.action === "release"
         ? "已取消本次确认，没有开始合并。" : "已取消本次确认，没有开始执行。";
       if (!canModifyCode(options, sender)) return "当前账号没有代码执行或合并权限。";
       const { projectId, proposal } = item;
@@ -148,6 +172,23 @@ export function createConversationActions(options: WecomConfig, operations: {
         return executionReply;
       }
       const job = ownedJob(session, projectId, proposal.jobId);
+      if (proposal.action === "release") {
+        if (!releaseReady(job, project.defaultBranch) || job.sourceCommitSha !== item.commit) {
+          return "源提交已变化或已撤回，请重新确认。";
+        }
+        const targetBranch = proposal.targetBranch;
+        const key = JSON.stringify([job.jobId, targetBranch]);
+        if (releasesInFlight.has(key)) return `这次修改正在合并到 ${targetBranch}，请等结果。`;
+        releasesInFlight.add(key);
+        const service = operations.releaseConversationJob ?? releaseConversationJob;
+        const completion = Promise.resolve().then(() => service({ ...session, conversation_id: job.conversationId! },
+          { jobId: job.jobId, targetBranch, expectedSourceCommit: item.commit }, options)).catch(error => {
+          logOperation({ action: "wecom_release_merge", status: "failed", jobId: job.jobId, targetBranch, error: String(error) });
+          return error instanceof ReleaseBranchNotFoundError ? error.message : `合并到 ${targetBranch} 未完成，请查看任务或服务日志。`;
+        }).finally(() => { releasesInFlight.delete(key); });
+        onRelease?.(target, completion);
+        return `已确认合并到 ${targetBranch}，结果稍后通知你。`;
+      }
       if (proposal.action === "merge") {
         if (job?.status !== "awaiting_merge" || (job.sourceCommitSha ?? job.commitSha) !== item.commit
           || getProject(projectId).defaultBranch !== item.branch) return "任务状态、提交或目标分支已变化，请重新确认。";

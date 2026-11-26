@@ -9,12 +9,13 @@
 会话从 `server/projects.json` 选择仓库目录和默认分支，复用运行时的托管仓库初始化；已位于默认分支的有效检出不为每条消息重新拉取。仓库准备失败时明确报告，不在空目录里查代码。
 小迪始终只处理工作相关请求：同一轮 Agent 对话结合上下文判断，不设开关，不增加分类调用。
 独立招呼礼貌接一句；带工作内容的消息和工作追问正常处理，明确无关的闲聊不展开。
-工作台的任务列表、补充、审查和指定分支发版仍在 Web。
+工作台的任务列表、补充和审查仍在 Web。
 
 执行以及需要人工确认的合并通过企微按钮确认。只有在获准成员本人点击后，服务端才核对任务、状态及目标，
 再交给现有任务服务。执行确认只能使用一次、十分钟有效，服务重启后卡片失效；任务版本变化须重新确认。
 点「取消」可撤销尚未开始的确认，或停止这张卡启动、仍在排队或执行且未进入提交与合并阶段的任务。不会取消其他任务，也不会撤回已提交或合并的代码。
 执行成功后按项目配置决定是否自动合并到默认分支；村财默认自动合并到 `test`。未确认的普通消息不会执行代码或合并。
+当前任务已合到默认分支后，直接说「合并到 20261116 分支」即可。不用重复任务名，也不会偷偷选更早的任务。确认卡绑定源提交和目标分支，确认后才检查远端分支并执行；不会创建分支或重跑代码任务。
 方案与确认卡保留不变；确认后尝试在卡片下方开启一条独立的进度消息，此后只在该消息中刷新。若进度窗口不可用或已失效，只另发最终结果。结果标题取自本次任务，不使用旧话题标题，不附预览地址。
 
 ## Workbench notifications
@@ -129,7 +130,7 @@ to Codex. Restart the server after changing this setting. The engine-selection
 prefix has been removed; request metadata does not override the server setting.
 
 默认使用机器人的项目。需要访问小程序项目时，可以在消息前加 `#小程序`，这只选择项目，不会触发任务操作。
-测试用例 Excel、TAPD 工作台任务管理和指定分支发版继续使用 Web。
+测试用例 Excel、TAPD 工作台任务管理继续使用 Web。
 
 Session scope is bot + chat + sender + project. Each member can control only
 their own tasks in that session. Bot visibility is configured in WeChat.

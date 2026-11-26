@@ -355,3 +355,103 @@ test("merge approval expires, is bound to the exact version, and requires an all
   assert.deepEqual(merges, [{ id: job.jobId,
     confirmedVersion: { commit: secondCommit, targetBranch: getProject(options.projectId).defaultBranch } }]);
 });
+
+test("release proposal requires the exact branch and merges the confirmed source only once", { timeout: 3000 }, async () => {
+  const session = store.getSession(options.botId, "alice", "alice", options.projectId);
+  const job = createJob({ prompt: "修复收支类型禁用规则", ownerId: session.owner_id, projectId: options.projectId,
+    conversationId: session.conversation_id, taskMode: "code" });
+  store.bindJob(session, job.jobId);
+  const sourceCommit = "c".repeat(40);
+  updateJob(job.jobId, { status: "completed", branch: "test", mergedToDefaultBranch: "test",
+    mergedToDefaultAt: "2026-11-26", sourceBranch: "plugin-fix/source", sourceCommitSha: sourceCommit });
+  const parsed = parseConversationAnswer(`可以同步。\nXIAODI_PROPOSAL {"action":"release","jobId":"${job.jobId}","targetBranch":"20261116"}`);
+  assert.equal(parsed.proposal?.action, "release");
+  const releases: unknown[] = [];
+  const actions = createConversationActions(options, {
+    executePlannedJob() { assert.fail("release must not start another code task"); },
+    requestTaskMerge() { assert.fail("release must not use default-branch merge"); },
+    async releaseConversationJob(scope, request) {
+      releases.push({ scope: scope.session_key, ...request });
+      return "已把这次改动合并到 20261116。";
+    },
+  });
+  const message = "把收支类型禁用规则的修复合并到 20261116 分支";
+  const proposal = parsed.proposal!;
+  assert.equal(actions.offer(session, options.projectId, proposal, "合并到 release/20261116").card, undefined);
+  const offer = actions.offer(session, options.projectId, proposal, message);
+  assert.match(offer.text, /收支类型禁用规则.*cccccccccccc.*20261116/);
+  assert.deepEqual(releases, []);
+  const staleId = offer.card!.task_id!;
+  updateJob(job.jobId, { sourceCommitSha: "d".repeat(40) });
+  assert.equal(actions.confirm(callback(staleId)), "源提交已变化或已撤回，请重新确认。");
+  updateJob(job.jobId, { sourceCommitSha: sourceCommit });
+  const validId = actions.offer(session, options.projectId, proposal, message).card!.task_id!;
+  let finishNotice!: (message: string) => void;
+  const notice = new Promise<string>(resolve => { finishNotice = resolve; });
+  const order: string[] = [];
+  const fake = {
+    async updateTemplateCard(_frame: unknown, card: TemplateCard) {
+      assert.match(card.sub_title_text!, /已确认合并到 20261116/);
+      order.push("ack");
+    },
+    async sendMessage(target: string, message: { markdown: { content: string } }) {
+      assert.equal(target, "alice");
+      order.push("result");
+      finishNotice(message.markdown.content);
+    },
+  } as unknown as WSClient;
+  const handler = createDirectMessageHandler(fake, options, undefined, undefined, actions);
+  try {
+    const click = { headers: { req_id: "release-click" }, body: callback(validId) };
+    await handler.handleConfirmation(click);
+    await handler.handleConfirmation(click);
+    assert.equal(await notice, "已把这次改动合并到 20261116。");
+    assert.deepEqual(order, ["ack", "result"]);
+    assert.deepEqual(releases, [{ scope: session.session_key, jobId: job.jobId, targetBranch: "20261116",
+      expectedSourceCommit: sourceCommit }]);
+    assert.equal(getJob(job.jobId)?.branch, "test");
+  } finally { handler.stop(); }
+});
+
+test("short branch requests use the current task without calling the model or falling back to an older task", { timeout: 3000 }, async () => {
+  const sender = "alice";
+  const session = store.getSession(options.botId, "short-release-group", sender, options.projectId);
+  const older = createJob({ prompt: "以前的改动", ownerId: session.owner_id, projectId: options.projectId,
+    conversationId: session.conversation_id, taskMode: "code" });
+  const current = createJob({ prompt: "当前收支类型修复", ownerId: session.owner_id, projectId: options.projectId,
+    conversationId: session.conversation_id, taskMode: "code" });
+  for (const job of [older, current]) store.bindJob(session, job.jobId);
+  const merged = { status: "completed" as const, branch: "test", mergedToDefaultBranch: "test", mergedToDefaultAt: "2026-11-26" };
+  updateJob(older.jobId, { ...merged, sourceBranch: "plugin-fix/old", sourceCommitSha: "a".repeat(40) });
+  updateJob(current.jobId, { status: "running" });
+  let finishReply!: (text: string) => void;
+  let finishCard!: (card: TemplateCard) => void;
+  const firstReply = new Promise<string>(resolve => { finishReply = resolve; });
+  const cardSent = new Promise<TemplateCard>(resolve => { finishCard = resolve; });
+  const scopeTexts: string[] = [];
+  const fake = {
+    async replyStream(frame: MessageFrame, _streamId: string, text: string, finished: boolean) {
+      if (frame.headers.req_id === "short-running" && finished) finishReply(text);
+      if (frame.headers.req_id === "short-complete") scopeTexts.push(text);
+    },
+    async replyTemplateCard(frame: MessageFrame, card: TemplateCard) {
+      assert.equal(frame.headers.req_id, "short-complete");
+      finishCard(card);
+    },
+  } as unknown as WSClient;
+  const handler = createDirectMessageHandler(fake, options, undefined, async () => assert.fail("must not call the model"));
+  const send = (msgid: string, content: string) => handler.handle({ headers: { req_id: msgid }, body: {
+    aibotid: options.botId, msgid, chattype: "group", chatid: "short-release-group", from: { userid: sender },
+    msgtype: "text", text: { content },
+  } } as MessageFrame);
+  try {
+    send("short-running", "合并到20261116分支");
+    assert.match(await firstReply, /尚未合并到默认分支/);
+    updateJob(current.jobId, { ...merged, sourceBranch: "plugin-fix/current", sourceCommitSha: "b".repeat(40) });
+    send("short-complete", "合并到 release/20261116 分支。");
+    const card = await cardSent;
+    assert.equal(card.main_title?.title, "确认合并到指定分支");
+    assert.match(scopeTexts[0], /当前收支类型修复.*bbbbbbbbbbbb.*release\/20261116/);
+    assert.doesNotMatch(scopeTexts[0], /以前的改动/);
+  } finally { handler.stop(); }
+});

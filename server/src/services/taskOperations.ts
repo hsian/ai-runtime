@@ -36,18 +36,25 @@ export function requestTaskMerge(jobId: string, options: {
   return options.enqueue ? options.enqueue(jobId, worker) : jobQueue.enqueueGateContinuation(jobId, worker) ?? jobQueue.enqueue(jobId, worker);
 }
 
-export async function releaseTaskToBranch(jobId: string, targetBranch: string, options: { fromConversation?: boolean } = {}): Promise<void> {
+export async function releaseTaskToBranch(jobId: string, targetBranch: string, options: {
+  fromConversation?: boolean; expectedSourceCommit?: string;
+} = {}): Promise<void> {
   const job = getJob(jobId);
   if (!job) throw new Error("任务不存在");
   const target = targetBranch.trim();
   if (!/^[a-zA-Z0-9][a-zA-Z0-9_./-]*$/.test(target)) throw new Error("目标分支名无效");
   if (job.status !== "completed" || !job.mergedToDefaultAt || !job.sourceCommitSha || job.revertedFromDefaultAt) throw new Error("请先完成代码修改和默认分支合并，再合并发版分支");
+  if (options.expectedSourceCommit && job.sourceCommitSha !== options.expectedSourceCommit) throw new Error("源提交已变化，请重新确认。");
   if (job.workbenchTurnRunning && !options.fromConversation) throw new Error("当前任务仍在处理，请稍后重试");
   if (target === job.mergedToDefaultBranch || job.releaseMerges?.some(record => record.targetBranch === target && record.status === "completed")) return;
   if (!(await getProjectGitService(job.projectId).listRemoteBranches()).includes(target)) throw new Error(`远程分支 ${target} 不存在，请核对完整分支名`);
   const { done } = jobQueue.enqueueAndWait(jobId, async id => {
     // Recheck inside the queue: another entry point may have completed this release.
-    if (getJob(id)?.releaseMerges?.some(record => record.targetBranch === target && record.status === "completed")) return;
+    const latest = getJob(id);
+    if (!latest || latest.revertedFromDefaultAt || (options.expectedSourceCommit && latest.sourceCommitSha !== options.expectedSourceCommit)) {
+      throw new Error("源提交已变化或已撤回，请重新确认。");
+    }
+    if (latest.releaseMerges?.some(record => record.targetBranch === target && record.status === "completed")) return;
     await mergeCompletedJobToBranch(id, target);
   });
   await done;
